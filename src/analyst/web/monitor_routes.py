@@ -129,7 +129,11 @@ def monitor_daemon_status():
         for w in hub._workers.values()
         if hub.is_daemon_key(w.key)
     ]
+    health = hub.worker_health()
     info["running"] = running
+    info["worker_count"] = len(hub._workers)
+    info["alerts_in_memory"] = len(hub._alerts)
+    info["workers"] = health
     return info
 
 

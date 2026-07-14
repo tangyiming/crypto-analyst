@@ -34,7 +34,7 @@ from analyst.monitor.rules import (
 )
 from analyst.monitor.serialize import candle_to_dict, signal_to_alert_dict
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 BINANCE_FAPI = "https://fapi.binance.com"
 
@@ -131,6 +131,12 @@ class StreamWorker:
     last_premium: dict[str, Any] | None = None
     strategy: DoubleLineConfig = field(default_factory=DoubleLineConfig)
     stop: asyncio.Event = field(default_factory=asyncio.Event)
+    # 诊断：最近一根已处理收盘 K / 评估结果
+    last_closed_at: datetime | None = None
+    last_tick_at: datetime | None = None
+    last_signal_dir: str = "wait"
+    closed_bars: int = 0
+    alerts_sent: int = 0
 
 
 class MonitorHub:
@@ -142,6 +148,7 @@ class MonitorHub:
         self._lock = asyncio.Lock()
         self._daemon_symbols: set[str] = set()
         self._daemon_timeframes: list[str] = ["15m"]
+        self._startup_tg_sent: bool = False
 
     def _daemon_state_path(self) -> Any:
         from pathlib import Path
@@ -243,7 +250,84 @@ class MonitorHub:
         )
         info["running"] = ok
         info["timeframes"] = tfs
+        info["enabled"] = True
+        # 进程内只推一次启动心跳，避免页面 daemon/sync 反复刷 TG
+        if self._telegram_ready() and ok and not self._startup_tg_sent:
+            self._startup_tg_sent = True
+            await self._notify_telegram_text(
+                "✅ Crypto Analyst 常驻盯盘已启动\n"
+                f"workers={len(ok)} · 品种={len(self._daemon_symbols)} · "
+                f"周期={','.join(tfs)}\n"
+                "有可交易/规则命中时会再推告警（不下单）"
+            )
         return info
+
+    def worker_health(self) -> list[dict[str, Any]]:
+        """供 /api/monitor/daemon 诊断：每个 worker 是否存活、最近收盘评估。"""
+        rows: list[dict[str, Any]] = []
+        now = datetime.now(timezone.utc)
+        for w in sorted(self._workers.values(), key=lambda x: str(x.key)):
+            task_ok = bool(w.task and not w.task.done())
+            mark_ok = bool(w.mark_task and not w.mark_task.done())
+            last_c = w.last_closed_at
+            rows.append(
+                {
+                    "key": str(w.key),
+                    "daemon": self.is_daemon_key(w.key),
+                    "task_alive": task_ok,
+                    "mark_alive": mark_ok,
+                    "bars": len(w.series.candles),
+                    "closed_bars": w.closed_bars,
+                    "alerts_sent": w.alerts_sent,
+                    "last_signal": w.last_signal_dir,
+                    "last_closed_at": last_c.isoformat() if last_c else None,
+                    "last_tick_at": w.last_tick_at.isoformat() if w.last_tick_at else None,
+                    "sec_since_close": (
+                        round((now - last_c).total_seconds()) if last_c else None
+                    ),
+                    "clients": len(w.clients),
+                    "price": float(w.series.candles[-1].close) if w.series.candles else None,
+                }
+            )
+        return rows
+
+    def log_heartbeat(self) -> None:
+        health = self.worker_health()
+        alive = sum(1 for h in health if h["task_alive"])
+        daemon_n = sum(1 for h in health if h["daemon"])
+        closed_any = [h for h in health if h["last_closed_at"]]
+        newest = max(
+            (h["last_closed_at"] for h in closed_any),
+            default=None,
+        )
+        logger.info(
+            "盯盘心跳 workers=%d alive=%d daemon=%d alerts_mem=%d tg=%s "
+            "newest_close=%s sample=%s",
+            len(health),
+            alive,
+            daemon_n,
+            len(self._alerts),
+            self._telegram_ready(),
+            newest,
+            [
+                f"{h['key']}@{h['last_signal']}/c{h['closed_bars']}"
+                for h in health[:4]
+            ],
+        )
+        dead = [h["key"] for h in health if h["daemon"] and not h["task_alive"]]
+        if dead:
+            logger.warning("daemon worker 已退出: %s", dead)
+
+    async def _notify_telegram_text(self, text: str) -> None:
+        settings = get_settings()
+        if not self._telegram_ready():
+            logger.info("跳过 TG 文本（未配置 token/chat_id）: %s", text[:80])
+            return
+        notifier = build_default_notifier(
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+        )
+        await asyncio.to_thread(notifier.send_text, text)
 
     def recent_alerts(self, limit: int = 50) -> list[dict[str, Any]]:
         items = list(self._alerts)
@@ -580,6 +664,7 @@ class MonitorHub:
 
     async def _run_binance_loop(self, worker: StreamWorker) -> None:
         key = worker.key
+        logger.info("Binance K 线流开始 %s", key)
         try:
             async for candle, is_closed in stream_klines(
                 key.symbol,
@@ -587,6 +672,7 @@ class MonitorHub:
                 market=key.market,
                 stop_event=worker.stop,
             ):
+                worker.last_tick_at = datetime.now(timezone.utc)
                 self._upsert(worker, candle)
                 await self._broadcast(
                     worker,
@@ -601,8 +687,11 @@ class MonitorHub:
                 )
                 if not is_closed:
                     continue
+                worker.last_closed_at = candle.timestamp
+                worker.closed_bars += 1
                 await self._evaluate_and_alert(worker)
         except asyncio.CancelledError:
+            logger.info("Binance K 线流取消 %s", key)
             raise
         except Exception:
             logger.exception("binance loop crashed %s", key)
@@ -644,6 +733,7 @@ class MonitorHub:
             worker.last_rule_keys = set(list(worker.last_rule_keys)[-80:])
 
         self._alerts.append(alert)
+        worker.alerts_sent += 1
         await self._broadcast(worker, alert, alert_also=True)
 
         settings = get_settings()
@@ -654,10 +744,28 @@ class MonitorHub:
         text = format_rule_alert_text(
             worker.key.symbol, worker.key.timeframe, alert
         )
+        logger.info(
+            "规则告警 → TG rule=%s %s %s dir=%s tg=%s",
+            alert.get("rule"),
+            worker.key.symbol,
+            worker.key.timeframe,
+            alert.get("direction"),
+            self._telegram_ready(),
+        )
         await asyncio.to_thread(notifier.send_text, text)
 
     async def _evaluate_and_alert(self, worker: StreamWorker) -> None:
         signal = evaluate_double_line(worker.series, worker.strategy)
+        worker.last_signal_dir = signal.direction
+        logger.info(
+            "收盘评估 %s price=%.6g dir=%s pattern=%s closed_bars=%d reasons=%s",
+            worker.key,
+            signal.price,
+            signal.direction,
+            signal.pattern or "-",
+            worker.closed_bars,
+            (signal.reasons or [])[:2],
+        )
         await self._broadcast(
             worker,
             {
@@ -686,12 +794,21 @@ class MonitorHub:
             if dedupe != worker.last_alert_key:
                 worker.last_alert_key = dedupe
                 self._alerts.append(alert)
+                worker.alerts_sent += 1
                 await self._broadcast(worker, alert, alert_also=True)
 
                 settings = get_settings()
                 notifier = build_default_notifier(
                     telegram_bot_token=settings.telegram_bot_token,
                     telegram_chat_id=settings.telegram_chat_id,
+                )
+                logger.info(
+                    "双线反转告警 → TG %s %s dir=%s strength=%.2f tg=%s",
+                    worker.key.symbol,
+                    worker.key.timeframe,
+                    signal.direction,
+                    signal.strength,
+                    self._telegram_ready(),
                 )
                 await asyncio.to_thread(
                     notifier.notify,
@@ -708,6 +825,13 @@ class MonitorHub:
                     worker.series, worker.rule_state, self._rule_config()
                 )
                 worker.rule_state = new_state
+                if events:
+                    logger.info(
+                        "规则命中 %s n=%d rules=%s",
+                        worker.key,
+                        len(events),
+                        [e.get("rule") for e in events[:5]],
+                    )
                 for ev in events:
                     ra = rule_event_to_alert(
                         worker.key.symbol, worker.key.timeframe, ev

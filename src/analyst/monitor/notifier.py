@@ -12,7 +12,7 @@ from rich.panel import Panel
 
 from analyst.compute.strategies.double_line_reversal import DoubleLineSignal
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 console = Console()
 
 
@@ -84,15 +84,29 @@ class TelegramNotifier:
 
     def send_text(self, text: str) -> None:
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        preview = text.replace("\n", " / ")[:120]
         try:
             r = httpx.post(
                 url,
                 json={"chat_id": self.chat_id, "text": text},
                 timeout=15.0,
             )
-            r.raise_for_status()
+            if r.status_code >= 400:
+                logger.error(
+                    "Telegram HTTP %s chat_id=%s body=%s preview=%s",
+                    r.status_code,
+                    self.chat_id,
+                    (r.text or "")[:300],
+                    preview,
+                )
+                r.raise_for_status()
+            logger.info(
+                "Telegram ok chat_id=***%s preview=%s",
+                str(self.chat_id)[-4:],
+                preview,
+            )
         except Exception as e:
-            logger.error("Telegram notify failed: %s", e)
+            logger.error("Telegram notify failed: %s preview=%s", e, preview)
 
 
 @dataclass
@@ -123,12 +137,15 @@ def build_default_notifier(
     telegram_chat_id: str = "",
 ) -> MultiNotifier:
     items: list[Notifier] = [ConsoleNotifier()]
-    if telegram_bot_token.strip() and telegram_chat_id.strip():
-        items.append(
-            TelegramNotifier(
-                bot_token=telegram_bot_token.strip(),
-                chat_id=telegram_chat_id.strip(),
-            )
+    tok = (telegram_bot_token or "").strip()
+    chat = (telegram_chat_id or "").strip()
+    if tok and chat:
+        items.append(TelegramNotifier(bot_token=tok, chat_id=chat))
+    else:
+        logger.debug(
+            "Telegram 未启用：token=%s chat_id=%s",
+            bool(tok),
+            bool(chat),
         )
     return MultiNotifier(items)
 
