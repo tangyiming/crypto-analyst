@@ -50,13 +50,10 @@ class Settings(BaseSettings):
     # 数据源
     exchange: str = Field(default="binance")
     default_symbols: str = Field(
-        default=(
-            "BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,AVAX/USDT,SUI/USDT,"
-            "UNI/USDT,AAVE/USDT,HYPE/USDT,DOGE/USDT,XRP/USDT,LINK/USDT"
-        )
+        default="BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,SUI/USDT,UNI/USDT"
     )
-    # 仅有 U 本位、无现货的交易对（监控页会默认切 futures）
-    futures_only_symbols: str = Field(default="HYPE/USDT")
+    # 遗留项（当前 Web 已固定 U 本位，代码未再读取）；保留以免旧 .env 报未知字段
+    futures_only_symbols: str = Field(default="")
 
     data_cache_dir: str = Field(default=".cache/data")
     data_cache_ttl_minutes: int = Field(default=5)
