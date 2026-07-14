@@ -1,0 +1,778 @@
+"""CLI 入口 - 所有命令都从这里注册。"""
+
+from __future__ import annotations
+
+import shutil
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+app = typer.Typer(
+    name="analyst",
+    help="📊 Crypto Analyst - AI 行情分析、预测与结果验证",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+console = Console()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 辅助函数
+# ═══════════════════════════════════════════════════════════════
+def _normalize_symbol(symbol: str) -> str:
+    """BTC -> BTC/USDT"""
+    s = symbol.upper()
+    if "/" not in s:
+        s = f"{s}/USDT"
+    return s
+
+
+def _parse_period(period: str) -> int:
+    """解析 30d / 4w 等格式为天数。"""
+    p = period.strip().lower()
+    if p.endswith("d"):
+        return int(p[:-1])
+    if p.endswith("w"):
+        return int(p[:-1]) * 7
+    if p.endswith("m"):
+        return int(p[:-1]) * 30
+    return int(p)
+
+
+def _render_market(ctx) -> None:
+    """渲染市场快照面板。"""
+    m = ctx.market
+    structure = ctx.structure
+    fib = ctx.fib
+
+    price_panel = Panel(
+        f"[bold yellow]{m.current_price:.4f}[/bold yellow]\n"
+        f"24h: {m.low_24h:.2f} - {m.high_24h:.2f}\n"
+        f"7d:  {m.low_7d:.2f} - {m.high_7d:.2f}\n"
+        f"30d: {m.low_30d:.2f} - {m.high_30d:.2f}",
+        title=f"💹 {m.symbol}",
+        border_style="cyan",
+    )
+
+    structure_panel = Panel(
+        f"趋势：[bold]{structure.trend}[/bold]\n"
+        f"近高：{structure.recent_high:.2f}\n"
+        f"近低：{structure.recent_low:.2f}\n"
+        f"分界：{structure.key_pivot:.2f}\n"
+        f"阻力：{', '.join(f'{r:.2f}' for r in structure.resistances) or '-'}\n"
+        f"支撑：{', '.join(f'{s:.2f}' for s in structure.supports) or '-'}",
+        title="📐 结构",
+        border_style="magenta",
+    )
+
+    fib_panel = Panel(
+        f"H: {fib.high:.2f}  L: {fib.low:.2f}  Δ: {fib.range:.2f}\n"
+        f"0.382: {fib.retr_382:.2f}\n"
+        f"0.500: {fib.retr_500:.2f}\n"
+        f"0.618: {fib.retr_618:.2f}\n"
+        f"0.786: {fib.retr_786:.2f}\n"
+        f"1.272: {fib.ext_1272:.2f}",
+        title="🔢 斐波回撤",
+        border_style="blue",
+    )
+
+    console.print(price_panel)
+    console.print(structure_panel)
+    console.print(fib_panel)
+
+
+def _plan_to_table_text(plan) -> str:
+    if plan.direction == "wait":
+        return f"[yellow]观望[/yellow]\n{plan.rationale}"
+    return (
+        f"方向：[bold]{plan.direction}[/bold]\n"
+        f"入场区：{plan.entry_low:.2f} - {plan.entry_high:.2f}\n"
+        f"止损：{plan.stop_loss:.2f}\n"
+        f"止盈 1：{plan.take_profit_1:.2f}\n"
+        + (f"止盈 2：{plan.take_profit_2:.2f}\n" if plan.take_profit_2 else "")
+        + f"R:R：{plan.rr_ratio:.2f}\n\n{plan.rationale}"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# 分析会话命令
+# ═══════════════════════════════════════════════════════════════
+@app.command()
+def practice(
+    symbol: str = typer.Argument(..., help="品种，如 BTC / ETH / SOL"),
+    timeframe: str = typer.Option("4h", "--tf", help="主时间周期"),
+):
+    """🎯 开启一次 AI 分析会话（拉盘 → AI 计划 → 落库，稍后 CLI verify 回溯）。"""
+    from analyst.config import get_settings
+    from analyst.llm.analyst import analyze_market
+    from analyst.storage import repo
+    from analyst.storage.models import AIPlan
+    from analyst.training import session as ts
+
+    sym = _normalize_symbol(symbol)
+
+    # 1. 创建会话
+    try:
+        with console.status(f"[bold cyan]拉取 {sym} 多周期数据..."):
+            ctx = ts.create_session(sym, timeframe)
+    except Exception as e:
+        console.print(f"[bold red]❌ 数据拉取失败：{e}[/bold red]")
+        raise typer.Exit(1) from e
+
+    # 2. 渲染市场快照
+    _render_market(ctx)
+
+    # 3. 调用 AI
+    try:
+        with console.status("[bold green]🤖 AI 分析中..."):
+            market_dict = ctx.market.to_dict()
+            market_dict["primary_timeframe"] = ctx.db_session.timeframe
+            ai_response = analyze_market(
+                market_snapshot=market_dict,
+                indicators_snapshot=ctx.indicators,
+            )
+    except Exception as e:
+        console.print(f"[bold red]❌ AI 调用失败：{e}[/bold red]")
+        raise typer.Exit(1) from e
+
+    repo.save_ai_plan(
+        AIPlan(
+            session_id=ctx.db_session.id,
+            direction=ai_response.plan.direction,
+            entry_low=ai_response.plan.entry_low,
+            entry_high=ai_response.plan.entry_high,
+            stop_loss=ai_response.plan.stop_loss,
+            take_profit_1=ai_response.plan.take_profit_1,
+            take_profit_2=ai_response.plan.take_profit_2,
+            confidence=3,
+            rationale=ai_response.plan.rationale,
+            rr_ratio=ai_response.plan.rr_ratio,
+            raw_response=ai_response.raw_text,
+            prompt_version=ai_response.prompt_version,
+            model_id=ai_response.model,
+            cost_usd=ai_response.cost_usd,
+        )
+    )
+    repo.update_session_status(ctx.db_session.id, "ai_planned")
+
+    console.print(
+        Panel(
+            _plan_to_table_text(ai_response.plan),
+            title="🤖 AI 计划",
+            border_style="green",
+        )
+    )
+
+    # 4. 提示验证时机
+    settings = get_settings()
+    verify_at = datetime.now(timezone.utc) + timedelta(
+        hours=settings.verification_delay_hours
+    )
+
+    console.print(
+        f"\n[bold green]✅ 会话 #{ctx.db_session.id} 已记录[/bold green]"
+    )
+    console.print(
+        f"[dim]💰 本次 AI 成本：${ai_response.cost_usd:.4f} "
+        f"({ai_response.latency_ms}ms)[/dim]"
+    )
+    console.print(
+        f"[dim]⏰ 请在 {verify_at:%Y-%m-%d %H:%M UTC} 后运行 "
+        f"[cyan]analyst verify[/cyan][/dim]"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# 验证命令
+# ═══════════════════════════════════════════════════════════════
+@app.command()
+def verify(
+    session: Optional[int] = typer.Option(None, "--session", help="只验证指定会话"),
+):
+    """✅ 验证已到期会话"""
+    from analyst.storage import repo
+
+    if session is not None:
+        s = repo.get_session(session)
+        if not s:
+            console.print(f"[red]会话 #{session} 不存在[/red]")
+            raise typer.Exit(1)
+        if s.status != "ai_planned":
+            console.print(
+                f"[yellow]会话 #{session} 状态是 {s.status}，已不需要验证[/yellow]"
+            )
+            return
+        sessions_to_verify = [s]
+    else:
+        sessions_to_verify = repo.list_pending_verification()
+
+    if not sessions_to_verify:
+        console.print("[dim]✨ 没有待验证的会话[/dim]")
+        return
+
+    console.print(f"[cyan]共 {len(sessions_to_verify)} 个会话待验证[/cyan]\n")
+    for s in sessions_to_verify:
+        try:
+            _verify_one(s)
+        except Exception as e:
+            console.print(f"[red]会话 #{s.id} 验证失败：{e}[/red]")
+
+
+def _verify_one(s) -> None:
+    """验证单个会话。"""
+    from analyst.compute.plan import TradePlan
+    from analyst.storage import repo
+    from analyst.storage.models import Verification
+    from analyst.training.verify import (
+        TradeOutcome,
+        fetch_future_candles,
+        find_optimal_trade,
+        verify_plan,
+    )
+
+    user_plan_db = repo.get_user_plan(s.id)
+    ai_plan_db = repo.get_ai_plan(s.id)
+
+    if not ai_plan_db:
+        console.print(f"[yellow]会话 #{s.id} 没有 AI 计划，跳过[/yellow]")
+        return
+
+    console.print(
+        f"[cyan]验证会话 #{s.id}[/cyan] {s.symbol} {s.timeframe} "
+        f"[dim]@ {s.created_at}[/dim]"
+    )
+
+    candles = fetch_future_candles(s.symbol, s.created_at, timeframe="1h")
+    if not candles:
+        console.print("[yellow]  验证 K线不足，跳过[/yellow]")
+        return
+
+    # 用户结果
+    if user_plan_db:
+        user_plan = TradePlan(
+            direction=user_plan_db.direction,
+            entry_low=user_plan_db.entry_low,
+            entry_high=user_plan_db.entry_high,
+            stop_loss=user_plan_db.stop_loss,
+            take_profit_1=user_plan_db.take_profit_1,
+            take_profit_2=user_plan_db.take_profit_2,
+            rr_ratio=user_plan_db.rr_ratio,
+            rationale=user_plan_db.rationale,
+        )
+        user_result = verify_plan(user_plan, candles)
+        user_outcome = user_result.outcome.value
+        user_pnl = user_result.pnl_r
+    else:
+        user_outcome = TradeOutcome.NO_TRIGGER.value
+        user_pnl = 0.0
+
+    # AI 结果
+    ai_plan = TradePlan(
+        direction=ai_plan_db.direction,
+        entry_low=ai_plan_db.entry_low,
+        entry_high=ai_plan_db.entry_high,
+        stop_loss=ai_plan_db.stop_loss,
+        take_profit_1=ai_plan_db.take_profit_1,
+        take_profit_2=ai_plan_db.take_profit_2,
+        rr_ratio=ai_plan_db.rr_ratio,
+        rationale=ai_plan_db.rationale,
+    )
+    ai_result = verify_plan(ai_plan, candles)
+
+    # 最优参考线
+    optimal_dir = (
+        ai_plan.direction
+        if ai_plan.direction != "wait"
+        else (user_plan_db.direction if user_plan_db else "wait")
+    )
+    optimal = find_optimal_trade(optimal_dir, candles)
+
+    v = Verification(
+        session_id=s.id,
+        actual_high=max(c.high for c in candles),
+        actual_low=min(c.low for c in candles),
+        actual_close=candles[-1].close,
+        user_outcome=user_outcome,
+        user_pnl_r=user_pnl,
+        ai_outcome=ai_result.outcome.value,
+        ai_pnl_r=ai_result.pnl_r,
+        optimal_pnl_r=optimal.pnl_r,
+        notes="",
+    )
+    repo.save_verification(v)
+    repo.update_session_status(s.id, "verified")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("方", style="cyan")
+    table.add_column("结果")
+    table.add_column("R 倍数", justify="right")
+
+    table.add_row("AI", ai_result.outcome.value, _fmt_r(ai_result.pnl_r))
+    table.add_row("最优参考", "-", _fmt_r(optimal.pnl_r))
+
+    console.print(table)
+    console.print()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 统计命令
+# ═══════════════════════════════════════════════════════════════
+@app.command()
+def progress(
+    period: str = typer.Option("30d", help="周期，如 7d, 30d, 90d"),
+):
+    """📈 查看你的成长曲线"""
+    from analyst.stats.progress import calculate
+    from analyst.stats.report import render_progress
+
+    days = _parse_period(period)
+    report = calculate(days)
+    render_progress(report, console)
+
+
+@app.command()
+def weakness(top: int = typer.Option(5, "--top", help="只看前 N 个弱点")):
+    """🎯 找出你最常犯的错"""
+    from analyst.stats.report import render_weakness
+    from analyst.stats.weakness import detect_weaknesses
+
+    patterns = detect_weaknesses(top_n=top)
+    render_weakness(patterns, console)
+
+
+@app.command("ai-benchmark")
+def ai_benchmark_cmd(
+    period: str = typer.Option("30d", help="统计周期，如 7d, 30d"),
+):
+    """📊 已验证会话里 AI 侧表现摘要（不依赖用户是否提交计划）"""
+    from rich.table import Table
+
+    from analyst.stats.ai_benchmark import calculate_ai_benchmark
+
+    days = _parse_period(period)
+    r = calculate_ai_benchmark(period_days=days)
+    if r.verified_count == 0:
+        console.print(f"[dim]近 {days} 天暂无已验证会话[/dim]")
+        return
+    table = Table(title=f"📊 AI 基准（近 {days} 天 · 已验证）")
+    table.add_column("项", style="cyan")
+    table.add_column("值", justify="right")
+    table.add_row("已验证会话", str(r.verified_count))
+    table.add_row("实际触发次数", str(r.ai_triggered))
+    table.add_row("触发后胜率", f"{r.ai_win_rate:.0%}")
+    table.add_row("平均 AI R", f"{r.avg_ai_pnl_r:+.2f}")
+    table.add_row("含用户计划的会话", str(r.sessions_with_user_plan))
+    console.print(table)
+
+
+@app.command()
+def history(
+    limit: int = typer.Option(20, help="显示条数"),
+    symbol: Optional[str] = typer.Option(None, help="按品种过滤"),
+):
+    """📚 历史会话列表"""
+    from analyst.storage import repo
+
+    sym = _normalize_symbol(symbol) if symbol else None
+    sessions = repo.list_sessions(limit=limit, symbol=sym)
+
+    if not sessions:
+        console.print("[dim]暂无会话[/dim]")
+        return
+
+    table = Table(title="📚 历史会话")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("时间")
+    table.add_column("品种")
+    table.add_column("周期")
+    table.add_column("状态", style="bold")
+
+    for s in sessions:
+        status_style = {
+            "verified": "green",
+            "ai_planned": "yellow",
+            "user_planned": "blue",
+            "ai_running": "cyan",
+            "ai_failed": "red",
+            "created": "dim",
+            "expired": "red",
+        }.get(s.status, "white")
+
+        table.add_row(
+            str(s.id),
+            s.created_at.strftime("%m-%d %H:%M"),
+            s.symbol,
+            s.timeframe,
+            f"[{status_style}]{s.status}[/{status_style}]",
+        )
+
+    console.print(table)
+
+
+@app.command()
+def review(session_id: int = typer.Argument(..., help="会话 ID")):
+    """🔍 复盘单个会话（AI 计划 + 验证）"""
+    from analyst.storage import repo
+
+    s = repo.get_session(session_id)
+    if not s:
+        console.print(f"[red]会话 #{session_id} 不存在[/red]")
+        raise typer.Exit(1)
+
+    ai_plan_db = repo.get_ai_plan(session_id)
+    verification = repo.get_verification(session_id)
+
+    console.print(
+        Panel.fit(
+            f"[bold]{s.symbol} {s.timeframe}[/bold]\n"
+            f"创建：{s.created_at}\n"
+            f"状态：[bold]{s.status}[/bold]",
+            title=f"🔍 会话 #{s.id}",
+            border_style="cyan",
+        )
+    )
+
+    if ai_plan_db:
+        a = _row_to_plan(ai_plan_db)
+        console.print(
+            Panel(_plan_to_table_text(a), title="🤖 AI 计划", border_style="green")
+        )
+
+    if verification:
+        table = Table(title="✅ 验证结果", show_header=True)
+        table.add_column("项", style="cyan")
+        table.add_column("结果")
+        table.add_column("R 倍数", justify="right")
+        table.add_row("AI", verification.ai_outcome, _fmt_r(verification.ai_pnl_r))
+        table.add_row("最优参考", "-", _fmt_r(verification.optimal_pnl_r))
+        console.print(table)
+
+
+def _row_to_plan(row):
+    from analyst.compute.plan import TradePlan
+
+    return TradePlan(
+        direction=row.direction,
+        entry_low=row.entry_low,
+        entry_high=row.entry_high,
+        stop_loss=row.stop_loss,
+        take_profit_1=row.take_profit_1,
+        take_profit_2=row.take_profit_2,
+        rr_ratio=row.rr_ratio,
+        rationale=row.rationale,
+    )
+
+
+def _fmt_r(value: float) -> str:
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f} R"
+
+
+# ═══════════════════════════════════════════════════════════════
+# data 子命令
+# ═══════════════════════════════════════════════════════════════
+data_app = typer.Typer(help="数据相关命令")
+app.add_typer(data_app, name="data")
+
+
+@data_app.command("status")
+def data_status():
+    """查看数据缓存状态"""
+    from analyst.data.fetcher import get_cache
+
+    cache = get_cache()
+    console.print(f"缓存目录：[cyan]{cache.directory}[/cyan]")
+    console.print(f"条目数：{len(cache)}")
+    console.print(f"占用：{cache.volume() / 1024:.1f} KB")
+
+
+@data_app.command("refresh")
+def data_refresh(symbol: str = typer.Argument(...)):
+    """强制刷新指定品种的所有周期"""
+    from analyst.data import fetcher
+
+    sym = _normalize_symbol(symbol)
+    with console.status(f"刷新 {sym}..."):
+        for tf in ["1d", "4h", "1h", "30m"]:
+            fetcher.fetch_candles(sym, timeframe=tf, use_cache=False)
+    console.print(f"[green]✅ {sym} 已刷新[/green]")
+
+
+# ═══════════════════════════════════════════════════════════════
+# db 子命令
+# ═══════════════════════════════════════════════════════════════
+db_app = typer.Typer(help="数据库管理命令")
+app.add_typer(db_app, name="db")
+
+
+@db_app.command("init")
+def db_init():
+    """初始化数据库"""
+    from analyst.storage.db import init_db
+
+    init_db()
+    console.print("[green]✅ 数据库已初始化[/green]")
+
+
+@db_app.command("backup")
+def db_backup(
+    output: str = typer.Option("backup.db", help="备份文件名"),
+):
+    """备份数据库"""
+    from analyst.config import get_settings
+
+    settings = get_settings()
+    db_path = settings.database_url.replace("sqlite:///", "")
+    if db_path.startswith("./"):
+        db_path = db_path[2:]
+    try:
+        shutil.copy(db_path, output)
+        console.print(f"[green]✅ 已备份到 {output}[/green]")
+    except FileNotFoundError:
+        console.print(f"[red]数据库文件不存在：{db_path}[/red]")
+        raise typer.Exit(1) from None
+
+
+# ═══════════════════════════════════════════════════════════════
+# config 子命令
+# ═══════════════════════════════════════════════════════════════
+config_app = typer.Typer(help="配置管理")
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("show")
+def config_show():
+    """显示当前配置"""
+    from analyst.config import get_settings
+
+    settings = get_settings()
+    table = Table(title="⚙️  当前配置")
+    table.add_column("键", style="cyan")
+    table.add_column("值")
+
+    for k, v in settings.model_dump().items():
+        if "key" in k.lower() and v:
+            v = f"{str(v)[:8]}***"
+        table.add_row(k, str(v))
+
+    console.print(table)
+
+
+@config_app.command("test-llm")
+def config_test_llm():
+    """🔌 测试 LLM API 连通性（不消耗大额 token）"""
+    from analyst.config import get_settings
+    from analyst.llm.analyst import analyze_market
+
+    settings = get_settings()
+    gkq = (settings.groq_api_key or "").strip()
+    bk = (settings.bai_api_key or "").strip()
+    bm = (settings.bai_model or "").strip()
+    console.print(
+        f"[cyan]Provider:[/cyan] {settings.llm_provider}  "
+        f"[cyan]Model:[/cyan] {settings.llm_model}"
+    )
+    if gkq and getattr(settings, "llm_try_groq_first", True):
+        console.print(f"[cyan]链路 1 Groq:[/cyan] {settings.groq_model}")
+    if bk and bm and getattr(settings, "llm_try_bai_after_groq", True):
+        console.print(
+            f"[cyan]链路 2 b.ai:[/cyan] {settings.bai_model}（再失败用主 Provider）"
+        )
+
+    fake_market = {
+        "symbol": "BTC/USDT",
+        "captured_at": 0,
+        "current_price": 100000.0,
+        "high_24h": 102000.0,
+        "low_24h": 98000.0,
+        "high_7d": 105000.0,
+        "low_7d": 95000.0,
+        "high_30d": 110000.0,
+        "low_30d": 90000.0,
+    }
+    fake_indicators = {
+        "1d": {"macd": {"dif": 100.0, "dea": 80.0, "histogram": 40.0,
+                        "above_zero": True, "cross_signal": None},
+               "ema": {"ema7": 100500, "ema30": 99000, "ema52": 97000},
+               "boll": {"upper": 105000, "middle": 100000, "lower": 95000}},
+        "4h": {"macd": {"dif": 50, "dea": 60, "histogram": -20,
+                        "above_zero": True, "cross_signal": "death"},
+               "ema": {"ema7": 100200, "ema30": 99800, "ema52": 99200},
+               "boll": {"upper": 102000, "middle": 100000, "lower": 98000}},
+        "1h": {"macd": {"dif": 10, "dea": 20, "histogram": -20,
+                        "above_zero": True, "cross_signal": None},
+               "ema": {"ema7": 100100, "ema30": 100000, "ema52": 99900}},
+    }
+
+    try:
+        with console.status("[bold green]测试调用..."):
+            response = analyze_market(fake_market, fake_indicators)
+    except Exception as e:
+        console.print(f"[bold red]❌ 失败：{e}[/bold red]")
+        raise typer.Exit(1) from e
+
+    console.print("[bold green]✅ 连通成功[/bold green]")
+    console.print(f"  方向：{response.plan.direction}")
+    console.print(f"  延迟：{response.latency_ms} ms")
+    console.print(f"  成本：${response.cost_usd:.6f}")
+    console.print(f"  R:R：{response.plan.rr_ratio:.2f}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 实时监控（双线反转 + Binance WS）
+# ═══════════════════════════════════════════════════════════════
+monitor_app = typer.Typer(help="📡 实时监控与可交易提醒（不下单）")
+app.add_typer(monitor_app, name="monitor")
+
+
+@monitor_app.command("once")
+def monitor_once(
+    symbol: str = typer.Argument("BTC", help="币种，如 BTC / ETH"),
+    timeframe: str = typer.Option(None, "--timeframe", "-t", help="K 线周期"),
+    market: str = typer.Option(None, "--market", help="spot 或 futures"),
+    fib_zone: bool = typer.Option(False, "--fib-zone", help="要求价格在斐波入场区"),
+    volume: bool = typer.Option(False, "--volume", help="启用量能过滤"),
+):
+    """一眼评估当前双线反转信号（REST，不挂 WS）。"""
+    from analyst.compute.strategies.double_line_reversal import DoubleLineConfig
+    from analyst.config import get_settings
+    from analyst.monitor.engine import MonitorConfig, MonitorEngine
+    from analyst.monitor.notifier import build_default_notifier
+
+    settings = get_settings()
+    sym = _normalize_symbol(symbol)
+    tf = timeframe or settings.monitor_timeframe
+    mkt = market or settings.monitor_market
+    cfg = MonitorConfig(
+        symbol=sym,
+        timeframe=tf,
+        market=mkt,
+        strategy=DoubleLineConfig(
+            kelly_scale=settings.monitor_kelly_scale,
+            stop_buffer_pct=settings.monitor_stop_buffer_pct,
+            take_profit_r=settings.monitor_take_profit_r,
+            ema_trend_period=settings.monitor_ema_trend_period,
+            require_ema200=settings.monitor_require_ema200,
+            trail_to_8r=settings.monitor_trail_to_8r,
+            require_fib_zone=fib_zone or settings.monitor_require_fib_zone,
+            require_volume=volume or settings.monitor_require_volume,
+        ),
+    )
+    engine = MonitorEngine(cfg, notifier=build_default_notifier(
+        telegram_bot_token=settings.telegram_bot_token,
+        telegram_chat_id=settings.telegram_chat_id,
+    ))
+    with console.status(f"[bold green]拉取 {sym} {tf} …"):
+        signal = engine.evaluate_once()
+
+    if signal.direction == "wait":
+        console.print(
+            Panel(
+                f"[yellow]观望[/yellow]\n"
+                f"价格：{signal.price:.4f}\n"
+                f"形态：{signal.pattern or '-'}  突破位：{signal.break_level or '-'}\n"
+                + "\n".join(signal.reasons),
+                title=f"📡 {sym} · {tf}",
+                border_style="yellow",
+            )
+        )
+    else:
+        engine.notifier.notify(sym, tf, signal)
+
+
+@monitor_app.command("start")
+def monitor_start(
+    symbol: str = typer.Argument("BTC", help="币种，如 BTC / ETH"),
+    timeframe: str = typer.Option(None, "--timeframe", "-t", help="K 线周期"),
+    market: str = typer.Option(None, "--market", help="spot 或 futures"),
+    fib_zone: bool = typer.Option(False, "--fib-zone", help="要求价格在斐波入场区"),
+    volume: bool = typer.Option(False, "--volume", help="启用量能过滤"),
+):
+    """订阅 Binance WebSocket，收盘 K 触发双线反转提醒（Ctrl+C 停止）。"""
+    from analyst.compute.strategies.double_line_reversal import DoubleLineConfig
+    from analyst.config import get_settings
+    from analyst.monitor.engine import MonitorConfig, run_monitor_blocking
+    from analyst.monitor.notifier import build_default_notifier
+
+    settings = get_settings()
+    sym = _normalize_symbol(symbol)
+    tf = timeframe or settings.monitor_timeframe
+    mkt = market or settings.monitor_market
+    console.print(
+        Panel(
+            f"品种：[bold]{sym}[/bold]\n"
+            f"周期：{tf} · 市场：{mkt}\n"
+            f"策略：双线反转(K线形态) + EMA{settings.monitor_ema_trend_period}"
+            f" + 止损缓冲{settings.monitor_stop_buffer_pct:g}%"
+            f" + {settings.monitor_take_profit_r:g}R"
+            f" + Kelly×{settings.monitor_kelly_scale}\n"
+            f"[dim]对齐视频口述规则；仅提醒，不自动下单。Ctrl+C 退出。[/dim]",
+            title="📡 实时监控启动",
+            border_style="cyan",
+        )
+    )
+    cfg = MonitorConfig(
+        symbol=sym,
+        timeframe=tf,
+        market=mkt,
+        strategy=DoubleLineConfig(
+            kelly_scale=settings.monitor_kelly_scale,
+            stop_buffer_pct=settings.monitor_stop_buffer_pct,
+            take_profit_r=settings.monitor_take_profit_r,
+            ema_trend_period=settings.monitor_ema_trend_period,
+            require_ema200=settings.monitor_require_ema200,
+            trail_to_8r=settings.monitor_trail_to_8r,
+            require_fib_zone=fib_zone or settings.monitor_require_fib_zone,
+            require_volume=volume or settings.monitor_require_volume,
+        ),
+    )
+    notifier = build_default_notifier(
+        telegram_bot_token=settings.telegram_bot_token,
+        telegram_chat_id=settings.telegram_chat_id,
+    )
+    run_monitor_blocking(cfg, notifier=notifier)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Web 界面
+# ═══════════════════════════════════════════════════════════════
+@app.command()
+def web(
+    host: str = typer.Option("127.0.0.1", "--host", help="监听地址"),
+    port: int = typer.Option(8000, "--port", help="监听端口"),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="自动打开浏览器"),
+):
+    """🌐 启动 Web 界面（推文流风格）"""
+    try:
+        import analyst.web.server as web_server_mod
+    except ImportError:
+        console.print(
+            "[bold red]❌ Web 依赖未安装[/bold red]\n"
+            "请运行: [cyan]pip install -e \".[web]\"[/cyan]"
+        )
+        raise typer.Exit(1) from None
+
+    url = f"http://{host}:{port}"
+    console.print(f"[bold green]🌐 Web 界面启动中: [link]{url}[/link][/bold green]")
+    console.print(f"[dim]web.server 源码: {web_server_mod.__file__}[/dim]")
+
+    if open_browser:
+        import threading
+        import webbrowser
+
+        def _open():
+            import time
+            time.sleep(1.0)
+            webbrowser.open(url)
+
+        threading.Thread(target=_open, daemon=True).start()
+
+    web_server_mod.serve(host, port)
+
+
+if __name__ == "__main__":
+    app()

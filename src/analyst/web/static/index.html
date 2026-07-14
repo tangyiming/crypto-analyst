@@ -1,0 +1,2161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crypto Analyst</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://s3.tradingview.com/tv.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --bg: #0b0e11;
+      --panel: #12161c;
+      --line: #1e2329;
+      --muted: #848e9c;
+      --text: #eaecef;
+      --green: #0ecb81;
+      --red: #f6465d;
+      --yellow: #f0b90b;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+    .desk {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto minmax(180px, 1fr) minmax(240px, 32vh);
+      background: var(--bg);
+    }
+    .chrome {
+      background: #0e1218;
+      border-bottom: 1px solid var(--line);
+    }
+    .chrome-main {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding: 8px 12px;
+      min-height: 44px;
+    }
+    .chrome-watch {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px 8px;
+      border-top: 1px solid rgba(30,35,41,.8);
+    }
+    .chrome-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+    }
+    .chrome-group + .chrome-group {
+      border-left: 1px solid var(--line);
+    }
+    .chrome-group.grow { flex: 1; min-width: 0; }
+    .stat {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 1px;
+      min-width: 64px;
+    }
+    .stat .k { font-size: 10px; color: var(--muted); line-height: 1; }
+    .stat .v {
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--text);
+      line-height: 1.2;
+    }
+    .mode-seg {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+    .mode-seg .mode-btn {
+      border: 0;
+      border-right: 1px solid var(--line);
+      padding: 4px 10px;
+      background: transparent;
+    }
+    .mode-seg .mode-btn:last-child { border-right: 0; }
+    .mode-seg .mode-btn.active {
+      background: rgba(240,185,11,.12);
+      color: var(--yellow);
+    }
+    .badge {
+      padding: 3px 8px;
+      font-size: 11px;
+      background: #1a1f26;
+      color: var(--muted);
+    }
+    .badge.ok { color: var(--green); }
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(380px, 28vw);
+      min-height: 0;
+      overflow: hidden;
+    }
+    @media (max-width: 960px) {
+      .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(200px, 45vh) minmax(0, 1fr); }
+    }
+    @media (min-width: 1400px) {
+      .workspace { grid-template-columns: minmax(0, 1fr) minmax(420px, 460px); }
+    }
+    .ai-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--panel);
+      border-left: 1px solid var(--line);
+      overflow: hidden;
+    }
+    .ai-panel-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    .ai-panel-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 10px 12px 12px;
+    }
+    .ai-chat {
+      flex-shrink: 0;
+      border-top: 1px solid var(--line);
+      background: #0e1218;
+      display: flex;
+      flex-direction: column;
+      max-height: 46%;
+      min-height: 140px;
+    }
+    .ai-chat-log {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .ai-chat-bubble {
+      margin-bottom: 8px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      background: #0b0e11;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .ai-chat-bubble.user { border-color: rgba(240,185,11,.35); }
+    .ai-chat-bubble.assistant { border-color: #2b3139; }
+    .ai-chat-bubble .who {
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .ai-chat-compose {
+      display: flex;
+      gap: 6px;
+      padding: 8px 10px;
+      border-top: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    .ai-chat-compose textarea {
+      flex: 1;
+      min-height: 56px;
+      max-height: 96px;
+      resize: vertical;
+      background: #0b0e11;
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-size: 12px;
+      padding: 6px 8px;
+      outline: none;
+      font-family: inherit;
+    }
+    .ai-chat-compose textarea:focus { border-color: #474d57; }
+    .ai-chat-compose button {
+      align-self: stretch;
+      padding: 0 12px;
+      border: 1px solid #3a2f0b;
+      background: rgba(240,185,11,.14);
+      color: var(--yellow);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .ai-chat-compose button:disabled { opacity: 0.5; cursor: wait; }
+    .ai-sec {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+    .ai-sec:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+    .ai-sec h3 {
+      margin: 0 0 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .ai-kv {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 4px 8px;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .ai-kv .k { color: var(--muted); }
+    .ai-kv .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .ai-disclaimer {
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--muted);
+      background: rgba(246,70,93,.08);
+      border: 1px solid rgba(246,70,93,.25);
+      padding: 8px 10px;
+      margin-bottom: 10px;
+    }
+    .ai-advice {
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 10px;
+      background: rgba(240,185,11,.08);
+      border: 1px solid rgba(240,185,11,.28);
+    }
+    .ai-dir {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .ai-dir.long { color: var(--green); background: rgba(14,203,129,.12); }
+    .ai-dir.short { color: var(--red); background: rgba(246,70,93,.12); }
+    .ai-dir.wait { color: var(--yellow); background: rgba(240,185,11,.12); }
+    .btn-analyze {
+      width: 100%;
+      margin-top: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid #3a2f0b;
+      background: rgba(240,185,11,.14);
+      color: var(--yellow);
+      cursor: pointer;
+    }
+    .btn-analyze:hover { background: rgba(240,185,11,.22); }
+    .btn-analyze:disabled { opacity: 0.5; cursor: wait; }
+    .dock {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--panel);
+      border-top: 1px solid var(--line);
+    }
+    .dock-tabs {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding: 0 8px;
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    .dock-tab {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 8px 12px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .dock-tab:hover { color: var(--text); }
+    .dock-tab.active {
+      color: var(--yellow);
+      border-bottom-color: var(--yellow);
+    }
+    .dock-meta {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--muted);
+      padding-right: 4px;
+    }
+    .dock-pane {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 8px 10px;
+    }
+    .dock-pane.hidden { display: none; }
+    .hist-item, .alert-item {
+      border: 1px solid var(--line);
+      background: #0b0e11;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .hist-item:hover, .alert-item:hover { border-color: #2b3139; }
+    .hist-item.active-row { border-color: rgba(240,185,11,.45); }
+    .ai-rationale {
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text);
+      white-space: pre-wrap;
+      max-height: 220px;
+      overflow: auto;
+    }
+    #chartHost { width: 100%; height: 100%; min-height: 0; background: #000; position: relative; overflow: hidden; }
+    #tv_chart, #lwc_chart { width: 100%; height: 100%; position: absolute; inset: 0; overflow: hidden; background: #000; }
+    #tv_chart.hidden, #lwc_chart.hidden { display: none !important; }
+    #tv_container,
+    #tv_container iframe,
+    #tv_chart > div,
+    #tv_chart iframe {
+      width: 100% !important;
+      height: 100% !important;
+      max-height: 100% !important;
+      border: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      display: block !important;
+      box-sizing: border-box !important;
+    }
+    .metric {
+      display: flex; flex-direction: column; gap: 1px; min-width: 72px;
+    }
+    .metric .lab { font-size: 10px; color: var(--muted); }
+    .metric .val { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+    .mode-btn {
+      padding: 2px 8px; font-size: 11px; border: 1px solid var(--line);
+      background: transparent; color: var(--muted); cursor: pointer;
+    }
+    .mode-btn.active { color: var(--yellow); }
+    .chip {
+      padding: 2px 10px;
+      font-size: 12px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+    }
+    .chip:hover { color: var(--text); border-color: #2b3139; }
+    .chip.active { color: var(--yellow); border-color: var(--yellow); }
+    .chip .chip-x {
+      margin-left: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+    }
+    .chip .chip-x:hover { color: var(--red); }
+    .chip-add {
+      color: var(--yellow);
+      border-color: #3a2f0b;
+    }
+    .toast-enter { animation: slideIn 0.25s ease-out; }
+    @keyframes slideIn {
+      from { transform: translateY(12px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .sel, .inp {
+      background: #0b0e11;
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-size: 12px;
+      padding: 4px 8px;
+      outline: none;
+    }
+    .sel:focus, .inp:focus { border-color: #474d57; }
+    .sym-picker { position: relative; width: 168px; }
+    .sym-drop {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 50;
+      max-height: 280px;
+      overflow: auto;
+      background: #12161c;
+      border: 1px solid var(--line);
+      box-shadow: 0 12px 28px rgba(0,0,0,.45);
+    }
+    .sym-drop.open { display: block; }
+    .sym-opt {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--text);
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+    }
+    .sym-opt:hover, .sym-opt.active { background: #1e2329; color: var(--yellow); }
+    .sym-empty { padding: 10px; font-size: 12px; color: var(--muted); }
+    #chartLegend {
+      position: absolute; left: 10px; top: 8px; z-index: 5;
+      pointer-events: none; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #848e9c; line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+<div class="desk">
+  <header class="chrome">
+    <div class="chrome-main">
+      <div class="chrome-group">
+        <div class="sym-picker shrink-0">
+          <input id="symbolSearch" class="inp w-full uppercase" placeholder="搜索合约…" autocomplete="off" spellcheck="false" />
+          <div id="symbolDropdown" class="sym-drop" role="listbox"></div>
+        </div>
+        <select id="timeframe" class="sel shrink-0"></select>
+      </div>
+
+      <div class="chrome-group">
+        <div class="flex flex-col leading-tight">
+          <div class="flex items-baseline gap-1.5">
+            <span id="hdrPair" class="text-sm font-semibold tracking-wide">BTCUSDT</span>
+            <span id="hdrMarket" class="text-[10px]" style="color:var(--muted)">U本位</span>
+          </div>
+          <div class="flex items-baseline gap-2">
+            <span id="tickerPrice" class="text-lg font-semibold font-mono" style="color:var(--green)">—</span>
+            <span id="chg24h" class="text-sm font-semibold font-mono">—</span>
+            <span id="lastPrice" class="text-[10px] font-mono" style="color:var(--muted)"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chrome-group grow" style="gap:16px; overflow-x:auto;">
+        <div class="stat"><span class="k">24h涨跌</span><span class="v" id="mChg24h">—</span></div>
+        <div class="stat"><span class="k">标记价格</span><span class="v" id="mMark">—</span></div>
+        <div class="stat"><span class="k">指数价格</span><span class="v" id="mIndex">—</span></div>
+        <div class="stat"><span class="k">溢价</span><span class="v" id="mPremium">—</span></div>
+        <div class="stat"><span class="k">资金费率</span><span class="v" id="mFunding">—</span></div>
+        <div class="stat"><span class="k">下次资金费</span><span class="v" id="mFundingAt">—</span></div>
+      </div>
+
+      <div class="chrome-group">
+        <div class="mode-seg">
+          <button type="button" class="mode-btn active" data-mode="native" id="modeNative">直连图</button>
+          <button type="button" class="mode-btn" data-mode="tv" id="modeTv" title="TradingView 免费嵌入：画线无法跨刷新保存">TV 备选</button>
+        </div>
+        <span id="connBadge" class="badge">…</span>
+        <span id="tgBadge" class="badge">TG</span>
+        <span id="daemonBadge" class="badge" title="关网页也继续推 TG（需 MONITOR_ALWAYS_ON）">常驻</span>
+      </div>
+    </div>
+
+    <div class="chrome-watch">
+      <span class="text-[11px] shrink-0" style="color:var(--muted)">观察</span>
+      <label class="flex items-center gap-1 text-[11px] cursor-pointer select-none shrink-0" style="color:var(--muted)" title="把观察列表挂到其它币的推送流上（仍依赖浏览器连着）">
+        <input id="watchAll" type="checkbox" checked />
+        多币推送
+      </label>
+      <button type="button" id="btnAddWatch" class="chip chip-add shrink-0">+</button>
+      <div id="symbolChips" class="flex flex-wrap gap-1 min-w-0"></div>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <div class="min-h-0 relative" style="background:#000;">
+      <div id="chartHost">
+        <div id="tv_chart" class="hidden"></div>
+        <div id="lwc_chart"><div id="chartLegend"></div></div>
+      </div>
+      <div id="alertLevels" class="hidden absolute left-3 bottom-3 z-10 text-[11px] font-mono px-2 py-1"
+           style="background:rgba(18,22,28,.92); border:1px solid var(--line); color:var(--text);"></div>
+    </div>
+
+    <aside class="ai-panel" aria-label="AI 行情分析">
+      <div class="ai-panel-head">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-semibold">AI 行情分析</span>
+          <span id="aiStatus" class="text-[11px]" style="color:var(--muted)">就绪</span>
+        </div>
+        <div class="flex items-center gap-2 mt-2">
+          <span id="aiSymbolLabel" class="text-xs font-mono" style="color:var(--text)">—</span>
+          <select id="analyzeTf" class="sel grow" title="分析主周期">
+            <option value="30m">30分</option>
+            <option value="1h">1小时</option>
+            <option value="4h" selected>4小时</option>
+            <option value="1d">日线</option>
+          </select>
+        </div>
+        <button type="button" id="btnAnalyze" class="btn-analyze">分析当前合约</button>
+      </div>
+      <div class="ai-panel-body" id="aiPanelBody">
+        <div class="ai-disclaimer">
+          AI 与规则基线仅供参考，不是投资建议。行情瞬变，仓位与风控请自行判断，切勿盲目跟单。
+        </div>
+        <div id="aiIdleHint" class="text-xs leading-relaxed" style="color:var(--muted)">
+          选择分析周期后点击上方按钮：先计算结构 / 斐波 / MACD / 量能与规则基线计划，再调用已配置的 LLM 综合给出交易建议。
+        </div>
+        <div id="aiResult" class="hidden"></div>
+      </div>
+      <div class="ai-chat" aria-label="追问对话框">
+        <div class="ai-chat-log" id="chatLog">
+          <div id="chatHint" class="text-[11px] py-1" style="color:var(--muted)">可对当前合约追问，例如「现在适合追多吗？」「止损放哪更合理？」。建议先点上方分析，回答会更贴盘面。</div>
+        </div>
+        <div class="ai-chat-compose">
+          <textarea id="chatInput" placeholder="向 AI 提问…" rows="2"></textarea>
+          <button type="button" id="btnChatSend">发送</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="dock" aria-label="告警与历史">
+    <div class="dock-tabs">
+      <button type="button" class="dock-tab active" data-dock="alerts">告警记录 <span id="alertCount"></span></button>
+      <button type="button" class="dock-tab" data-dock="history">历史分析 <span id="histCount"></span></button>
+      <label class="dock-filter shrink-0 flex items-center gap-1 cursor-pointer select-none" style="color:var(--muted);font-size:11px;margin-left:8px;">
+        <input type="checkbox" id="dockFilterSym" checked />
+        仅当前币对
+      </label>
+      <span class="dock-meta" id="dockHint">点告警 → 直连图标记 · 点历史 → 右侧回看</span>
+    </div>
+    <div class="dock-pane" id="paneAlerts"></div>
+    <div class="dock-pane hidden" id="paneHistory"></div>
+  </footer>
+</div>
+
+<div id="toasts" class="fixed bottom-52 right-4 z-40 space-y-2 w-80 max-w-[92vw]"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const MARKET = 'futures';
+  let ws = null;
+  let pingTimer = null;
+  let reconnectTimer = null;
+  let suppressToast = false;
+  let watchSymbols = [];
+  let allPerpSymbols = [];
+  let activeSymbol = 'BTC/USDT';
+  let activeTf = '15m';
+  let alertTotal = 0;
+  let dropIndex = -1;
+  let alertStore = [];
+  let sessionStore = [];
+  let dockFilterCurrent = true;
+  let pendingAlert = null; // 切币后等 snapshot 再画点
+  let historyOverlay = null; // 历史分析在图上的锚点 {symbol,time,plan,direction}
+  let chartMode = 'native'; // tv | native（告警箭头只能画在直连图）
+  let tvWidget = null;
+  let tvSymbolKey = '';
+
+  const TF_TO_TV = {
+    '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+    '1h': '60', '2h': '120', '4h': '240', '6h': '360', '8h': '480', '12h': '720',
+    '1d': 'D', '3d': '3D', '1w': 'W', '1M': 'M',
+  };
+  const TF_LABELS = {
+    '1m': '1分', '3m': '3分', '5m': '5分', '15m': '15分', '30m': '30分',
+    '1h': '1时', '2h': '2时', '4h': '4时', '6h': '6时', '8h': '8时', '12h': '12时',
+    '1d': '日线', '3d': '3日', '1w': '周线', '1M': '月线',
+  };
+
+  // Lightweight Charts state
+  let chart = null;
+  let candleSeries = null;
+  let volSeries = null;
+  let ma7Series = null;
+  let ma30Series = null;
+  let ma99Series = null;
+  let candleBuf = []; // {time,open,high,low,close,volume}
+  let priceLines = [];
+  let markers = [];
+  let lwcHostBound = false;
+
+  function normalizeSymbol(raw) {
+    let s = (raw || '').trim().toUpperCase();
+    if (!s) return 'BTC/USDT';
+    if (!s.includes('/')) {
+      if (s.endsWith('USDT') && s.length > 4) s = `${s.slice(0, -4)}/USDT`;
+      else s = `${s}/USDT`;
+    }
+    return s.split(':')[0];
+  }
+
+  function sameSymTf(alert) {
+    return normalizeSymbol(alert.symbol) === normalizeSymbol(activeSymbol)
+      && (!alert.timeframe || alert.timeframe === activeTf);
+  }
+
+  function saveWatchlist() {
+    try { localStorage.setItem('monitor.watchlist', JSON.stringify(watchSymbols)); } catch (_) {}
+    syncDaemonWatchlist();
+  }
+
+  let alwaysOnEnabled = false;
+  let daemonTimeframes = ['15m'];
+  function syncDaemonWatchlist() {
+    if (!alwaysOnEnabled || !watchSymbols.length) return;
+    const qs = new URLSearchParams({
+      symbols: watchSymbols.join(','),
+      timeframe: daemonTimeframes[0] || '15m',
+    });
+    fetch('/api/monitor/daemon/sync?' + qs.toString(), { method: 'POST' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.enabled && $('daemonBadge')) {
+          const tfs = (data.timeframes || daemonTimeframes).join('/');
+          const n = (data.running || []).length || (data.symbols || []).length;
+          $('daemonBadge').textContent = `常驻 ${n}·${tfs}`;
+          $('daemonBadge').classList.add('ok');
+        }
+      })
+      .catch(() => {});
+  }
+
+  function loadWatchlist(fallback) {
+    try {
+      const raw = localStorage.getItem('monitor.watchlist');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr) && arr.length) return arr.map(normalizeSymbol);
+      }
+    } catch (_) {}
+    return (fallback || []).map(normalizeSymbol);
+  }
+
+  function addToWatch(sym) {
+    const s = normalizeSymbol(sym);
+    if (watchSymbols.some((x) => normalizeSymbol(x) === s)) {
+      toast('已在观察列表', s, 'info');
+      return;
+    }
+    watchSymbols.push(s);
+    saveWatchlist();
+    renderChips(activeSymbol);
+    updateStrategyMetaWatch();
+    toast('已加入观察', s, 'long');
+    if ($('watchAll').checked) connect({ silent: true });
+  }
+
+  function removeFromWatch(sym) {
+    const s = normalizeSymbol(sym);
+    watchSymbols = watchSymbols.filter((x) => normalizeSymbol(x) !== s);
+    saveWatchlist();
+    renderChips(activeSymbol);
+    updateStrategyMetaWatch();
+    toast('已移除观察', s, 'short');
+    if ($('watchAll').checked) connect({ silent: true });
+  }
+
+  function updateStrategyMetaWatch() {
+    const el = $('strategyMeta');
+    if (!el || !el.dataset.ready) return;
+    const items = [...el.querySelectorAll('li')];
+    const last = items[items.length - 1];
+    if (last) last.textContent = `观察列表：${watchSymbols.map((s) => s.split('/')[0]).join(' · ') || '（空）'}`;
+  }
+
+  function wsUrl(symbol, timeframe, watchList) {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const q = new URLSearchParams();
+    q.set('symbol', symbol);
+    q.set('timeframe', timeframe);
+    q.set('market', MARKET);
+    if (watchList?.length) q.set('watch', watchList.join(','));
+    return `${proto}://${location.host}/ws/monitor?${q.toString()}`;
+  }
+
+  function switchTab(_name) {}
+
+  function sma(closes, period) {
+    const out = [];
+    let sum = 0;
+    for (let i = 0; i < closes.length; i++) {
+      sum += closes[i];
+      if (i >= period) sum -= closes[i - period];
+      if (i >= period - 1) out.push(sum / period);
+      else out.push(null);
+    }
+    return out;
+  }
+
+  let tvMountTimer = null;
+
+  function toTvSymbol(symbol) {
+    return `BINANCE:${normalizeSymbol(symbol).replace('/', '')}.P`;
+  }
+
+  function setChartMode(mode, { remount = true } = {}) {
+    chartMode = mode === 'native' ? 'native' : 'tv';
+    try { localStorage.setItem('monitor.chartMode', chartMode); } catch (_) {}
+    document.querySelectorAll('.mode-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.mode === chartMode);
+    });
+    $('tv_chart').classList.toggle('hidden', chartMode !== 'tv');
+    $('lwc_chart').classList.toggle('hidden', chartMode !== 'native');
+    if (!remount) return;
+    if (chartMode === 'tv') {
+      // 切回 TV 时强制重挂，避免上次高度为 0 的坏 iframe
+      tvSymbolKey = '';
+      mountTradingView(activeSymbol, activeTf, { force: true });
+    } else {
+      ensureChart();
+      if (candleBuf.length) {
+        // 只刷 LWC 数据，勿再走 tv 分支
+        const bars = candleBuf.slice();
+        ensureChart();
+        clearPriceLines();
+        candleSeries.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+        applyMasAndVolume(bars);
+        chart.timeScale().fitContent();
+        redrawAlertOverlays();
+      }
+    }
+  }
+
+  function mountTradingView(symbol, timeframe, { force = false } = {}) {
+    if (chartMode !== 'tv') return;
+    if (typeof TradingView === 'undefined') {
+      toast('TradingView 未加载', '已自动切到 Binance 直连图', 'short');
+      setChartMode('native');
+      return;
+    }
+
+    const host = $('chartHost');
+    const panel = $('tv_chart');
+    // display:none 或布局未完成时高度为 0 → 创建出的 iframe 会永远空白
+    const w = Math.max(host.clientWidth || panel.clientWidth || 0, 320);
+    const h = Math.max(host.clientHeight || panel.clientHeight || 0, 0);
+    if (h < 120) {
+      if (tvMountTimer) clearTimeout(tvMountTimer);
+      tvMountTimer = setTimeout(() => mountTradingView(symbol, timeframe, { force: true }), 100);
+      return;
+    }
+
+    const tvSym = toTvSymbol(symbol);
+    const interval = TF_TO_TV[timeframe] || '15';
+    const key = `${tvSym}|${interval}`;
+    if (!force && key === tvSymbolKey && panel.querySelector('iframe, #tv_container')) return;
+
+    tvSymbolKey = key;
+    panel.innerHTML = '';
+    const box = document.createElement('div');
+    box.id = 'tv_container';
+    box.style.cssText = `width:100%;height:100%;`;
+    panel.appendChild(box);
+
+    try {
+      tvWidget = new TradingView.widget({
+        autosize: true,
+        symbol: tvSym,
+        interval,
+        timezone: 'Asia/Shanghai',
+        theme: 'dark',
+        style: '1',
+        locale: 'zh_CN',
+        toolbar_bg: '#000000',
+        enable_publishing: false,
+        hide_top_toolbar: false,
+        hide_legend: false,
+        hide_side_toolbar: false,
+        allow_symbol_change: false,
+        save_image: true,
+        withdateranges: true,
+        details: false,
+        hotlist: false,
+        calendar: false,
+        show_popup_button: false,
+        container_id: 'tv_container',
+        studies: [
+          'Volume@tv-basicstudies',
+          { id: 'MASimple@tv-basicstudies', inputs: { length: 7 } },
+          { id: 'MASimple@tv-basicstudies', inputs: { length: 30 } },
+          { id: 'MASimple@tv-basicstudies', inputs: { length: 99 } },
+          'MACD@tv-basicstudies',
+          'RSI@tv-basicstudies',
+        ],
+        studies_overrides: {
+          'volume.volume.color.0': 'rgba(246, 70, 93, 0.5)',
+          'volume.volume.color.1': 'rgba(14, 203, 129, 0.5)',
+          'moving average.plot.color': '#c77dff',
+          'moving average_1.plot.color': '#f0b90b',
+          'moving average_2.plot.color': '#5eb8f0',
+        },
+        overrides: {
+          'paneProperties.background': '#000000',
+          'paneProperties.backgroundType': 'solid',
+          'paneProperties.vertGridProperties.color': '#1a1d21',
+          'paneProperties.horzGridProperties.color': '#1a1d21',
+          'scalesProperties.textColor': '#848e9c',
+          'mainSeriesProperties.candleStyle.upColor': '#0ecb81',
+          'mainSeriesProperties.candleStyle.downColor': '#f6465d',
+          'mainSeriesProperties.candleStyle.borderUpColor': '#0ecb81',
+          'mainSeriesProperties.candleStyle.borderDownColor': '#f6465d',
+          'mainSeriesProperties.candleStyle.wickUpColor': '#0ecb81',
+          'mainSeriesProperties.candleStyle.wickDownColor': '#f6465d',
+        },
+        disabled_features: [
+          'header_symbol_search',
+          'header_compare',
+        ],
+        enabled_features: [
+          'study_templates',
+          'side_toolbar_in_fullscreen_mode',
+          'header_fullscreen_button',
+          'chart_crosshair_menu',
+        ],
+      });
+    } catch (err) {
+      console.error(err);
+      toast('TradingView 挂载失败', '已切到 Binance 直连', 'short');
+      setChartMode('native');
+      return;
+    }
+    // 不在 resize 时重挂：免费 Widget 重创建会清空画线；靠 CSS 百分宽高自适应即可
+  }
+
+  function updatePremium(p) {
+    if (!p) return;
+    const fmtP = (n, d = 4) => {
+      if (n == null || !Number.isFinite(Number(n))) return '—';
+      return Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+    };
+    const paintChg = (el) => {
+      if (p.change_pct_24h == null || !Number.isFinite(Number(p.change_pct_24h))) {
+        el.textContent = '—';
+        el.style.color = 'var(--muted)';
+        return;
+      }
+      const v = Number(p.change_pct_24h);
+      el.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+      el.style.color = v >= 0 ? 'var(--green)' : 'var(--red)';
+    };
+    paintChg($('chg24h'));
+    paintChg($('mChg24h'));
+    $('mMark').textContent = fmtP(p.mark_price, 6);
+    $('mIndex').textContent = fmtP(p.index_price, 6);
+    if (p.premium_pct != null && Number.isFinite(Number(p.premium_pct))) {
+      const v = Number(p.premium_pct);
+      $('mPremium').textContent = `${v >= 0 ? '+' : ''}${v.toFixed(4)}%`;
+      $('mPremium').style.color = v >= 0 ? 'var(--green)' : 'var(--red)';
+    } else {
+      $('mPremium').textContent = '—';
+    }
+    if (p.funding_rate != null && Number.isFinite(Number(p.funding_rate))) {
+      const f = Number(p.funding_rate) * 100;
+      $('mFunding').textContent = `${f >= 0 ? '+' : ''}${f.toFixed(4)}%`;
+      $('mFunding').style.color = f >= 0 ? 'var(--green)' : 'var(--red)';
+    } else {
+      $('mFunding').textContent = '—';
+    }
+    if (p.next_funding_time) {
+      const dt = new Date(Number(p.next_funding_time));
+      $('mFundingAt').textContent = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+  }
+
+  function ensureChart() {
+    if (chart) {
+      // 切回 native 时刷新尺寸
+      const host = $('lwc_chart');
+      chart.applyOptions({ width: host.clientWidth, height: host.clientHeight });
+      return;
+    }
+    const host = $('lwc_chart');
+    chart = LightweightCharts.createChart(host, {
+      layout: {
+        background: { type: 'solid', color: '#000000' },
+        textColor: '#848e9c',
+      },
+      grid: {
+        vertLines: { color: '#1a1d21' },
+        horzLines: { color: '#1a1d21' },
+      },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: '#1e2329' },
+      timeScale: {
+        borderColor: '#1e2329',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      localization: { locale: 'zh-CN' },
+    });
+
+    candleSeries = chart.addCandlestickSeries({
+      upColor: '#0ecb81',
+      downColor: '#f6465d',
+      borderUpColor: '#0ecb81',
+      borderDownColor: '#f6465d',
+      wickUpColor: '#0ecb81',
+      wickDownColor: '#f6465d',
+    });
+    volSeries = chart.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'vol',
+      color: 'rgba(14,203,129,0.4)',
+    });
+    chart.priceScale('vol').applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+    });
+    ma7Series = chart.addLineSeries({ color: '#c77dff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    ma30Series = chart.addLineSeries({ color: '#f0b90b', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    ma99Series = chart.addLineSeries({ color: '#5eb8f0', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+
+    if (!lwcHostBound) {
+      const ro = new ResizeObserver(() => {
+        if (!chart) return;
+        chart.applyOptions({ width: host.clientWidth, height: host.clientHeight });
+      });
+      ro.observe(host);
+      lwcHostBound = true;
+    }
+    chart.applyOptions({ width: host.clientWidth, height: host.clientHeight });
+
+    chart.subscribeCrosshairMove((param) => {
+      if (!param?.time || !param.seriesData) {
+        updateLegend(candleBuf[candleBuf.length - 1]);
+        return;
+      }
+      const c = param.seriesData.get(candleSeries);
+      if (c) updateLegend({ time: param.time, ...c, volume: param.seriesData.get(volSeries)?.value });
+    });
+  }
+
+  function clearPriceLines() {
+    priceLines.forEach((pl) => {
+      try { candleSeries.removePriceLine(pl); } catch (_) {}
+    });
+    priceLines = [];
+  }
+
+  function applyMasAndVolume(bars) {
+    const closes = bars.map((b) => b.close);
+    const ma7 = sma(closes, 7);
+    const ma30 = sma(closes, 30);
+    const ma99 = sma(closes, 99);
+    ma7Series.setData(bars.map((b, i) => ma7[i] == null ? null : { time: b.time, value: ma7[i] }).filter(Boolean));
+    ma30Series.setData(bars.map((b, i) => ma30[i] == null ? null : { time: b.time, value: ma30[i] }).filter(Boolean));
+    ma99Series.setData(bars.map((b, i) => ma99[i] == null ? null : { time: b.time, value: ma99[i] }).filter(Boolean));
+    volSeries.setData(bars.map((b) => ({
+      time: b.time,
+      value: b.volume || 0,
+      color: b.close >= b.open ? 'rgba(14,203,129,0.45)' : 'rgba(246,70,93,0.45)',
+    })));
+  }
+
+  function fmt(n, digits = 4) {
+    if (n == null || !Number.isFinite(Number(n))) return '—';
+    return Number(n).toLocaleString(undefined, { maximumFractionDigits: digits });
+  }
+
+  function updateLegend(bar) {
+    const el = $('chartLegend');
+    if (!bar) {
+      el.textContent = `${activeSymbol.replace('/', '')} · ${activeTf}`;
+      return;
+    }
+    const color = bar.close >= bar.open ? 'var(--green)' : 'var(--red)';
+    const closes = candleBuf.map((b) => b.close);
+    const idx = candleBuf.findIndex((b) => b.time === bar.time);
+    const i = idx >= 0 ? idx : candleBuf.length - 1;
+    const m7 = sma(closes, 7)[i];
+    const m30 = sma(closes, 30)[i];
+    const m99 = sma(closes, 99)[i];
+    el.innerHTML = `
+      <span style="color:var(--text)">${activeSymbol.replace('/', '')}</span>
+      <span> · ${activeTf}</span>
+      <span style="color:${color}"> O ${fmt(bar.open)} H ${fmt(bar.high)} L ${fmt(bar.low)} C ${fmt(bar.close)}</span>
+      <span style="color:#c77dff"> MA7 ${fmt(m7)}</span>
+      <span style="color:#f0b90b"> MA30 ${fmt(m30)}</span>
+      <span style="color:#5eb8f0"> MA99 ${fmt(m99)}</span>
+    `;
+  }
+
+  function setChartData(rawCandles) {
+    candleBuf = (rawCandles || [])
+      .map((c) => ({
+        time: Number(c.time),
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close),
+        volume: Number(c.volume || 0),
+      }))
+      .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.close))
+      .sort((a, b) => a.time - b.time);
+
+    const dedup = [];
+    for (const c of candleBuf) {
+      if (dedup.length && dedup[dedup.length - 1].time === c.time) dedup[dedup.length - 1] = c;
+      else dedup.push(c);
+    }
+    candleBuf = dedup;
+
+    if (chartMode === 'tv') {
+      // 有 K 线 snapshot 后再挂；空缓冲时不挂，避免 0 高度坏 iframe + key 卡死
+      if (candleBuf.length) {
+        mountTradingView(activeSymbol, activeTf, { force: true });
+      }
+      if (candleBuf.length) updateLegend(candleBuf[candleBuf.length - 1]);
+      else updateLegend(null);
+      if (pendingAlert && sameSymTf(pendingAlert)) {
+        const p = pendingAlert;
+        pendingAlert = null;
+        redrawAlertOverlays(p);
+      } else if (candleBuf.length) {
+        redrawAlertOverlays();
+      }
+      return;
+    }
+
+    ensureChart();
+    clearPriceLines();
+    markers = [];
+    candleSeries.setData(candleBuf.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+    applyMasAndVolume(candleBuf);
+    if (candleBuf.length) {
+      chart.timeScale().fitContent();
+      updateLegend(candleBuf[candleBuf.length - 1]);
+      if (pendingAlert && sameSymTf(pendingAlert)) {
+        const p = pendingAlert;
+        pendingAlert = null;
+        redrawAlertOverlays(p);
+      } else {
+        redrawAlertOverlays();
+      }
+    } else {
+      updateLegend(null);
+      candleSeries.setMarkers([]);
+      clearPriceLines();
+      $('alertLevels').classList.add('hidden');
+    }
+  }
+
+  function snapMarkerTime(t, { loose = false } = {}) {
+    t = Number(t);
+    if (!candleBuf.length || !Number.isFinite(t)) return null;
+    let best = null;
+    let bestDiff = Infinity;
+    for (const c of candleBuf) {
+      const d = Math.abs(c.time - t);
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = c.time;
+      }
+    }
+    const span = candleBuf.length >= 2
+      ? Math.abs(candleBuf[candleBuf.length - 1].time - candleBuf[candleBuf.length - 2].time)
+      : 900;
+    // 历史分析可能稍早于当前缓冲；放宽阈值
+    const maxDiff = loose
+      ? Math.max(span * 400, 7 * 24 * 3600)
+      : Math.max(span * 80, 3600);
+    if (bestDiff > maxDiff) return null;
+    return best;
+  }
+
+  function analysisMarkUnix(session) {
+    if (session?.captured_at != null && Number.isFinite(Number(session.captured_at))) {
+      return Number(session.captured_at);
+    }
+    if (session?.created_at) {
+      const ms = Date.parse(session.created_at);
+      if (Number.isFinite(ms)) return ms / 1000;
+    }
+    return null;
+  }
+
+  function showHistoryBanner(sessionOrOverlay) {
+    const el = $('alertLevels');
+    const plan = sessionOrOverlay?.plan || sessionOrOverlay?.ai_plan || sessionOrOverlay?.baseline_plan;
+    const t = sessionOrOverlay?.time || analysisMarkUnix(sessionOrOverlay);
+    const when = t ? new Date(t * 1000).toLocaleString() : '—';
+    const dir = (plan?.direction || sessionOrOverlay?.direction || '').toLowerCase();
+    const dirTxt = dir === 'long' ? '多' : dir === 'short' ? '空' : '观望';
+    const c = dir === 'long' ? 'var(--green)' : dir === 'short' ? 'var(--red)' : 'var(--yellow)';
+    el.classList.remove('hidden');
+    let levels = '';
+    if (plan && plan.direction !== 'wait') {
+      levels = ` · 入 ${fmtNum(plan.entry_low)}–${fmtNum(plan.entry_high)} · <span style="color:var(--red)">SL ${fmtNum(plan.stop_loss)}</span> · <span style="color:var(--green)">TP ${fmtNum(plan.take_profit_1)}</span>`;
+    }
+    el.innerHTML = `<span style="color:var(--yellow);font-weight:600">分析时点</span> · ${when} · <span style="color:${c}">${dirTxt}</span>${levels}`;
+  }
+
+  function applyPriceLines(plan) {
+    clearPriceLines();
+    if (!plan || !candleSeries || plan.direction === 'wait') return;
+    const mk = (price, color, title) => {
+      if (price == null || !Number.isFinite(Number(price))) return;
+      const pl = candleSeries.createPriceLine({
+        price: Number(price),
+        color,
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title,
+      });
+      priceLines.push(pl);
+    };
+    mk(plan.stop_loss, '#f6465d', 'SL');
+    mk(plan.take_profit_1, '#0ecb81', 'TP');
+    const entry = plan.entry_high ?? plan.entry_low ?? plan.break_level;
+    mk(entry, '#f0b90b', '入');
+  }
+
+  function showAlertBanner(alert) {
+    const plan = alert?.plan;
+    const el = $('alertLevels');
+    if (!plan || plan.direction === 'wait') {
+      el.classList.add('hidden');
+      return;
+    }
+    el.classList.remove('hidden');
+    const dir = plan.direction === 'long' ? '多' : '空';
+    const c = plan.direction === 'long' ? 'var(--green)' : 'var(--red)';
+    el.innerHTML = `
+      <span style="color:${c};font-weight:600">${dir}</span>
+      · 入场 ${Number(plan.entry_low).toFixed(4)}–${Number(plan.entry_high).toFixed(4)}
+      · <span style="color:var(--red)">止损 ${Number(plan.stop_loss).toFixed(4)}</span>
+      · <span style="color:var(--green)">止盈 ${Number(plan.take_profit_1).toFixed(4)}</span>
+      · RR ${Number(plan.rr_ratio).toFixed(2)}
+    `;
+  }
+
+  function redrawAlertOverlays(highlight) {
+    const histActive = historyOverlay
+      && normalizeSymbol(historyOverlay.symbol) === normalizeSymbol(activeSymbol);
+
+    const matched = alertStore.filter(sameSymTf).filter((a) => a.direction && a.direction !== 'wait');
+    const focus = (highlight && sameSymTf(highlight))
+      ? highlight
+      : matched[matched.length - 1];
+
+    if (histActive) showHistoryBanner(historyOverlay);
+    else if (focus?.plan) showAlertBanner(focus);
+    else $('alertLevels').classList.add('hidden');
+
+    // 箭头/价线只能画在 Binance 直连图上；TradingView 模式看底部告警 + 角标文案
+    if (chartMode !== 'native' || !candleSeries) return;
+
+    clearPriceLines();
+    markers = [];
+    for (const alert of matched) {
+      const mt = snapMarkerTime(alert.marker_time);
+      if (mt == null) continue;
+      const long = alert.direction === 'long';
+      markers.push({
+        time: mt,
+        position: long ? 'belowBar' : 'aboveBar',
+        color: long ? '#0ecb81' : '#f6465d',
+        shape: long ? 'arrowUp' : 'arrowDown',
+        text: long ? '多' : '空',
+      });
+    }
+    if (histActive && historyOverlay.time != null) {
+      const ht = snapMarkerTime(historyOverlay.time, { loose: true });
+      if (ht != null) {
+        markers.push({
+          time: ht,
+          position: 'aboveBar',
+          color: '#f0b90b',
+          shape: 'circle',
+          text: '分析',
+        });
+      }
+    }
+    const byT = new Map();
+    markers.forEach((m) => byT.set(`${m.time}|${m.text}`, m));
+    markers = [...byT.values()].sort((a, b) => a.time - b.time);
+    candleSeries.setMarkers(markers);
+    if (histActive && historyOverlay.plan && historyOverlay.plan.direction !== 'wait') {
+      applyPriceLines(historyOverlay.plan);
+    } else if (focus?.plan) {
+      applyPriceLines(focus.plan);
+    }
+    if (histActive && historyOverlay.time != null && chart) {
+      const ht = snapMarkerTime(historyOverlay.time, { loose: true });
+      if (ht != null) {
+        try {
+          const idx = candleBuf.findIndex((c) => c.time === ht);
+          if (idx >= 0) chart.timeScale().scrollToPosition(-(candleBuf.length - idx - 8), false);
+        } catch (_) {}
+      }
+    }
+  }
+
+  function upsertCandle(raw) {
+    if (!raw) return;
+    const bar = {
+      time: Number(raw.time),
+      open: Number(raw.open),
+      high: Number(raw.high),
+      low: Number(raw.low),
+      close: Number(raw.close),
+      volume: Number(raw.volume || 0),
+    };
+    if (!Number.isFinite(bar.time) || !Number.isFinite(bar.close)) return;
+
+    const last = candleBuf[candleBuf.length - 1];
+    if (last && last.time === bar.time) candleBuf[candleBuf.length - 1] = bar;
+    else if (!last || bar.time > last.time) candleBuf.push(bar);
+    else return;
+
+    if (chartMode === 'native' && candleSeries) {
+      candleSeries.update({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+      volSeries.update({
+        time: bar.time,
+        value: bar.volume,
+        color: bar.close >= bar.open ? 'rgba(14,203,129,0.45)' : 'rgba(246,70,93,0.45)',
+      });
+      applyMasAndVolume(candleBuf);
+      updateLegend(bar);
+    }
+  }
+
+  function setSelectedSymbol(sym, { reconnect = true } = {}) {
+    const s = normalizeSymbol(sym);
+    activeSymbol = s;
+    $('symbolSearch').value = s;
+    closeDropdown();
+    renderChips(s);
+    syncAnalyzeHeader();
+    refreshDockLists();
+    if (reconnect) connect({ silent: true });
+  }
+
+  function filterSymbols(q) {
+    const raw = (q || '').trim().toUpperCase().replace('/', '');
+    const pool = allPerpSymbols.length ? allPerpSymbols : watchSymbols;
+    if (!raw) return pool.slice(0, 40);
+    return pool
+      .filter((s) => s.replace('/', '').includes(raw) || s.includes(raw))
+      .slice(0, 60);
+  }
+
+  function renderDropdown(items) {
+    const box = $('symbolDropdown');
+    if (!items.length) {
+      box.innerHTML = '<div class="sym-empty">无匹配合约</div>';
+      box.classList.add('open');
+      dropIndex = -1;
+      return;
+    }
+    box.innerHTML = items.map((s, i) =>
+      `<div class="sym-opt-row" style="display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--line)">
+        <button type="button" class="sym-opt" data-sym="${s}" data-i="${i}" role="option" style="flex:1;border:0">${s} <span style="color:var(--muted);font-size:10px">永续</span></button>
+        <button type="button" class="sym-add-one" data-sym="${s}" title="加入观察" style="padding:4px 8px;color:var(--yellow);background:transparent;border:0;cursor:pointer;font-size:12px">+</button>
+      </div>`
+    ).join('');
+    box.querySelectorAll('.sym-opt').forEach((btn) => {
+      btn.onclick = () => setSelectedSymbol(btn.dataset.sym);
+    });
+    box.querySelectorAll('.sym-add-one').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        addToWatch(btn.dataset.sym);
+      };
+    });
+    box.classList.add('open');
+    dropIndex = 0;
+    highlightDrop();
+  }
+
+  function highlightDrop() {
+    const opts = [...$('symbolDropdown').querySelectorAll('.sym-opt')];
+    opts.forEach((el, i) => el.classList.toggle('active', i === dropIndex));
+    if (dropIndex >= 0 && opts[dropIndex]) opts[dropIndex].scrollIntoView({ block: 'nearest' });
+  }
+
+  function openDropdown() {
+    renderDropdown(filterSymbols($('symbolSearch').value));
+  }
+
+  function closeDropdown() {
+    $('symbolDropdown').classList.remove('open');
+    dropIndex = -1;
+  }
+
+  function focusAlertOnChart(alert) {
+    if (!alert) return;
+    // TradingView 挂不了自定义箭头，告警点统一用直连图
+    if (chartMode !== 'native') {
+      pendingAlert = alert;
+      setChartMode('native', { remount: true });
+    }
+    const needSwitch = normalizeSymbol(alert.symbol) !== normalizeSymbol(activeSymbol)
+      || (alert.timeframe && alert.timeframe !== activeTf);
+    if (needSwitch) {
+      pendingAlert = alert;
+      if (alert.timeframe) $('timeframe').value = alert.timeframe;
+      activeTf = $('timeframe').value;
+      setSelectedSymbol(alert.symbol);
+      return;
+    }
+    if (candleBuf.length) {
+      redrawAlertOverlays(alert);
+      const mt = snapMarkerTime(alert.marker_time);
+      if (mt != null && chart) {
+        try {
+          const idx = candleBuf.findIndex((c) => c.time === mt);
+          if (idx >= 0) chart.timeScale().scrollToPosition(-(candleBuf.length - idx - 8), false);
+        } catch (_) {}
+      }
+    } else {
+      pendingAlert = alert;
+    }
+  }
+
+  function renderChips(active) {
+    const box = $('symbolChips');
+    box.innerHTML = '';
+    watchSymbols.forEach((sym) => {
+      const wrap = document.createElement('span');
+      const isActive = normalizeSymbol(sym) === normalizeSymbol(active);
+      wrap.className = 'chip' + (isActive ? ' active' : '');
+      wrap.style.display = 'inline-flex';
+      wrap.style.alignItems = 'center';
+
+      const nameBtn = document.createElement('button');
+      nameBtn.type = 'button';
+      nameBtn.textContent = sym.split('/')[0];
+      nameBtn.title = `${sym} 永续 · 点击切换`;
+      nameBtn.style.cssText = 'background:transparent;border:0;color:inherit;padding:0;cursor:pointer;font-size:12px';
+      nameBtn.onclick = () => setSelectedSymbol(sym);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'chip-x';
+      del.textContent = '×';
+      del.title = `移除 ${sym}`;
+      del.onclick = (e) => {
+        e.stopPropagation();
+        removeFromWatch(sym);
+      };
+
+      wrap.appendChild(nameBtn);
+      wrap.appendChild(del);
+      box.appendChild(wrap);
+    });
+  }
+
+  function setConn(text, ok) {
+    const el = $('connBadge');
+    el.textContent = text;
+    el.classList.toggle('ok', !!ok);
+  }
+
+  function toast(title, body, tone) {
+    const box = document.createElement('div');
+    const color = tone === 'short' ? 'var(--red)' : tone === 'long' ? 'var(--green)' : '#3b82f6';
+    box.className = 'toast-enter p-3 text-xs';
+    box.style.cssText = `background:#12161c;border:1px solid ${color};box-shadow:0 8px 24px rgba(0,0,0,.45)`;
+    box.innerHTML = `<div class="font-medium mb-1" style="color:var(--text)">${title}</div><div style="color:var(--muted)">${body}</div>`;
+    $('toasts').appendChild(box);
+    setTimeout(() => box.remove(), 8000);
+  }
+
+  function rememberAlert(alert) {
+    const key = `${alert.symbol}|${alert.timeframe}|${alert.direction}|${alert.marker_time}`;
+    if (alertStore.some((a) => `${a.symbol}|${a.timeframe}|${a.direction}|${a.marker_time}` === key)) {
+      return false;
+    }
+    alertStore.push(alert);
+    if (alertStore.length > 200) alertStore.shift();
+    try { localStorage.setItem('monitor.alerts', JSON.stringify(alertStore.slice(-100))); } catch (_) {}
+    return true;
+  }
+
+  function loadPersistedAlerts() {
+    try {
+      const raw = localStorage.getItem('monitor.alerts');
+      if (!raw) return;
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return;
+      arr.forEach((a) => rememberAlert(a));
+    } catch (_) {}
+  }
+
+  function matchesDockFilter(itemSym) {
+    if (!dockFilterCurrent) return true;
+    return normalizeSymbol(itemSym) === normalizeSymbol(activeSymbol);
+  }
+
+  function refreshDockLists() {
+    renderAlertList();
+    renderHistoryList(sessionStore);
+  }
+
+  function pushAlertCard(_alert, _opts) {
+    alertTotal = alertStore.length;
+    renderAlertList();
+  }
+
+  function renderAlertList() {
+    const list = $('paneAlerts');
+    if (!list) return;
+    list.innerHTML = '';
+    const rows = alertStore.filter((a) => matchesDockFilter(a.symbol)).slice().reverse();
+    const shown = rows.length;
+    const total = alertStore.length;
+    if ($('alertCount')) {
+      $('alertCount').textContent = total
+        ? (dockFilterCurrent && shown !== total ? `(${shown}/${total})` : `(${total})`)
+        : '';
+    }
+    if (!rows.length) {
+      list.innerHTML = `<div class="text-xs py-2" style="color:var(--muted)">${
+        dockFilterCurrent
+          ? `当前 ${activeSymbol} 暂无告警。取消勾选「仅当前币对」可看全部。`
+          : '暂无告警记录。'
+      }</div>`;
+      return;
+    }
+    rows.forEach((alert) => {
+      const dir = alert.direction;
+      const color = dir === 'short' ? 'var(--red)' : 'var(--green)';
+      const card = document.createElement('div');
+      card.className = 'alert-item';
+      const plan = alert.plan || {};
+      card.innerHTML = `
+        <div class="flex justify-between gap-2">
+          <span style="color:${color};font-weight:600">${(dir || '').toUpperCase()} · ${alert.symbol}</span>
+          <span style="color:var(--muted)">${new Date(alert.created_at || Date.now()).toLocaleString()}</span>
+        </div>
+        <div class="mt-1" style="color:var(--yellow)">${escapeHtml(alert.title || alert.rule || '告警')} · ${alert.timeframe || ''}</div>
+        <div class="mt-1" style="color:var(--muted)">${(alert.reasons || []).slice(0, 2).join('；')}</div>
+        ${plan.stop_loss != null ? `<div class="mt-1 font-mono" style="color:var(--muted)">入 ${Number(plan.entry_low).toFixed(4)}–${Number(plan.entry_high).toFixed(4)} · SL ${Number(plan.stop_loss).toFixed(4)} · TP ${Number(plan.take_profit_1).toFixed(4)}</div>` : ''}
+      `;
+      card.onclick = () => {
+        switchDock('alerts');
+        focusAlertOnChart(alert);
+      };
+      list.appendChild(card);
+    });
+  }
+
+  function updateAlertCount() {
+    renderAlertList();
+  }
+
+  function switchDock(name) {
+    document.querySelectorAll('.dock-tab').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.dock === name);
+    });
+    $('paneAlerts')?.classList.toggle('hidden', name !== 'alerts');
+    $('paneHistory')?.classList.toggle('hidden', name !== 'history');
+    if ($('dockHint')) {
+      $('dockHint').textContent = name === 'history'
+        ? '点条目 → 右侧回看该次分析'
+        : '点告警 → 直连图标记';
+    }
+  }
+
+  function statusLabel(st) {
+    return ({
+      created: '已建快照',
+      ai_running: 'AI 中',
+      ai_planned: '已出计划',
+      ai_failed: 'AI 失败',
+      verified: '已验证',
+    })[st] || st || '—';
+  }
+
+  function renderHistoryList(sessions) {
+    const box = $('paneHistory');
+    if (!box) return;
+    if (Array.isArray(sessions)) sessionStore = sessions;
+    const all = sessionStore || [];
+    const rows = all.filter((s) => matchesDockFilter(s.symbol));
+    box.innerHTML = '';
+    if ($('histCount')) {
+      $('histCount').textContent = all.length
+        ? (dockFilterCurrent && rows.length !== all.length ? `(${rows.length}/${all.length})` : `(${all.length})`)
+        : '';
+    }
+    if (!rows.length) {
+      box.innerHTML = `<div class="text-xs py-2" style="color:var(--muted)">${
+        dockFilterCurrent
+          ? `当前 ${activeSymbol} 暂无历史。取消勾选「仅当前币对」可看全部。`
+          : '暂无历史分析。右侧点「分析当前合约」后会出现在这里。'
+      }</div>`;
+      return;
+    }
+    rows.forEach((s) => {
+      const dir = s.ai_plan?.direction || s.baseline_plan?.direction || '';
+      const color = dir === 'short' ? 'var(--red)' : dir === 'long' ? 'var(--green)' : 'var(--muted)';
+      const card = document.createElement('div');
+      card.className = 'hist-item';
+      card.dataset.sid = String(s.id);
+      card.innerHTML = `
+        <div class="flex justify-between gap-2">
+          <span><span style="color:${color};font-weight:600">${dir ? dir.toUpperCase() : '…'}</span>
+            · ${escapeHtml(s.symbol || '')} · ${escapeHtml(s.timeframe || '')}</span>
+          <span style="color:var(--muted)">${s.created_at ? new Date(s.created_at).toLocaleString() : ''}</span>
+        </div>
+        <div class="mt-1" style="color:var(--muted)">${statusLabel(s.status)}
+          ${s.ai_plan?.rr_ratio != null ? ` · RR ${Number(s.ai_plan.rr_ratio).toFixed(2)}` : ''}
+          ${s.ai_plan?.rationale ? ` · ${escapeHtml(String(s.ai_plan.rationale).slice(0, 80))}` : ''}
+        </div>`;
+      card.onclick = () => openHistorySession(s.id, card);
+      box.appendChild(card);
+    });
+  }
+
+  async function loadHistorySessions() {
+    try {
+      const r = await fetch('/api/sessions?limit=80');
+      if (!r.ok) return;
+      const list = await r.json();
+      renderHistoryList(Array.isArray(list) ? list : []);
+    } catch (_) {}
+  }
+
+  async function openHistorySession(sid, cardEl) {
+    switchDock('history');
+    document.querySelectorAll('.hist-item').forEach((el) => el.classList.remove('active-row'));
+    cardEl?.classList.add('active-row');
+    try {
+      const r = await fetch(`/api/sessions/${sid}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const markAt = analysisMarkUnix(data);
+      const plan = data.ai_plan || data.baseline_plan || null;
+      historyOverlay = {
+        id: data.id,
+        symbol: normalizeSymbol(data.symbol || activeSymbol),
+        timeframe: data.timeframe,
+        time: markAt,
+        plan,
+        direction: plan?.direction,
+      };
+
+      renderAiSession(data);
+      setAnalyzeBusy(false, statusLabel(data.status));
+      // 历史回看：强制载入该次对话
+      renderChatLog(data.chat_log || [], {
+        emptyHint: '该次分析暂无追问记录。可在下方继续问，也会写回本历史。',
+      });
+      if (data.timeframe && $('analyzeTf')) {
+        const tf = data.timeframe;
+        if (['30m', '1h', '4h', '1d'].includes(tf)) $('analyzeTf').value = tf;
+      }
+
+      // 直连图才能标时点；尽量切到分析同周期
+      if (chartMode !== 'native') setChartMode('native', { remount: true });
+      let needReconnect = false;
+      const chartTf = data.timeframe;
+      if (chartTf && [...$('timeframe').options].some((o) => o.value === chartTf)) {
+        if ($('timeframe').value !== chartTf) {
+          $('timeframe').value = chartTf;
+          needReconnect = true;
+        }
+      }
+      const sym = normalizeSymbol(data.symbol || activeSymbol);
+      if (normalizeSymbol(activeSymbol) !== sym) {
+        setSelectedSymbol(sym, { reconnect: true });
+      } else if (needReconnect) {
+        connect({ silent: true });
+      } else {
+        redrawAlertOverlays();
+      }
+    } catch (e) {
+      toast('打开历史失败', String(e.message || e), 'short');
+    }
+  }
+
+  function fmtNum(n, d = 4) {
+    if (n == null || !Number.isFinite(Number(n))) return '—';
+    return Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+  }
+
+  function dirClass(d) {
+    const x = (d || '').toLowerCase();
+    if (x === 'long') return 'long';
+    if (x === 'short') return 'short';
+    return 'wait';
+  }
+
+  function dirLabel(d) {
+    const x = (d || '').toLowerCase();
+    if (x === 'long') return 'LONG 做多';
+    if (x === 'short') return 'SHORT 做空';
+    return 'WAIT 观望';
+  }
+
+  function mapChartTfToAnalyze(tf) {
+    const t = tf || '4h';
+    if (['30m', '1h', '4h', '1d'].includes(t)) return t;
+    if (['1m', '3m', '5m', '15m'].includes(t)) return '30m';
+    if (t === '2h') return '1h';
+    if (['6h', '8h', '12h'].includes(t)) return '4h';
+    return '1d';
+  }
+
+  function syncAnalyzeHeader() {
+    if ($('aiSymbolLabel')) {
+      $('aiSymbolLabel').textContent = `${activeSymbol.replace('/', '')} 永续`;
+    }
+  }
+
+  function composeAdvice(session) {
+    const base = session.baseline_plan;
+    const ai = session.ai_plan;
+    if (!ai && base) {
+      return `规则基线建议 ${dirLabel(base.direction)}。等待 AI 完成后可对照。`;
+    }
+    if (!ai) return '等待 AI 输出…';
+    if (!base) {
+      return `AI 建议 ${dirLabel(ai.direction)}。请结合上方指标自行确认。`;
+    }
+    if (base.direction === ai.direction) {
+      if (ai.direction === 'wait') {
+        return '规则与 AI 一致观望：当前性价比不足，不宜强行开仓。';
+      }
+      return `规则与 AI 同向（${dirLabel(ai.direction)}），共识相对更高，但仍须自行控制仓位与止损。`;
+    }
+    return `规则建议 ${dirLabel(base.direction)}，AI 建议 ${dirLabel(ai.direction)} —— 方向分歧，优先缩小仓位或观望，勿盲信任一侧。`;
+  }
+
+  function planBlock(title, plan) {
+    if (!plan) return '';
+    const levels = plan.direction !== 'wait'
+      ? `<div class="ai-kv"><span class="k">入场</span><span class="v">${fmtNum(plan.entry_low)} – ${fmtNum(plan.entry_high)}</span></div>
+         <div class="ai-kv"><span class="k">止损</span><span class="v" style="color:var(--red)">${fmtNum(plan.stop_loss)}</span></div>
+         <div class="ai-kv"><span class="k">止盈1</span><span class="v" style="color:var(--green)">${fmtNum(plan.take_profit_1)}</span></div>
+         ${plan.take_profit_2 != null ? `<div class="ai-kv"><span class="k">止盈2</span><span class="v" style="color:var(--green)">${fmtNum(plan.take_profit_2)}</span></div>` : ''}
+         <div class="ai-kv"><span class="k">盈亏比</span><span class="v">${plan.rr_ratio != null ? Number(plan.rr_ratio).toFixed(2) : '—'}</span></div>`
+      : '';
+    return `<div class="ai-sec">
+      <h3>${title}</h3>
+      <div class="mb-2"><span class="ai-dir ${dirClass(plan.direction)}">${dirLabel(plan.direction)}</span></div>
+      ${levels}
+      ${plan.rationale ? `<div class="ai-rationale mt-2" style="color:var(--muted)">${escapeHtml(plan.rationale)}</div>` : ''}
+    </div>`;
+  }
+
+  function escapeHtml(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function renderAiSession(session) {
+    const prevId = lastAnalyzeSession?.id;
+    lastAnalyzeSession = session;
+    // 切换到另一会话时，重载该会话对话；同会话轮询不打断正在聊的内容
+    if (session?.id && session.id !== prevId) {
+      renderChatLog(session.chat_log || [], {
+        emptyHint: '本会话追问会保存在「历史分析」里，点该条即可回看。',
+      });
+    } else if (session?.id && Array.isArray(session.chat_log)
+      && session.chat_log.length > chatHistory.length) {
+      renderChatLog(session.chat_log);
+    }
+    $('aiIdleHint').classList.add('hidden');
+    const box = $('aiResult');
+    box.classList.remove('hidden');
+    const ind = session.indicators || {};
+    const st = session.structure || {};
+    const macd = ind.macd || {};
+    const ema = ind.ema || {};
+    const vol = ind.volume || {};
+    const fib = session.fib || {};
+
+    const quant = `<div class="ai-sec">
+      <h3>数据指标 · ${session.timeframe || ''}</h3>
+      <div class="ai-kv"><span class="k">现价</span><span class="v">${fmtNum(session.current_price, 6)}</span></div>
+      <div class="ai-kv"><span class="k">结构</span><span class="v">${st.trend || '—'}</span></div>
+      <div class="ai-kv"><span class="k">支撑</span><span class="v">${(st.supports || []).slice(0, 3).map((x) => fmtNum(x)).join(' / ') || '—'}</span></div>
+      <div class="ai-kv"><span class="k">阻力</span><span class="v">${(st.resistances || []).slice(0, 3).map((x) => fmtNum(x)).join(' / ') || '—'}</span></div>
+      <div class="ai-kv"><span class="k">Fib 0.5/0.618</span><span class="v">${fmtNum(fib.retr_500)} / ${fmtNum(fib.retr_618)}</span></div>
+      <div class="ai-kv"><span class="k">MACD</span><span class="v">${macd.cross_signal || '—'} · hist ${fmtNum(macd.histogram, 6)}</span></div>
+      <div class="ai-kv"><span class="k">EMA</span><span class="v">7 ${fmtNum(ema.ema7)} · 30 ${fmtNum(ema.ema30)}</span></div>
+      <div class="ai-kv"><span class="k">量能</span><span class="v">${vol.signal || '—'} · ×${vol.ratio != null ? vol.ratio : '—'}</span></div>
+    </div>`;
+
+    const advice = `<div class="ai-sec">
+      <h3>综合建议</h3>
+      <div class="ai-advice">${escapeHtml(composeAdvice(session))}</div>
+    </div>`;
+
+    let aiHtml = '';
+    if (session.ai_plan) {
+      aiHtml = planBlock('AI 计划', session.ai_plan);
+      if (session.ai_plan.model_id) {
+        aiHtml += `<div class="text-[10px] mt-1" style="color:var(--muted)">模型 ${escapeHtml(session.ai_plan.model_id)} · ${escapeHtml(session.ai_plan.prompt_version || '')}</div>`;
+      }
+    } else if (session.status === 'ai_failed') {
+      aiHtml = `<div class="ai-sec"><h3>AI 计划</h3><div style="color:var(--red);font-size:12px">${escapeHtml(session.ai_error || '生成失败')}</div></div>`;
+    } else {
+      aiHtml = `<div class="ai-sec"><h3>AI 计划</h3><div class="text-xs" style="color:var(--muted)">推理中，规则基线可先参考…</div></div>`;
+    }
+
+    box.innerHTML = advice + quant + planBlock('规则基线（非 AI）', session.baseline_plan) + aiHtml;
+  }
+
+  let analyzePollTimer = null;
+  let analyzeBusy = false;
+  let lastAnalyzeSession = null;
+  let chatHistory = [];
+  let chatBusy = false;
+
+  function renderChatLog(log, { emptyHint } = {}) {
+    const box = $('chatLog');
+    if (!box) return;
+    box.innerHTML = '';
+    chatHistory = [];
+    const turns = Array.isArray(log) ? log : [];
+    if (!turns.length) {
+      const tip = emptyHint
+        || '可对当前合约追问。建议先点上方分析；对话会随该次分析写入历史。';
+      box.innerHTML = `<div id="chatHint" class="text-[11px] py-1" style="color:var(--muted)">${escapeHtml(tip)}</div>`;
+      return;
+    }
+    turns.forEach((t) => {
+      const role = t.role === 'assistant' ? 'assistant' : 'user';
+      const content = t.content || '';
+      if (!content) return;
+      appendChatBubble(role, content, { persistLocal: true });
+    });
+  }
+
+  function appendChatBubble(role, text, { persistLocal = false } = {}) {
+    const log = $('chatLog');
+    if (!log) return;
+    const hint = $('chatHint');
+    if (hint) hint.remove();
+    const box = document.createElement('div');
+    box.className = `ai-chat-bubble ${role === 'user' ? 'user' : 'assistant'}`;
+    box.innerHTML = `<div class="who">${role === 'user' ? '我' : 'AI'}</div><div>${escapeHtml(text)}</div>`;
+    log.appendChild(box);
+    log.scrollTop = log.scrollHeight;
+    if (persistLocal) {
+      chatHistory.push({ role: role === 'user' ? 'user' : 'assistant', content: text });
+    }
+  }
+
+  function buildChatContext() {
+    const s = lastAnalyzeSession;
+    if (!s) return {};
+    return {
+      current_price: s.current_price,
+      structure: s.structure,
+      fib: s.fib,
+      indicators: s.indicators,
+      baseline_plan: s.baseline_plan,
+      ai_plan: s.ai_plan,
+    };
+  }
+
+  async function sendChatQuestion() {
+    if (chatBusy) return;
+    const input = $('chatInput');
+    const q = (input?.value || '').trim();
+    if (!q) return;
+    if (!lastAnalyzeSession?.id) {
+      toast('请先分析', '先点「分析当前合约」，对话才会写入对应历史', 'info');
+      return;
+    }
+    chatBusy = true;
+    const btn = $('btnChatSend');
+    if (btn) btn.disabled = true;
+    if (input) input.value = '';
+    appendChatBubble('user', q, { persistLocal: true });
+    try {
+      const r = await fetch('/api/monitor/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: q,
+          symbol: activeSymbol,
+          timeframe: $('analyzeTf')?.value || mapChartTfToAnalyze(activeTf),
+          session_id: lastAnalyzeSession.id,
+          context: buildChatContext(),
+          history: chatHistory.slice(0, -1).slice(-8),
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(
+          typeof err.detail === 'string'
+            ? err.detail
+            : (Array.isArray(err.detail) ? err.detail.map((x) => x.msg || x).join('; ') : `HTTP ${r.status}`)
+        );
+      }
+      const data = await r.json();
+      const reply = data.reply || '（无回复）';
+      appendChatBubble('assistant', reply, { persistLocal: true });
+      if (Array.isArray(data.chat_log)) {
+        lastAnalyzeSession = { ...lastAnalyzeSession, chat_log: data.chat_log };
+      }
+    } catch (e) {
+      appendChatBubble('assistant', `失败：${e.message || e}`, { persistLocal: false });
+      toast('追问失败', String(e.message || e), 'short');
+    } finally {
+      chatBusy = false;
+      if (btn) btn.disabled = false;
+      input?.focus();
+    }
+  }
+
+  function setAnalyzeBusy(on, statusText) {
+    analyzeBusy = on;
+    const btn = $('btnAnalyze');
+    if (btn) {
+      btn.disabled = on;
+      btn.textContent = on ? '分析中…' : '分析当前合约';
+    }
+    if ($('aiStatus')) $('aiStatus').textContent = statusText || (on ? '进行中' : '就绪');
+  }
+
+  async function pollAnalyzeSession(sid) {
+    if (analyzePollTimer) {
+      clearInterval(analyzePollTimer);
+      analyzePollTimer = null;
+    }
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/sessions/${sid}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        renderAiSession(data);
+        if (data.ai_plan || data.status === 'ai_failed' || data.status === 'ai_planned') {
+          clearInterval(analyzePollTimer);
+          analyzePollTimer = null;
+          setAnalyzeBusy(false, data.status === 'ai_failed' ? '失败' : '完成');
+          loadHistorySessions();
+        }
+      } catch (_) {}
+    };
+    analyzePollTimer = setInterval(tick, 2500);
+    await tick();
+  }
+
+  async function runAnalyze() {
+    if (analyzeBusy) return;
+    const tf = $('analyzeTf')?.value || mapChartTfToAnalyze(activeTf);
+    setAnalyzeBusy(true, '拉数中');
+    $('aiIdleHint')?.classList.add('hidden');
+    // 新分析：先清空对话框，避免串到上一条历史
+    renderChatLog([], {
+      emptyHint: '分析生成中…完成后可在此追问，对话会记入本条历史。',
+    });
+    lastAnalyzeSession = null;
+    try {
+      const r = await fetch('/api/monitor/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: activeSymbol,
+          timeframe: tf,
+          market: 'futures',
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(
+          typeof err.detail === 'string'
+            ? err.detail
+            : (Array.isArray(err.detail) ? err.detail.map((x) => x.msg || x).join('; ') : `HTTP ${r.status}`)
+        );
+      }
+      const session = await r.json();
+      renderAiSession(session);
+      loadHistorySessions();
+      switchDock('history');
+      setAnalyzeBusy(true, 'AI 推理中');
+      await pollAnalyzeSession(session.id);
+    } catch (e) {
+      setAnalyzeBusy(false, '失败');
+      toast('分析失败', String(e.message || e), 'short');
+      $('aiIdleHint')?.classList.remove('hidden');
+    }
+  }
+
+  function updateTicker(price, meta) {
+    const p = Number(price);
+    if (!Number.isFinite(p)) return;
+    $('tickerPrice').textContent = p.toLocaleString(undefined, { maximumFractionDigits: 6 });
+    $('lastPrice').textContent = meta || '';
+  }
+
+  function scheduleReconnect(delayMs = 2000) {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    setConn(`重连 ${Math.round(delayMs / 1000)}s`, false);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect({ silent: true });
+    }, delayMs);
+  }
+
+  function connect(opts = {}) {
+    const silent = !!opts.silent;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (pingTimer) clearInterval(pingTimer);
+    pingTimer = null;
+    if (ws) {
+      const old = ws;
+      ws = null;
+      try { old.onclose = null; old.close(); } catch (_) {}
+    }
+
+    const symbol = normalizeSymbol(activeSymbol || $('symbolSearch').value);
+    activeSymbol = symbol;
+    activeTf = $('timeframe').value;
+    $('symbolSearch').value = symbol;
+    renderChips(symbol);
+    $('hdrPair').textContent = symbol.replace('/', '');
+    $('hdrMarket').textContent = 'U本位永续';
+    const watchList = $('watchAll').checked
+      ? watchSymbols.map(normalizeSymbol).filter((s) => s !== symbol)
+      : [];
+
+    try {
+      localStorage.setItem('monitor.symbol', symbol);
+      localStorage.setItem('monitor.timeframe', activeTf);
+      localStorage.setItem('monitor.market', MARKET);
+      localStorage.setItem('monitor.watchAll', $('watchAll').checked ? '1' : '0');
+    } catch (_) {}
+
+    // 切交易对：按当前图模式刷新
+    tvSymbolKey = '';
+    setChartData([]);
+    updateLegend(null);
+
+    setConn('连接中', false);
+    suppressToast = silent;
+    ws = new WebSocket(wsUrl(symbol, activeTf, watchList));
+
+    ws.onopen = () => {
+      setConn(watchList.length ? `合约实时 · ${watchList.length + 1}对` : '合约实时', true);
+      pingTimer = setInterval(() => {
+        if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+      }, 25000);
+    };
+
+    ws.onclose = () => {
+      setConn('断开', false);
+      scheduleReconnect(2500);
+    };
+    ws.onerror = () => setConn('异常', false);
+
+    ws.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === 'snapshot') {
+        setChartData(msg.candles || []);
+        if (msg.premium) updatePremium(msg.premium);
+        if (msg.candles?.length) {
+          const last = msg.candles[msg.candles.length - 1];
+          updateTicker(last.close, `K ${msg.candles.length}根`);
+        }
+        if (msg.telegram_ready) {
+          $('tgBadge').textContent = 'TG ✓';
+          $('tgBadge').classList.add('ok');
+        }
+        if (!suppressToast) {
+          toast('合约行情已接入', `${msg.symbol} ${msg.timeframe} · U本位`, 'info');
+        }
+        suppressToast = false;
+      } else if (msg.type === 'premium') {
+        if (normalizeSymbol(msg.symbol) !== normalizeSymbol(activeSymbol)) return;
+        updatePremium(msg);
+      } else if (msg.type === 'kline' && msg.candle) {
+        if (normalizeSymbol(msg.symbol) !== normalizeSymbol(activeSymbol)) return;
+        upsertCandle(msg.candle);
+        updateTicker(msg.candle.close, 'live');
+      } else if (msg.type === 'signal') {
+        if (normalizeSymbol(msg.symbol) !== normalizeSymbol(activeSymbol)) return;
+        // 实时状态已下沉到 Telegram / 图上角标；页面不再展示面板
+      } else if (msg.type === 'alert') {
+        if (rememberAlert(msg)) pushAlertCard(msg);
+        if (sameSymTf(msg) && candleBuf.length) {
+          redrawAlertOverlays(msg);
+        } else if (normalizeSymbol(msg.symbol) === normalizeSymbol(activeSymbol) && !candleBuf.length) {
+          pendingAlert = msg;
+        }
+        switchDock('alerts');
+        toast(
+          `${(msg.title || msg.rule || msg.direction || 'ALERT').toString()} · ${msg.symbol}`,
+          (msg.reasons || []).slice(0, 2).join('；') || '规则提醒',
+          msg.direction,
+        );
+      } else if (msg.type === 'status') {
+        if (msg.level === 'error') toast('流状态', msg.message, 'short');
+      }
+    };
+  }
+
+  function wireSymbolSearch() {
+    const input = $('symbolSearch');
+    input.addEventListener('focus', () => openDropdown());
+    input.addEventListener('input', () => openDropdown());
+    input.addEventListener('keydown', (e) => {
+      const opts = [...$('symbolDropdown').querySelectorAll('.sym-opt')];
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (!$('symbolDropdown').classList.contains('open')) openDropdown();
+        dropIndex = Math.min(dropIndex + 1, opts.length - 1);
+        highlightDrop();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        dropIndex = Math.max(dropIndex - 1, 0);
+        highlightDrop();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (opts[dropIndex]) setSelectedSymbol(opts[dropIndex].dataset.sym);
+        else {
+          const matched = filterSymbols(input.value);
+          if (matched[0]) setSelectedSymbol(matched[0]);
+        }
+      } else if (e.key === 'Escape') {
+        closeDropdown();
+        input.value = activeSymbol;
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.sym-picker')) closeDropdown();
+    });
+  }
+
+  async function init() {
+    wireSymbolSearch();
+    document.querySelectorAll('.mode-btn').forEach((btn) => {
+      btn.addEventListener('click', () => setChartMode(btn.dataset.mode));
+    });
+    $('btnAddWatch').addEventListener('click', () => {
+      const q = $('symbolSearch').value.trim();
+      const pick = filterSymbols(q)[0] || activeSymbol;
+      addToWatch(pick);
+      setSelectedSymbol(pick, { reconnect: normalizeSymbol(pick) !== normalizeSymbol(activeSymbol) });
+    });
+
+    const cfg = await fetch('/api/monitor/config').then(r => r.json());
+    watchSymbols = loadWatchlist(cfg.symbols || []);
+    saveWatchlist();
+
+    try {
+      chartMode = localStorage.getItem('monitor.chartMode') || 'native';
+    } catch (_) {
+      chartMode = 'native';
+    }
+    if (chartMode !== 'tv') chartMode = 'native';
+    setChartMode(chartMode, { remount: false });
+
+    (cfg.timeframes || ['15m']).forEach(t => {
+      const o = document.createElement('option');
+      o.value = t;
+      o.textContent = TF_LABELS[t] || t;
+      if (t === (cfg.defaults?.timeframe || '15m')) o.selected = true;
+      $('timeframe').appendChild(o);
+    });
+
+    fetch('/api/monitor/symbols')
+      .then(r => r.json())
+      .then((data) => { allPerpSymbols = data.symbols || watchSymbols; })
+      .catch(() => { allPerpSymbols = watchSymbols.slice(); });
+
+    let savedSym = null, savedTf = null, savedWatch = null;
+    try {
+      savedSym = localStorage.getItem('monitor.symbol');
+      savedTf = localStorage.getItem('monitor.timeframe');
+      savedWatch = localStorage.getItem('monitor.watchAll');
+    } catch (_) {}
+
+    activeSymbol = normalizeSymbol(savedSym || cfg.defaults?.symbol || 'BTC/USDT');
+    $('symbolSearch').value = activeSymbol;
+    if (savedTf) $('timeframe').value = savedTf;
+    if (savedWatch !== null) $('watchAll').checked = savedWatch === '1';
+    renderChips(activeSymbol);
+
+    if (cfg.telegram_ready) {
+      $('tgBadge').textContent = 'TG ✓';
+      $('tgBadge').classList.add('ok');
+    }
+    alwaysOnEnabled = !!cfg.always_on;
+    daemonTimeframes = Array.isArray(cfg.daemon?.timeframes) && cfg.daemon.timeframes.length
+      ? cfg.daemon.timeframes
+      : [cfg.daemon?.timeframe || cfg.defaults?.timeframe || '15m'];
+    if ($('daemonBadge')) {
+      if (alwaysOnEnabled) {
+        const tfs = daemonTimeframes.join('/');
+        $('daemonBadge').textContent = `常驻 ·${tfs}`;
+        $('daemonBadge').title = `关网页也推 TG · 多级别 ${tfs}（图表周期不影响）`;
+        $('daemonBadge').classList.add('ok');
+        syncDaemonWatchlist();
+      } else {
+        $('daemonBadge').textContent = '常驻关';
+        $('daemonBadge').title = '在 .env 设 MONITOR_ALWAYS_ON=true 并重启 web，关网页也能推 TG';
+      }
+    }
+
+    loadPersistedAlerts();
+    alertTotal = alertStore.length;
+    try {
+      const raw = localStorage.getItem('monitor.dockFilterSym');
+      if (raw === '0') dockFilterCurrent = false;
+      if (raw === '1') dockFilterCurrent = true;
+    } catch (_) {}
+    if ($('dockFilterSym')) $('dockFilterSym').checked = dockFilterCurrent;
+    renderAlertList();
+    fetch('/api/monitor/alerts')
+      .then((r) => r.json())
+      .then((data) => {
+        (data.alerts || []).forEach((a) => rememberAlert(a));
+        alertTotal = alertStore.length;
+        renderAlertList();
+      })
+      .catch(() => {});
+
+    document.querySelectorAll('.dock-tab').forEach((btn) => {
+      btn.addEventListener('click', () => switchDock(btn.dataset.dock));
+    });
+    $('dockFilterSym')?.addEventListener('change', () => {
+      dockFilterCurrent = !!$('dockFilterSym').checked;
+      try { localStorage.setItem('monitor.dockFilterSym', dockFilterCurrent ? '1' : '0'); } catch (_) {}
+      refreshDockLists();
+    });
+    loadHistorySessions();
+
+    $('btnAnalyze')?.addEventListener('click', () => runAnalyze());
+    $('btnChatSend')?.addEventListener('click', () => sendChatQuestion());
+    $('chatInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendChatQuestion();
+      }
+    });
+    syncAnalyzeHeader();
+    const mapped = mapChartTfToAnalyze($('timeframe').value || activeTf);
+    if ($('analyzeTf')) $('analyzeTf').value = mapped;
+
+    $('timeframe').addEventListener('change', () => {
+      const m = mapChartTfToAnalyze($('timeframe').value);
+      if ($('analyzeTf') && !analyzeBusy) $('analyzeTf').value = m;
+      connect({ silent: true });
+    });
+    $('watchAll').addEventListener('change', () => connect({ silent: true }));
+
+    connect({ silent: false });
+  }
+
+  init().catch(err => {
+    console.error(err);
+    toast('初始化失败', String(err), 'short');
+  });
+})();
+</script>
+</body>
+</html>
