@@ -99,6 +99,7 @@ Web **固定 U 本位永续**，无需再配「现货 / 合约」切换。
 analyst practice BTC          # 创建分析会话
 analyst verify                # 验证已到期会话
 analyst history               # 历史列表
+analyst backtest BTC -t 15m   # 策略/规则历史回测
 analyst monitor once BTC -t 15m
 analyst monitor start BTC -t 15m
 ```
@@ -108,10 +109,32 @@ analyst monitor start BTC -t 15m
 | `analyst web` | Web + 常驻盯盘 |
 | `analyst practice <symbol>` | AI 分析并落库 |
 | `analyst verify` | 验证到期会话 |
+| `analyst backtest <symbol>` | 历史回放回测（策略胜率 + 规则命中率） |
 | `analyst history` / `review <id>` | 历史 / 单条复盘 |
 | `analyst progress` / `weakness` / `ai-benchmark` | 统计 |
 | `analyst config test-llm` | LLM 连通 |
 | `analyst db init` | 初始化 SQLite |
+
+---
+
+## 回测
+
+用**和实时盯盘同一套评估代码**在历史 K 线上向前回放，量化告警质量：
+
+```bash
+analyst backtest BTC -t 15m --bars 1000        # 最近 1000 根 15m
+analyst backtest SOL -t 1h --bars 1500 --json r.json   # 结果另存 JSON
+analyst backtest ETH -t 4h --no-rules          # 只测策略，跳过规则统计
+```
+
+两条评估线：
+
+| | 双线反转策略 | 规则告警 |
+|---|---|---|
+| **怎么测** | 逐根收盘回放，出信号即按计划模拟下单，逐根判定止损 / 止盈 / 超时（同根双触保守按止损） | 每条带方向的告警做 ATR 屏障前瞻：`--horizon` 根内先顺向走 1×ATR 算命中，先逆向算打脸 |
+| **输出** | 胜率、累计 R、平均 R/笔、盈亏比 PF、最大回撤、逐笔明细 | 每条规则的样本数 / 命中率 / 平均前瞻收益 |
+
+读数参考：规则命中率 ≈50% 说明单独使用无优势（只适合当上下文）；样本 < 10 结论不可靠；突破型策略在震荡段表现差属正常，换周期和趋势段多测几组再下结论。
 
 ---
 

@@ -738,6 +738,147 @@ def monitor_start(
 
 
 # ═══════════════════════════════════════════════════════════════
+# 回测
+# ═══════════════════════════════════════════════════════════════
+@app.command()
+def backtest(
+    symbol: str = typer.Argument("BTC", help="币种，如 BTC / ETH / SOL"),
+    timeframe: str = typer.Option("15m", "--timeframe", "-t", help="K 线周期"),
+    bars: int = typer.Option(1000, "--bars", help="回放历史根数（≤1500）"),
+    market: str = typer.Option("futures", "--market", help="spot 或 futures"),
+    rules: bool = typer.Option(True, "--rules/--no-rules", help="是否统计规则告警命中率"),
+    horizon: int = typer.Option(12, "--horizon", help="规则前瞻窗口（根）"),
+    max_hold: int = typer.Option(96, "--max-hold", help="策略单笔最长持仓（根）"),
+    json_out: Optional[str] = typer.Option(None, "--json", help="结果另存 JSON 文件"),
+):
+    """🧪 历史回放回测：双线反转策略胜率 + 各规则告警前瞻命中率。"""
+    import json as _json
+
+    from analyst.backtest import run_backtest
+    from analyst.compute.strategies.double_line_reversal import DoubleLineConfig
+    from analyst.config import get_settings
+
+    settings = get_settings()
+    sym = _normalize_symbol(symbol)
+    strategy_cfg = DoubleLineConfig(
+        kelly_scale=settings.monitor_kelly_scale,
+        stop_buffer_pct=settings.monitor_stop_buffer_pct,
+        take_profit_r=settings.monitor_take_profit_r,
+        ema_trend_period=settings.monitor_ema_trend_period,
+        require_ema200=settings.monitor_require_ema200,
+    )
+
+    with console.status(f"[bold cyan]回放 {sym} {timeframe} × {bars} 根..."):
+        report = run_backtest(
+            sym,
+            timeframe,
+            bars=bars,
+            market=market,
+            strategy_cfg=strategy_cfg,
+            include_rules=rules,
+            rule_horizon=horizon,
+            max_hold=max_hold,
+        )
+
+    span = ""
+    if report.start and report.end:
+        span = f"{report.start:%m-%d %H:%M} → {report.end:%m-%d %H:%M} UTC"
+    console.print(
+        Panel(
+            f"品种：[bold]{report.symbol}[/bold] · 周期：{report.timeframe} · "
+            f"共 {report.bars} 根\n{span}",
+            title="🧪 回测范围",
+            border_style="cyan",
+        )
+    )
+
+    # ── 策略结果 ──
+    closed = report.closed_trades
+    if closed:
+        t = Table(title="📐 双线反转策略（触发即模拟下单）")
+        t.add_column("项", style="cyan")
+        t.add_column("值", justify="right")
+        t.add_row("信号次数", str(len(report.trades)))
+        t.add_row("已结算", str(len(closed)))
+        t.add_row("胜率(TP/SL)", f"{report.win_rate:.0%}")
+        t.add_row("累计 R", f"{report.total_r:+.2f}")
+        t.add_row("平均 R/笔", f"{report.avg_r:+.2f}")
+        pf = report.profit_factor
+        t.add_row("盈亏比 PF", "∞" if pf == float("inf") else f"{pf:.2f}")
+        t.add_row("最大回撤", f"{report.max_drawdown_r:.2f} R")
+        console.print(t)
+
+        dt = Table(title="交易明细", show_header=True)
+        dt.add_column("时间")
+        dt.add_column("方向")
+        dt.add_column("入场", justify="right")
+        dt.add_column("SL", justify="right")
+        dt.add_column("TP", justify="right")
+        dt.add_column("结果")
+        dt.add_column("R", justify="right")
+        dt.add_column("持仓根数", justify="right")
+        for tr in report.trades:
+            style = {"tp": "green", "sl": "red"}.get(tr.outcome, "yellow")
+            dt.add_row(
+                tr.entry_time.strftime("%m-%d %H:%M"),
+                tr.direction,
+                f"{tr.entry:.6g}",
+                f"{tr.stop_loss:.6g}",
+                f"{tr.take_profit:.6g}",
+                f"[{style}]{tr.outcome}[/{style}]",
+                _fmt_r(tr.pnl_r),
+                str(tr.bars_held),
+            )
+        console.print(dt)
+    else:
+        console.print(
+            "[yellow]该区间内双线反转策略未触发任何可交易信号"
+            "（形态+EMA200+突破全过滤后为空）[/yellow]"
+        )
+
+    # ── 规则命中率 ──
+    if rules and report.rule_stats:
+        rt = Table(
+            title=f"📡 规则告警前瞻命中率（{horizon} 根内先走 ±1×ATR）"
+        )
+        rt.add_column("规则", style="cyan")
+        rt.add_column("样本", justify="right")
+        rt.add_column("命中", justify="right")
+        rt.add_column("打脸", justify="right")
+        rt.add_column("未决", justify="right")
+        rt.add_column("命中率", justify="right")
+        rt.add_column("平均前瞻收益", justify="right")
+        for name, st in sorted(
+            report.rule_stats.items(), key=lambda kv: -kv[1].win_rate
+        ):
+            wr = st.win_rate
+            wr_style = "green" if wr >= 0.55 else ("red" if wr < 0.45 else "yellow")
+            rt.add_row(
+                name,
+                str(st.n),
+                str(st.wins),
+                str(st.losses),
+                str(st.flat),
+                f"[{wr_style}]{wr:.0%}[/{wr_style}]",
+                f"{st.avg_fwd_ret_pct:+.3f}%",
+            )
+        console.print(rt)
+        console.print(
+            "[dim]命中率≈50% 说明该规则单独使用无优势，只适合当上下文参考；"
+            "样本 < 10 时结论不可靠。[/dim]"
+        )
+
+    if json_out:
+        from pathlib import Path as _P
+
+        _P(json_out).write_text(
+            _json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        console.print(f"[green]✅ 已保存 {json_out}[/green]")
+
+
+# ═══════════════════════════════════════════════════════════════
 # Web 界面
 # ═══════════════════════════════════════════════════════════════
 @app.command()
