@@ -89,9 +89,9 @@ class PaperTrade:
 
 @dataclass
 class PaperState:
-    starting_equity: float = 10.0
-    cash: float = 10.0
-    equity: float = 10.0
+    starting_equity: float = 100.0
+    cash: float = 100.0
+    equity: float = 100.0
     realized_pnl: float = 0.0
     fees_paid: float = 0.0
     positions: list[PaperPosition] = field(default_factory=list)
@@ -144,7 +144,7 @@ class PaperState:
                 }))
             except TypeError:
                 continue
-        start = float(data.get("starting_equity") or 10.0)
+        start = float(data.get("starting_equity") or 100.0)
         return cls(
             starting_equity=start,
             cash=float(data.get("cash", start)),
@@ -185,7 +185,7 @@ class PaperBroker:
         except Exception as e:
             logger.warning("加载纸面账本失败，使用新账户: %s", e)
             settings = get_settings()
-            start = float(getattr(settings, "monitor_paper_equity", 10.0) or 10.0)
+            start = float(getattr(settings, "monitor_paper_equity", 100.0) or 100.0)
             self.state = PaperState(starting_equity=start, cash=start, equity=start)
 
     def _save(self) -> None:
@@ -226,7 +226,7 @@ class PaperBroker:
             start = float(
                 starting_equity
                 if starting_equity is not None
-                else (getattr(settings, "monitor_paper_equity", 10.0) or 10.0)
+                else (getattr(settings, "monitor_paper_equity", 100.0) or 100.0)
             )
             self.state = PaperState(starting_equity=start, cash=start, equity=start)
             self._marks.clear()

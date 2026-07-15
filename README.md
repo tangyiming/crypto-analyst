@@ -11,7 +11,7 @@
 顶栏 **「自动交易」** 现为纸面账本（**非真金**）：
 
 - 跟单 **`ai_plan` / `double_line` / `cycle_switch`**（可用 `MONITOR_PAPER_SOURCES` 裁剪）
-- 默认初始 **10 USDT**，单笔风险约权益 1%；开平各收手续费（默认 4 bps）
+- 默认初始 **100 USDT**，单笔风险约权益 1%；开平各收手续费（默认 4 bps）
 - `ai_plan` / 双线：标记价触止损 / 止盈 1 平仓；`cycle_switch`：按目标仓位同步，信号平仓
 - 页面按策略汇总已实现 / 浮动盈亏，持仓约 5 秒刷新；可选 TG「📄 纸面…」
 - 落盘：`.cache/data/paper_account.json`；API：`GET /api/paper/status` · `POST /api/paper/reset`
@@ -165,7 +165,7 @@ analyst config test-llm
 | `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认**只用免费 Groq**，失败不回落付费线路（需 `GROQ_API_KEY`） |
 | `MONITOR_AI_COOLDOWN_MINUTES` | 同品种+AI 周期冷却（默认 240），防候选刷屏 |
 | `MONITOR_PAPER_ENABLED` | `true`：纸面模拟炒币，跟 `ai_plan`/`double_line`/`cycle_switch` |
-| `MONITOR_PAPER_EQUITY` | 初始虚拟权益（默认 10 USDT） |
+| `MONITOR_PAPER_EQUITY` | 初始虚拟权益（默认 100 USDT） |
 | `MONITOR_PAPER_SOURCES` | 纸面跟单来源，默认 `ai_plan,double_line,cycle_switch` |
 | `MONITOR_PAPER_MAX_POSITIONS` | 最大同时持仓数（默认 12；去重键=品种×策略） |
 | `MONITOR_TG_TRADE_RULES` | TG 白名单；默认仅 `ai_plan`。空=全部规则推 TG |

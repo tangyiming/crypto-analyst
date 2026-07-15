@@ -108,9 +108,9 @@ class Settings(BaseSettings):
     monitor_ai_cooldown_minutes: int = Field(default=240)
     # 盯盘 AI 确认只走免费层（Groq）；失败不回落付费 DeepSeek/b.ai/Anthropic
     monitor_ai_free_only: bool = Field(default=True)
-    # 纸面模拟炒币：只跟 ai_plan，初始权益 / 单笔风险 / 费率
+    # 纸面模拟炒币：跟多策略，初始权益 / 单笔风险 / 费率
     monitor_paper_enabled: bool = Field(default=True)
-    monitor_paper_equity: float = Field(default=10.0)
+    monitor_paper_equity: float = Field(default=100.0)
     monitor_paper_risk_pct: float = Field(default=0.01)
     monitor_paper_fee_bps: float = Field(default=4.0)
     monitor_paper_max_positions: int = Field(default=12)
