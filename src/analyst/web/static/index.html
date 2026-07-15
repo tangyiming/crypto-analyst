@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Crypto Analyst</title>
+  <link rel="icon" href="/favicon.ico" sizes="32x32" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta name="theme-color" content="#0b0e11" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://s3.tradingview.com/tv.js"></script>
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -309,31 +312,60 @@
       padding: 8px 10px;
     }
     .dock-pane.hidden { display: none; }
-    /* ── 四年周期浮层 ── */
+    /* ── 四年周期悬浮层（全屏顶层） ── */
     .cycle-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px 16px 32px;
+    }
+    .cycle-overlay.hidden { display: none !important; }
+    .cycle-backdrop {
       position: absolute;
       inset: 0;
-      z-index: 30;
-      background: rgba(11, 14, 17, 0.97);
-      border: 1px solid var(--line);
+      background: rgba(11, 14, 17, 0.72);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      cursor: pointer;
+    }
+    .cycle-float {
+      position: relative;
+      z-index: 1;
+      width: min(920px, 100%);
+      max-height: min(86vh, 880px);
       display: flex;
       flex-direction: column;
       min-height: 0;
+      background: linear-gradient(180deg, #151a21 0%, #12161c 100%);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow:
+        0 24px 64px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(240, 185, 11, 0.06);
+      overflow: hidden;
+      animation: cycle-float-in 0.22s ease-out;
     }
-    .cycle-overlay.hidden { display: none !important; }
+    @keyframes cycle-float-in {
+      from { opacity: 0; transform: translateY(12px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
     .cycle-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 14px;
+      padding: 12px 16px;
       border-bottom: 1px solid var(--line);
       flex-shrink: 0;
+      background: rgba(14, 18, 24, 0.9);
     }
     .cycle-body {
       flex: 1;
       min-height: 0;
       overflow: auto;
-      padding: 12px 14px 16px;
+      padding: 14px 16px 18px;
     }
     .cycle-stats {
       display: grid;
@@ -375,7 +407,7 @@
     }
     #cyclePriceCanvas {
       width: 100%;
-      height: 140px;
+      height: 168px;
       display: block;
       border: 1px solid var(--line);
       border-radius: 4px;
@@ -589,25 +621,6 @@
       </div>
       <div id="alertLevels" class="hidden absolute left-3 bottom-3 z-10 text-[11px] font-mono px-2 py-1"
            style="background:rgba(18,22,28,.92); border:1px solid var(--line); color:var(--text);"></div>
-      <div id="cycleOverlay" class="cycle-overlay hidden" aria-label="四年周期位置">
-        <div class="cycle-head">
-          <div>
-            <div class="text-sm font-semibold">四年周期 · 刻舟求剑</div>
-            <div id="cycleSummaryLine" class="text-[11px] mt-0.5" style="color:var(--muted)">加载中…</div>
-          </div>
-          <button type="button" id="btnCycleClose" class="chip" style="font-size:16px;line-height:1;padding:4px 10px">×</button>
-        </div>
-        <div class="cycle-body">
-          <div id="cycleStats" class="cycle-stats"></div>
-          <div class="text-[11px]" style="color:var(--muted)">本相位进度</div>
-          <div class="cycle-phase-bar"><div id="cyclePhaseFill" class="cycle-phase-fill bull" style="width:0%"></div></div>
-          <div id="cyclePhaseLabel" class="text-[11px] font-mono" style="color:var(--text)"></div>
-          <div class="text-[11px] mt-3 mb-1" style="color:var(--muted)">周期时间轴（绿=牛 红=熊 · 黄线=今天 · ◆=减半）</div>
-          <svg id="cycleSvg" class="cycle-timeline-svg" viewBox="0 0 1000 110" preserveAspectRatio="none"></svg>
-          <canvas id="cyclePriceCanvas" height="140"></canvas>
-          <div id="cycleAlerts" class="mt-3"></div>
-        </div>
-      </div>
     </div>
 
     <aside class="ai-panel" aria-label="AI 行情分析">
@@ -661,13 +674,36 @@
     </div>
     <div class="dock-pane hidden" id="paneCycle">
       <div class="text-xs py-2" style="color:var(--muted)">
-        点击下方按钮在图表区打开完整周期视图（时间轴 + 价格背景色带）。
+        点击下方按钮打开悬浮周期视图（可点遮罩或 Esc 关闭）。
         <button type="button" id="btnCycleFromDock" class="chip mt-2">打开周期图</button>
       </div>
     </div>
     <div class="dock-pane" id="paneAlerts"></div>
     <div class="dock-pane hidden" id="paneHistory"></div>
   </footer>
+</div>
+
+<div id="cycleOverlay" class="cycle-overlay hidden" aria-label="四年周期位置" role="dialog" aria-modal="true">
+  <div class="cycle-backdrop" id="cycleBackdrop" aria-hidden="true"></div>
+  <div class="cycle-float">
+    <div class="cycle-head">
+      <div>
+        <div class="text-sm font-semibold">四年周期 · 刻舟求剑</div>
+        <div id="cycleSummaryLine" class="text-[11px] mt-0.5" style="color:var(--muted)">加载中…</div>
+      </div>
+      <button type="button" id="btnCycleClose" class="chip" title="关闭（Esc）" style="font-size:16px;line-height:1;padding:4px 10px">×</button>
+    </div>
+    <div class="cycle-body">
+      <div id="cycleStats" class="cycle-stats"></div>
+      <div class="text-[11px]" style="color:var(--muted)">本相位进度</div>
+      <div class="cycle-phase-bar"><div id="cyclePhaseFill" class="cycle-phase-fill bull" style="width:0%"></div></div>
+      <div id="cyclePhaseLabel" class="text-[11px] font-mono" style="color:var(--text)"></div>
+      <div class="text-[11px] mt-3 mb-1" style="color:var(--muted)">周期时间轴（绿=牛 红=熊 · 黄线=今天 · ◆=减半）</div>
+      <svg id="cycleSvg" class="cycle-timeline-svg" viewBox="0 0 1000 110" preserveAspectRatio="none"></svg>
+      <canvas id="cyclePriceCanvas" height="168"></canvas>
+      <div id="cycleAlerts" class="mt-3"></div>
+    </div>
+  </div>
 </div>
 
 <div id="toasts" class="fixed bottom-52 right-4 z-40 space-y-2 w-80 max-w-[92vw]"></div>
@@ -1864,7 +1900,7 @@
       $('dockHint').textContent = name === 'history'
         ? '点条目 → 右侧回看该次分析'
         : name === 'cycle'
-          ? '图表区查看周期时间轴'
+          ? '悬浮窗口查看周期时间轴'
           : '点告警 → 直连图标记';
     }
   }
@@ -2562,6 +2598,12 @@
     $('btnCyclePanel')?.addEventListener('click', () => openCycleOverlay());
     $('btnCycleClose')?.addEventListener('click', () => closeCycleOverlay());
     $('btnCycleFromDock')?.addEventListener('click', () => openCycleOverlay());
+    $('cycleBackdrop')?.addEventListener('click', () => closeCycleOverlay());
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !$('cycleOverlay')?.classList.contains('hidden')) {
+        closeCycleOverlay();
+      }
+    });
     window.addEventListener('resize', () => {
       if (cycleData && !$('cycleOverlay')?.classList.contains('hidden')) {
         renderCyclePriceCanvas(cycleData);
