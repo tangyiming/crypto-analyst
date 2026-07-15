@@ -162,7 +162,9 @@ analyst config test-llm
 | `MONITOR_CYCLE_SWITCH_ENABLED` | `true`：各盯盘币对跑 `cycle_switch`；相对上一根 K 仓位变化 → 页面 + AI 候选（**不直推 TG**） |
 | `MONITOR_CYCLE_OUTLOOK_ENABLED` | `true`：每天提醒一次当前周期位置（BTC，**UTC 每天最多 1 条**） |
 | `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有双线/规则/`cycle_switch` 候选时才调 AI；结论 `long`/`short` 才推 `ai_plan` |
-| `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认**只用免费 Groq**，失败不回落付费线路（需 `GROQ_API_KEY`） |
+| `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认**只用免费层**（Groq/Cerebras/Gemini/OpenRouter/SambaNova），失败不回落付费 |
+| `LLM_FREE_ORDER` | 免费层顺序，默认 `nvidia,groq,cerebras,openrouter,sambanova,gemini`（有 key 才实际调用） |
+| `CEREBRAS_API_KEY` / `NVIDIA_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY` / `SAMBANOVA_API_KEY` | 额外免费线路；任选配置即可 failover |
 | `MONITOR_AI_COOLDOWN_MINUTES` | 同品种+AI 周期冷却（默认 240），防候选刷屏 |
 | `MONITOR_PAPER_ENABLED` | `true`：纸面模拟炒币，跟 `ai_plan`/`double_line`/`cycle_switch` |
 | `MONITOR_PAPER_EQUITY` | 初始虚拟权益（默认 100 USDT） |

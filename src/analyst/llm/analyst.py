@@ -110,9 +110,23 @@ OPENAI_TOOL = {
 PRICING: dict[str, dict[str, float]] = {
     # Groq 免费层（全部记为 0）
     "llama-3.3-70b-versatile": {"input": 0.0, "output": 0.0},
+    "llama-3.3-70b": {"input": 0.0, "output": 0.0},
+    "gpt-oss-120b": {"input": 0.0, "output": 0.0},
+    "gemma-4-31b": {"input": 0.0, "output": 0.0},
+    "zai-glm-4.7": {"input": 0.0, "output": 0.0},
     "llama-3.1-8b-instant": {"input": 0.0, "output": 0.0},
     "qwen-2.5-72b-instruct": {"input": 0.0, "output": 0.0},
     "deepseek-r1-distill-llama-70b": {"input": 0.0, "output": 0.0},
+    "gemini-2.0-flash": {"input": 0.0, "output": 0.0},
+    "gemini-2.5-flash": {"input": 0.0, "output": 0.0},
+    "gemini-flash-latest": {"input": 0.0, "output": 0.0},
+    "meta-llama/llama-3.3-70b-instruct:free": {"input": 0.0, "output": 0.0},
+    "openrouter/free": {"input": 0.0, "output": 0.0},
+    "meta/llama-3.3-70b-instruct": {"input": 0.0, "output": 0.0},
+    "meta/llama-3.1-8b-instruct": {"input": 0.0, "output": 0.0},
+    "deepseek-ai/deepseek-v4-flash": {"input": 0.0, "output": 0.0},
+    "deepseek-ai/deepseek-v4-pro": {"input": 0.0, "output": 0.0},
+    "Meta-Llama-3.3-70B-Instruct": {"input": 0.0, "output": 0.0},
     # DeepSeek 官方
     "deepseek-chat": {"input": 0.27, "output": 1.10},
     "deepseek-reasoner": {"input": 0.55, "output": 2.19},
@@ -153,6 +167,90 @@ def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
 # ═══════════════════════════════════════════════════════════════
 # 主入口：根据 provider 路由
 # ═══════════════════════════════════════════════════════════════
+
+# 免费 OpenAI 兼容层（有 key 才启用；顺序见 settings.llm_free_order）
+_FREE_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
+    "groq": {
+        "key_attr": "groq_api_key",
+        "model_attr": "groq_model",
+        "base_attr": "groq_base_url",
+        "default_base": "https://api.groq.com/openai/v1",
+        "default_model": "llama-3.3-70b-versatile",
+    },
+    "cerebras": {
+        "key_attr": "cerebras_api_key",
+        "model_attr": "cerebras_model",
+        "base_attr": "cerebras_base_url",
+        "default_base": "https://api.cerebras.ai/v1",
+        "default_model": "gpt-oss-120b",
+    },
+    "gemini": {
+        "key_attr": "gemini_api_key",
+        "model_attr": "gemini_model",
+        "base_attr": "gemini_base_url",
+        "default_base": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "default_model": "gemini-flash-latest",
+    },
+    "openrouter": {
+        "key_attr": "openrouter_api_key",
+        "model_attr": "openrouter_model",
+        "base_attr": "openrouter_base_url",
+        "default_base": "https://openrouter.ai/api/v1",
+        "default_model": "openrouter/free",
+    },
+    "sambanova": {
+        "key_attr": "sambanova_api_key",
+        "model_attr": "sambanova_model",
+        "base_attr": "sambanova_base_url",
+        "default_base": "https://api.sambanova.ai/v1",
+        "default_model": "Meta-Llama-3.3-70B-Instruct",
+    },
+    "nvidia": {
+        "key_attr": "nvidia_api_key",
+        "model_attr": "nvidia_model",
+        "base_attr": "nvidia_base_url",
+        "default_base": "https://integrate.api.nvidia.com/v1",
+        "default_model": "deepseek-ai/deepseek-v4-flash",
+    },
+}
+
+
+def list_free_endpoints(settings=None) -> list[dict[str, Any]]:
+    """返回已配置 key 的免费线路（按 LLM_FREE_ORDER）。"""
+    settings = settings or get_settings()
+    raw = (getattr(settings, "llm_free_order", "") or "").strip()
+    order = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    if not order:
+        order = list(_FREE_PROVIDER_DEFAULTS.keys())
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for name in order:
+        if name in seen or name not in _FREE_PROVIDER_DEFAULTS:
+            continue
+        seen.add(name)
+        if name == "groq" and not getattr(settings, "llm_try_groq_first", True):
+            continue
+        spec = _FREE_PROVIDER_DEFAULTS[name]
+        key = (getattr(settings, spec["key_attr"], "") or "").strip()
+        if not key:
+            continue
+        model = (getattr(settings, spec["model_attr"], "") or "").strip() or spec[
+            "default_model"
+        ]
+        base = (getattr(settings, spec["base_attr"], "") or "").strip() or spec[
+            "default_base"
+        ]
+        out.append(
+            {
+                "name": name,
+                "api_key": key,
+                "model": model,
+                "base_url": base,
+            }
+        )
+    return out
+
+
 def analyze_market(
     market_snapshot: dict,
     indicators_snapshot: dict,
@@ -163,17 +261,18 @@ def analyze_market(
     """让 AI 分析市场并给出交易计划。
 
     Args:
-        free_only: True 时只走免费前置层（当前为 Groq），失败不回落 b.ai / DeepSeek 等付费线路。
-                   盯盘自动「候选确认」应开启，避免刷爆付费额度。
+        free_only: True 时只走免费前置层（Groq/Cerebras/Gemini/OpenRouter/SambaNova），
+                   失败不回落 b.ai / DeepSeek 等付费线路。盯盘自动「候选确认」应开启。
     """
     settings = get_settings()
     provider = settings.llm_provider.lower()
-    groq_key = (getattr(settings, "groq_api_key", "") or "").strip()
-    try_groq = bool(groq_key and getattr(settings, "llm_try_groq_first", True))
+    free_eps = list_free_endpoints(settings)
 
-    if free_only and not try_groq:
+    if free_only and not free_eps:
         raise RuntimeError(
-            "盯盘 AI 确认仅用免费模型：请配置 GROQ_API_KEY（且 LLM_TRY_GROQ_FIRST=true），"
+            "盯盘 AI 确认仅用免费模型：请至少配置 GROQ_API_KEY / CEREBRAS_API_KEY / "
+            "GEMINI_API_KEY / OPENROUTER_API_KEY / SAMBANOVA_API_KEY / NVIDIA_API_KEY 之一"
+            "（且 LLM_TRY_GROQ_FIRST=true 才会启用 Groq），"
             "不会回落 DeepSeek / b.ai / Anthropic 等付费线路"
         )
 
@@ -190,37 +289,45 @@ def analyze_market(
             f"不支持的 LLM_PROVIDER: {provider}（可选: deepseek / openai / anthropic）"
         )
 
-    if try_groq:
-        try:
-            sys_g = load_system_prompt("groq")
-            tpl_g = load_user_template("groq")
-            user_g = _build_user_message(
-                tpl_g,
-                market_snapshot,
-                indicators_snapshot,
-                user_account,
-                recent_lessons_max_items=3,
+    free_errors: list[str] = []
+    if free_eps:
+        sys_g = load_system_prompt("groq")
+        tpl_g = load_user_template("groq")
+        user_g = _build_user_message(
+            tpl_g,
+            market_snapshot,
+            indicators_snapshot,
+            user_account,
+            recent_lessons_max_items=3,
+        )
+        g_cap = int(getattr(settings, "groq_max_tokens", 4096) or 4096)
+        g_cap = max(1024, min(g_cap, 8192))
+        user_cap = max(1024, int(settings.llm_max_tokens or 4000))
+        eff_max = min(g_cap, user_cap)
+        for ep in free_eps:
+            try:
+                return _call_openai_compatible(
+                    sys_g,
+                    user_g,
+                    settings,
+                    override_api_key=ep["api_key"],
+                    override_base_url=ep["base_url"],
+                    override_model=ep["model"],
+                    override_max_tokens=eff_max,
+                    routing_provider=ep["name"],
+                    skip_deepseek_extras=True,
+                    prompt_version_for_response="groq",
+                    default_headers=_free_provider_headers(ep["name"]),
+                )
+            except Exception as exc:
+                msg = f"{ep['name']}({ep['model']}): {exc}"
+                free_errors.append(msg)
+                _log.warning("免费线路失败，尝试下一家: %s", msg)
+
+        if free_only:
+            raise RuntimeError(
+                "盯盘 AI 确认仅用免费线路，全部失败: " + " | ".join(free_errors)
             )
-            g_cap = int(getattr(settings, "groq_max_tokens", 4096) or 4096)
-            g_cap = max(1024, min(g_cap, 8192))
-            user_cap = max(1024, int(settings.llm_max_tokens or 4000))
-            eff_max = min(g_cap, user_cap)
-            return _call_openai_compatible(
-                sys_g,
-                user_g,
-                settings,
-                override_api_key=groq_key,
-                override_base_url=settings.groq_base_url or "https://api.groq.com/openai/v1",
-                override_model=settings.groq_model,
-                override_max_tokens=eff_max,
-                routing_provider="groq",
-                skip_deepseek_extras=True,
-                prompt_version_for_response="groq",
-            )
-        except Exception as exc:
-            if free_only:
-                raise RuntimeError(f"盯盘 AI 确认仅用免费 Groq，调用失败: {exc}") from exc
-            _log.warning("Groq 请求失败，尝试 b.ai 或主线路: %s", exc)
 
     if free_only:
         raise RuntimeError("盯盘 AI 确认 free_only=True，拒绝付费回落")
@@ -250,6 +357,15 @@ def analyze_market(
             _log.warning("b.ai 请求失败，采用主线路 %s: %s", provider, exc)
 
     return _fallback()
+
+
+def _free_provider_headers(name: str) -> dict[str, str] | None:
+    if name == "openrouter":
+        return {
+            "HTTP-Referer": "https://github.com/crypto-analyst",
+            "X-Title": "crypto-analyst",
+        }
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -316,6 +432,9 @@ def _openai_tool_choice(base_url: str | None, provider: str):
     if _is_bai_gateway(base_url):
         return "auto"
     if provider == "deepseek":
+        return "auto"
+    # 部分免费网关对强制 tool_choice 支持不稳，用 auto + 文本 JSON 兜底
+    if provider in ("gemini", "openrouter", "sambanova", "cerebras", "nvidia"):
         return "auto"
     return {"type": "function", "function": {"name": "submit_analysis"}}
 
@@ -500,6 +619,7 @@ def _call_openai_compatible(
     routing_provider: str | None = None,
     skip_deepseek_extras: bool = False,
     prompt_version_for_response: str | None = None,
+    default_headers: dict[str, str] | None = None,
 ) -> LLMResponse:
     from openai import OpenAI
 
@@ -525,7 +645,10 @@ def _call_openai_compatible(
 
     model = override_model or settings.llm_model
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client_kwargs: dict[str, Any] = {"api_key": api_key, "base_url": base_url}
+    if default_headers:
+        client_kwargs["default_headers"] = default_headers
+    client = OpenAI(**client_kwargs)
 
     start = time.time()
     max_tokens = (

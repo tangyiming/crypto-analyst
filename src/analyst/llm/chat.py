@@ -23,18 +23,23 @@ CHAT_SYSTEM = """你是加密 U 本位永续合约助手，回答用户关于当
 def _resolve_openai_client(settings):
     from openai import OpenAI
 
-    from analyst.llm.analyst import DEFAULT_BASE_URLS
+    from analyst.llm.analyst import (
+        DEFAULT_BASE_URLS,
+        _free_provider_headers,
+        list_free_endpoints,
+    )
 
-    groq_key = (getattr(settings, "groq_api_key", "") or "").strip()
-    if groq_key and getattr(settings, "llm_try_groq_first", True):
-        return (
-            OpenAI(
-                api_key=groq_key,
-                base_url=settings.groq_base_url or "https://api.groq.com/openai/v1",
-            ),
-            settings.groq_model or "llama-3.3-70b-versatile",
-            "groq",
-        )
+    free_eps = list_free_endpoints(settings)
+    if free_eps:
+        ep = free_eps[0]
+        kwargs: dict[str, Any] = {
+            "api_key": ep["api_key"],
+            "base_url": ep["base_url"],
+        }
+        headers = _free_provider_headers(ep["name"])
+        if headers:
+            kwargs["default_headers"] = headers
+        return OpenAI(**kwargs), ep["model"], ep["name"]
 
     prov = (settings.llm_provider or "deepseek").lower()
     if prov == "anthropic":
@@ -43,7 +48,10 @@ def _resolve_openai_client(settings):
         base = settings.llm_base_url or DEFAULT_BASE_URLS.get("deepseek")
         model = settings.llm_model
         if not api_key:
-            raise RuntimeError("追问需要 GROQ / DeepSeek / OpenAI 兼容密钥（Anthropic 主线路暂不支持纯文本 chat）")
+            raise RuntimeError(
+                "追问需要免费线路 key（GROQ/CEREBRAS/GEMINI/OPENROUTER/SAMBANOVA）"
+                "或 DeepSeek / OpenAI 兼容密钥（Anthropic 主线路暂不支持纯文本 chat）"
+            )
         return OpenAI(api_key=api_key, base_url=base), model, "deepseek"
 
     api_key = (
@@ -53,6 +61,51 @@ def _resolve_openai_client(settings):
         raise RuntimeError(f"{prov.upper()}_API_KEY 未配置")
     base = settings.llm_base_url or DEFAULT_BASE_URLS.get(prov)
     return OpenAI(api_key=api_key, base_url=base), settings.llm_model, prov
+
+
+def _iter_chat_clients(settings):
+    """免费线路按序 + 最后主线路（若与免费不同）。"""
+    from openai import OpenAI
+
+    from analyst.llm.analyst import (
+        DEFAULT_BASE_URLS,
+        _free_provider_headers,
+        list_free_endpoints,
+    )
+
+    seen: set[tuple[str, str]] = set()
+    for ep in list_free_endpoints(settings):
+        key = (ep["name"], ep["model"])
+        if key in seen:
+            continue
+        seen.add(key)
+        kwargs: dict[str, Any] = {
+            "api_key": ep["api_key"],
+            "base_url": ep["base_url"],
+        }
+        headers = _free_provider_headers(ep["name"])
+        if headers:
+            kwargs["default_headers"] = headers
+        yield OpenAI(**kwargs), ep["model"], ep["name"]
+
+    # 主付费线路兜底（追问非 free_only）
+    prov = (settings.llm_provider or "deepseek").lower()
+    if prov == "anthropic":
+        api_key = settings.deepseek_api_key or settings.openai_api_key
+        base = settings.llm_base_url or DEFAULT_BASE_URLS.get("deepseek")
+        model = settings.llm_model
+        if api_key and ("deepseek", model) not in seen:
+            yield OpenAI(api_key=api_key, base_url=base), model, "deepseek"
+        return
+    api_key = (
+        settings.deepseek_api_key if prov == "deepseek" else settings.openai_api_key
+    )
+    if not api_key:
+        return
+    base = settings.llm_base_url or DEFAULT_BASE_URLS.get(prov)
+    model = settings.llm_model
+    if (prov, model) not in seen:
+        yield OpenAI(api_key=api_key, base_url=base), model, prov
 
 
 def _context_block(symbol: str, timeframe: str, context: dict[str, Any] | None) -> str:
@@ -114,8 +167,6 @@ def ask_monitor_question(
         raise ValueError("问题过长（最多 2000 字）")
 
     settings = get_settings()
-    client, model, prov = _resolve_openai_client(settings)
-
     messages: list[dict[str, str]] = [
         {"role": "system", "content": CHAT_SYSTEM},
         {
@@ -132,23 +183,32 @@ def ask_monitor_question(
 
     max_tokens = min(1024, int(getattr(settings, "llm_max_tokens", 2000) or 2000))
     start = time.time()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=min(0.5, float(settings.llm_temperature or 0.3)),
-        max_tokens=max_tokens,
-    )
-    latency_ms = int((time.time() - start) * 1000)
-    msg = resp.choices[0].message
-    reply = (getattr(msg, "content", None) or "").strip()
-    if not reply:
-        raise RuntimeError(f"{prov} 返回空回复")
+    last_err: Exception | None = None
+    for client, model, prov in _iter_chat_clients(settings):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=min(0.5, float(settings.llm_temperature or 0.3)),
+                max_tokens=max_tokens,
+            )
+            latency_ms = int((time.time() - start) * 1000)
+            msg = resp.choices[0].message
+            reply = (getattr(msg, "content", None) or "").strip()
+            if not reply:
+                raise RuntimeError(f"{prov} 返回空回复")
+            return {
+                "reply": reply,
+                "model": model,
+                "provider": prov,
+                "latency_ms": latency_ms,
+                "symbol": symbol,
+                "timeframe": timeframe,
+            }
+        except Exception as e:
+            last_err = e
+            logger.warning("monitor chat %s failed: %s", prov, e)
 
-    return {
-        "reply": reply,
-        "model": model,
-        "provider": prov,
-        "latency_ms": latency_ms,
-        "symbol": symbol,
-        "timeframe": timeframe,
-    }
+    if last_err is None:
+        raise RuntimeError("追问无可用 LLM 线路（请配置免费或主线路 API key）")
+    raise RuntimeError(f"追问失败: {last_err}") from last_err

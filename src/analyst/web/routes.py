@@ -77,16 +77,17 @@ def health():
 
 
 def _llm_chain_summary(s) -> str:
-    """Groq → b.ai → DeepSeek 三段（仅展示已启用段；末段固定为 DeepSeek 主模型）。"""
+    """免费层 → b.ai → 主线路（仅展示已启用段）。"""
+    from analyst.llm.analyst import list_free_endpoints
+
     parts: list[str] = []
-    gkq = (getattr(s, "groq_api_key", "") or "").strip()
-    if gkq and getattr(s, "llm_try_groq_first", True):
-        parts.append(f"Groq「{s.groq_model}」")
+    for ep in list_free_endpoints(s):
+        parts.append(f"{ep['name']}「{ep['model']}」")
     bk = (getattr(s, "bai_api_key", "") or "").strip()
     bm = (getattr(s, "bai_model", "") or "").strip()
     if bk and bm and getattr(s, "llm_try_bai_after_groq", True):
         parts.append(f"b.ai「{bm}」")
-    parts.append(f"DeepSeek「{s.llm_model}」")
+    parts.append(f"{(s.llm_provider or 'deepseek').capitalize()}「{s.llm_model}」")
     return " → ".join(parts)
 
 

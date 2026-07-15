@@ -35,8 +35,35 @@ class Settings(BaseSettings):
     groq_base_url: str = Field(default="https://api.groq.com/openai/v1")
     groq_max_tokens: int = Field(default=4096)
     llm_try_groq_first: bool = Field(default=True)
-    # b.ai：Groq 失败后的第二段（完整 prompt，tool 为 auto）；再失败走 LLM_PROVIDER。
-    # 未配 GROQ_API_KEY 时，b.ai 仍会先于主线路执行（即 b.ai → DeepSeek）。
+    # 其它免费 OpenAI 兼容层（盯盘 free_only 与「先免费后付费」共用；有 key 才启用）
+    # 申请：https://cloud.cerebras.ai → API keys
+    cerebras_api_key: str = Field(default="")
+    cerebras_model: str = Field(default="gpt-oss-120b")
+    cerebras_base_url: str = Field(default="https://api.cerebras.ai/v1")
+    # 申请：https://aistudio.google.com/apikey
+    gemini_api_key: str = Field(default="")
+    gemini_model: str = Field(default="gemini-flash-latest")
+    gemini_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    # 申请：https://openrouter.ai/keys （选 :free 模型）
+    openrouter_api_key: str = Field(default="")
+    openrouter_model: str = Field(default="openrouter/free")
+    openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
+    # 申请：https://cloud.sambanova.ai/apis
+    sambanova_api_key: str = Field(default="")
+    sambanova_model: str = Field(default="Meta-Llama-3.3-70B-Instruct")
+    sambanova_base_url: str = Field(default="https://api.sambanova.ai/v1")
+    # 申请：https://build.nvidia.com → API Key
+    nvidia_api_key: str = Field(default="")
+    nvidia_model: str = Field(default="deepseek-ai/deepseek-v4-flash")
+    nvidia_base_url: str = Field(default="https://integrate.api.nvidia.com/v1")
+    # 免费层尝试顺序（逗号分隔）；仅配置了 key 的会实际调用
+    llm_free_order: str = Field(
+        default="nvidia,groq,cerebras,openrouter,sambanova,gemini"
+    )
+    # b.ai：免费层失败后的第二段（完整 prompt，tool 为 auto）；再失败走 LLM_PROVIDER。
+    # 未配任何免费 key 时，b.ai 仍会先于主线路执行（即 b.ai → DeepSeek）。
     bai_api_key: str = Field(default="")
     bai_base_url: str = Field(default="https://api.b.ai/v1")
     bai_model: str = Field(default="")
@@ -106,7 +133,7 @@ class Settings(BaseSettings):
     # 收盘有双线/规则候选时才调 AI；AI 结论 long/short 才推 ai_plan 告警
     monitor_ai_on_candidate: bool = Field(default=True)
     monitor_ai_cooldown_minutes: int = Field(default=240)
-    # 盯盘 AI 确认只走免费层（Groq）；失败不回落付费 DeepSeek/b.ai/Anthropic
+    # 盯盘 AI 确认只走免费层（Groq/Cerebras/Gemini/OpenRouter/SambaNova）；失败不回落付费
     monitor_ai_free_only: bool = Field(default=True)
     # 纸面模拟炒币：跟多策略，初始权益 / 单笔风险 / 费率
     monitor_paper_enabled: bool = Field(default=True)

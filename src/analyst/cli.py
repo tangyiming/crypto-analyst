@@ -578,9 +578,17 @@ def config_test_llm():
     )
     if gkq and getattr(settings, "llm_try_groq_first", True):
         console.print(f"[cyan]链路 1 Groq:[/cyan] {settings.groq_model}")
+    from analyst.llm.analyst import list_free_endpoints
+
+    free_eps = list_free_endpoints(settings)
+    if free_eps:
+        console.print(
+            "[cyan]免费层:[/cyan] "
+            + " → ".join(f"{e['name']}「{e['model']}」" for e in free_eps)
+        )
     if bk and bm and getattr(settings, "llm_try_bai_after_groq", True):
         console.print(
-            f"[cyan]链路 2 b.ai:[/cyan] {settings.bai_model}（再失败用主 Provider）"
+            f"[cyan]链路 b.ai:[/cyan] {settings.bai_model}（再失败用主 Provider）"
         )
 
     fake_market = {
