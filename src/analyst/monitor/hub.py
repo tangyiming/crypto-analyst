@@ -897,8 +897,8 @@ class MonitorHub:
         """配置周期收盘评估 cycle_switch（每个盯盘币对各自跑）。
 
         - 牛熊相位仍由 BTC 定调；各币用自身 K 线做唐奇安/反弹做空等执行
-        - 相对上一根 K 仓位变化 → 页面告警 + AI 候选（不直推 TG）
-        - 可交易确认：等 AI 出 long/short 后走 ai_plan 推 TG
+        - 相对上一根 K 仓位变化 → 页面告警 + AI 候选点评（不直推 TG）
+        - 纸面直接跟目标仓位；AI 不开仓
         - 「每天提醒周期位置」见 cycle_outlook
         """
         from analyst.compute.cycle_theory import (
@@ -1154,7 +1154,7 @@ class MonitorHub:
         had_candidate: bool,
         candidate_rules: list[str],
     ) -> None:
-        """有双线/规则候选时调 AI；仅 long/short 推 ai_plan 告警（页面+TG）。"""
+        """有双线/规则候选时调 AI；long/short 推盯盘点评（页面+TG），不开纸面仓。"""
         settings = get_settings()
         if not settings.monitor_ai_on_candidate or not had_candidate:
             return
@@ -1235,7 +1235,7 @@ class MonitorHub:
         alert = {
             "type": "alert",
             "rule": "ai_plan",
-            "title": "AI 可交易确认",
+            "title": "AI 盯盘点评",
             "symbol": worker.key.symbol,
             "timeframe": worker.key.timeframe,
             "direction": direction,
@@ -1253,20 +1253,17 @@ class MonitorHub:
             "model_id": result.get("model_id"),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "demo": False,
+            "paper_trade": False,
         }
         logger.info(
-            "AI 可交易告警 %s dir=%s session=%s",
+            "AI 盯盘点评 %s dir=%s session=%s（仅提醒，不开纸面）",
             worker.key,
             direction,
             result.get("session_id"),
         )
         await self._emit_rule_alert(worker, alert)
+        # ai_plan 不再开纸面仓：只作监控点评/通知；开仓仅 double_line / cycle_switch
 
-        # 纸面跟单：ai_plan
-        try:
-            await self._paper_try_open(worker, alert, strategy="ai_plan")
-        except Exception:
-            logger.exception("paper open failed %s", worker.key)
 
     async def _paper_try_open(
         self,

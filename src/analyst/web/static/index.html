@@ -1471,7 +1471,7 @@
     <div class="app-page">
       <div class="app-page-head">
         <h1>纸面模拟炒币</h1>
-        <p>跟单 <strong>ai_plan / double_line / cycle_switch</strong>；有止盈止损的仓按标记价平，周期仓按信号平。<strong>非真金、不调交易所 API</strong>。顶栏与盯盘底部「纸面仓位」约 2 秒刷新浮盈。</p>
+        <p>跟单 <strong>double_line / cycle_switch</strong>（策略信号）；有止盈止损的仓按标记价平，周期仓按信号平。<strong>AI 只点评不开仓。非真金、不调交易所 API</strong>。顶栏与盯盘底部「纸面仓位」约 2 秒刷新浮盈。</p>
       </div>
       <div class="cycle-stats" id="paperStats" style="margin-bottom:16px;">
         <div class="cycle-stat"><span class="k">权益</span><span class="v" id="paperEquity">—</span></div>
@@ -1497,7 +1497,7 @@
       <h2 style="font-size:14px;margin:0 0 8px;">最近成交</h2>
       <div id="paperTrades" class="muted" style="font-size:12px;margin-bottom:18px;">加载中…</div>
       <ul class="roadmap">
-        <li>✅ 多策略纸面账本（ai_plan · double_line · cycle_switch · 100U 起）</li>
+        <li>✅ 多策略纸面账本（double_line · cycle_switch · 100U 起；AI 不开仓）</li>
         <li class="muted">⏳ Freqtrade / Jesse dry-run 信号对接（见「开源框架」）</li>
         <li class="muted">⏳ 交易所 API 真下单（需独立风控）</li>
       </ul>
@@ -1919,7 +1919,7 @@
 
     const rows = st.positions || [];
     if (!rows.length) {
-      list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无纸面持仓。ai_plan / 双线 / cycle_switch 开仓后会实时出现在这里。</div>';
+      list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无纸面持仓。双线 / cycle_switch 开仓后会实时出现在这里（AI 只点评不开仓）。</div>';
       return;
     }
     const head = `<div class="paper-pos-row paper-pos-head"><span>策略</span><span>品种</span><span>向</span><span>入场→标记</span><span>杠杆·保证金</span><span>收益率</span><span>浮盈</span></div>`;
@@ -2039,7 +2039,7 @@
     if (posEl) {
       const rows = st.positions || [];
       if (!rows.length) {
-        posEl.innerHTML = '<span class="muted">暂无持仓。ai_plan / 双线 / cycle_switch 信号会自动开纸面仓。</span>';
+        posEl.innerHTML = '<span class="muted">暂无持仓。双线 / cycle_switch 信号会自动开纸面仓（AI 不开仓）。</span>';
       } else {
         posEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
           <thead><tr style="color:var(--muted);text-align:left;">

@@ -132,12 +132,12 @@ class Settings(BaseSettings):
     # cycle_switch 跟单/告警白名单；空=全部盯盘品种。默认砍弱 beta（如 AAVE）
     monitor_cycle_symbols: str = Field(default="BTC/USDT,ETH/USDT,SOL/USDT")
     monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
-    # 收盘有双线/规则候选时才调 AI；AI 结论 long/short 才推 ai_plan 告警
+    # 收盘有双线/规则候选时才调 AI；long/short → 盯盘点评通知（不开纸面）
     monitor_ai_on_candidate: bool = Field(default=True)
     monitor_ai_cooldown_minutes: int = Field(default=240)
     # 盯盘 AI 确认只走免费层（Groq/Cerebras/Gemini/OpenRouter/SambaNova）；失败不回落付费
     monitor_ai_free_only: bool = Field(default=True)
-    # 纸面模拟炒币：跟多策略，初始权益 / 单笔风险 / 费率 / 杠杆
+    # 纸面模拟炒币：只跟规则策略，不跟 AI
     monitor_paper_enabled: bool = Field(default=True)
     monitor_paper_equity: float = Field(default=100.0)
     monitor_paper_risk_pct: float = Field(default=0.01)
@@ -146,14 +146,14 @@ class Settings(BaseSettings):
     monitor_paper_leverage: float = Field(default=5.0)
     monitor_paper_max_positions: int = Field(default=12)
     monitor_paper_tg: bool = Field(default=True)
-    # 纸面跟单来源：ai_plan,double_line,cycle_switch
+    # 纸面跟单来源：double_line,cycle_switch（不含 ai_plan）
     monitor_paper_sources: str = Field(
-        default="ai_plan,double_line,cycle_switch"
+        default="double_line,cycle_switch"
     )
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
-    # 默认：AI 可交易确认 + 全局周期仓位（UTC 每天最多 1 条）
+    # 默认：AI 点评 + 异动类规则（金叉死叉/放量/突破等）；cycle 仓位变化仍不直推
     monitor_tg_trade_rules: str = Field(
-        default="ai_plan"
+        default="ai_plan,macd_cross,ema_stack,volume,boll_break,break_level,funding_extreme"
     )
     # 关网页也继续盯盘 + Telegram（Web 进程需保持运行）
     monitor_always_on: bool = Field(default=False)

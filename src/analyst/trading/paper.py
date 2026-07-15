@@ -1,4 +1,4 @@
-"""纸面交易账本：跟 ai_plan / double_line / cycle_switch，标记价盯盈亏（非真金）。"""
+"""纸面交易账本：跟 double_line / cycle_switch，标记价盯盈亏（非真金）。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 _broker: PaperBroker | None = None
 
-DEFAULT_SOURCES = ("ai_plan", "double_line", "cycle_switch")
+DEFAULT_SOURCES = ("double_line", "cycle_switch")
 
 
 def _utc_now_iso() -> str:

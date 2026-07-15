@@ -168,9 +168,9 @@ def format_rule_alert_text(symbol: str, timeframe: str, alert: dict) -> str:
             f"SL {plan.get('stop_loss')} TP {plan.get('take_profit_1')}"
         )
     if rule == "ai_plan":
-        lines.append("AI 可交易确认 · 不下单")
+        lines.append("AI 盯盘点评 · 仅提醒 · 不开仓")
     else:
-        lines.append("规则提醒 only，不下单 / 非 AI")
+        lines.append("规则提醒 only，不下单 / 非开仓信号")
     return "\n".join(lines)
 
 
