@@ -24,7 +24,11 @@ from analyst.data.fetcher import CandleSeries
 
 @dataclass
 class RuleConfig:
-    """默认全开；阈值可在 Settings 覆盖。"""
+    """默认全开；阈值可在 Settings 覆盖。
+
+    降噪参数依据回测校准（BTC 15m 1000 根）：
+    volume 46% 命中 / structure_touch 50% 且样本占八成 → 提高门槛、要求确认。
+    """
 
     enable_macd: bool = True
     enable_ema_stack: bool = True
@@ -38,8 +42,14 @@ class RuleConfig:
     enable_funding: bool = True
     enable_premium: bool = True
 
-    volume_spike_ratio: float = 1.5
+    volume_spike_ratio: float = 2.0        # 放量阈值（曾 1.5×，噪音过多）
+    volume_min_body_atr: float = 0.3       # 放量还需实体 ≥ 0.3×ATR 才算有方向
     structure_touch_atr_mult: float = 0.35
+    touch_require_hold: bool = True        # 触及后收盘需守住（支撑上方/阻力下方）
+    touch_cooldown_bars: int = 12          # 同一价位冷却根数，防重复刷屏
+    boll_min_vol_ratio: float = 1.2        # 布林突破需量比确认
+    boll_atr_margin: float = 0.1           # 收盘需越过轨道 0.1×ATR，滤刺破
+    macd_require_context: bool = True      # 金叉需零轴上或 EMA 短多头（死叉反之）
     funding_extreme_pct: float = 0.05  # |funding|*100 >= 该值（%/8h）
     premium_extreme_pct: float = 0.30  # |mark-index|%
 
@@ -96,11 +106,17 @@ def evaluate_closed_bar_rules(
     structure = detect_structure(series)
     fib = compute_fib(structure.recent_high, structure.recent_low)
 
-    # ── MACD 交叉 ──
+    # ── MACD 交叉（需趋势语境：金叉在零轴上或短均线多头，死叉反之） ──
     if cfg.enable_macd and ind.macd.cross_signal:
         cross = ind.macd.cross_signal
-        if state.get("macd_cross") != f"{t}:{cross}":
-            long = cross == "golden"
+        long = cross == "golden"
+        context_ok = True
+        if cfg.macd_require_context:
+            if long:
+                context_ok = ind.macd.above_zero or ind.ema.ema7 > ind.ema.ema30
+            else:
+                context_ok = (not ind.macd.above_zero) or ind.ema.ema7 < ind.ema.ema30
+        if context_ok and state.get("macd_cross") != f"{t}:{cross}":
             events.append(
                 RuleEvent(
                     rule="macd_cross",
@@ -140,16 +156,18 @@ def evaluate_closed_bar_rules(
         if stack != "mixed":
             state["ema_stack"] = stack
 
-    # ── 布林带突破 ──
+    # ── 布林带突破（需量比确认 + 越轨 0.1×ATR，滤影线刺破） ──
     if cfg.enable_boll and len(series.candles) >= 2:
         b = ind.boll
         prev = series.candles[-2]
+        margin = atr * cfg.boll_atr_margin
+        vol_ok = vol.volume_ratio >= cfg.boll_min_vol_ratio
         # 用前收相对中轨粗判「之前在带内」
         prev_inside = b.lower <= prev.close <= b.upper
-        now_above = price > b.upper
-        now_below = price < b.lower
+        now_above = price > b.upper + margin
+        now_below = price < b.lower - margin
         key = None
-        if prev_inside and now_above:
+        if prev_inside and now_above and vol_ok:
             key = f"{t}:above"
             events.append(
                 RuleEvent(
@@ -160,13 +178,13 @@ def evaluate_closed_bar_rules(
                     price=price,
                     reasons=[
                         f"上轨 {b.upper:.6g} · 带宽 {b.width:.4g}",
-                        f"量比 {vol.volume_ratio:.2f}×",
+                        f"量比 {vol.volume_ratio:.2f}×（≥{cfg.boll_min_vol_ratio}）",
                     ],
                     break_level=b.upper,
                     marker_time=t,
                 )
             )
-        elif prev_inside and now_below:
+        elif prev_inside and now_below and vol_ok:
             key = f"{t}:below"
             events.append(
                 RuleEvent(
@@ -177,7 +195,7 @@ def evaluate_closed_bar_rules(
                     price=price,
                     reasons=[
                         f"下轨 {b.lower:.6g} · 带宽 {b.width:.4g}",
-                        f"量比 {vol.volume_ratio:.2f}×",
+                        f"量比 {vol.volume_ratio:.2f}×（≥{cfg.boll_min_vol_ratio}）",
                     ],
                     break_level=b.lower,
                     marker_time=t,
@@ -186,28 +204,33 @@ def evaluate_closed_bar_rules(
         if key:
             state["boll_break"] = key
 
-    # ── 量能：放量 / 背离 ──
+    # ── 量能：放量 + 实体确认（回测 46% 命中 → 只报「放量且有真实方向」） ──
     if cfg.enable_volume and vol.recent_volume > 0 and vol.avg_volume_20 > 0:
         sig = vol.price_volume_signal or ""
+        last = series.candles[-1]
+        body = abs(last.close - last.open)
         spike = vol.volume_ratio >= cfg.volume_spike_ratio
+        big_body = body >= atr * cfg.volume_min_body_atr
         diverge = ("背离" in sig) or ("恐慌" in sig)
-        healthy_spike = spike and ("齐升" in sig or "抛售" in sig)
-        if spike or diverge or healthy_spike:
+        # 必须放量；纯背离但无量不再报（回测确认为噪音）
+        if spike and (big_body or diverge):
             tag = f"{t}:{vol.volume_ratio:.1f}:{sig[:12]}"
             if state.get("volume_tag") != tag:
-                direction = "long" if price >= prev_close else "short"
+                # 方向看本根实体，而非相邻收盘差（震荡里后者频繁翻面）
+                direction = "long" if last.close >= last.open else "short"
                 if "背离" in sig or "出货" in sig:
-                    direction = "short" if price >= prev_close else "long"
+                    direction = "short" if last.close >= last.open else "long"
                 events.append(
                     RuleEvent(
                         rule="volume",
-                        title="放量异动" if spike else "量价信号",
+                        title="放量异动",
                         direction=direction,
                         strength=min(0.9, 0.5 + vol.volume_ratio / 10),
                         price=price,
                         reasons=[
                             sig,
-                            f"量比 {vol.volume_ratio:.2f}× · OBV {vol.obv_trend}",
+                            f"量比 {vol.volume_ratio:.2f}× · 实体 {body / atr:.2f}×ATR"
+                            f" · OBV {vol.obv_trend}",
                         ],
                         marker_time=t,
                     )
@@ -235,20 +258,30 @@ def evaluate_closed_bar_rules(
             )
         state["structure_trend"] = trend
 
-    # ── 关键位触及（支撑/阻力） ──
+    # ── 关键位触及（需收盘守住 + 同价位冷却，回测 50% 且刷屏 → 降噪） ──
     if cfg.enable_structure_touch:
+        bar_no = int(state.get("bar_no", 0)) + 1
+        state["bar_no"] = bar_no
+        cooldown: dict[str, int] = dict(state.get("touch_cooldown") or {})
         touch_tol = atr * cfg.structure_touch_atr_mult
         touched = []
         for lvl in structure.supports[:3]:
-            if abs(low - lvl) <= touch_tol or abs(price - lvl) <= touch_tol:
+            hit = abs(low - lvl) <= touch_tol or abs(price - lvl) <= touch_tol
+            # 守住 = 收盘回到支撑上方（触及后被买起来，才有做多参考价值）
+            held = (not cfg.touch_require_hold) or price >= lvl
+            if hit and held:
                 touched.append(("support", lvl))
         for lvl in structure.resistances[:3]:
-            if abs(high - lvl) <= touch_tol or abs(price - lvl) <= touch_tol:
+            hit = abs(high - lvl) <= touch_tol or abs(price - lvl) <= touch_tol
+            held = (not cfg.touch_require_hold) or price <= lvl
+            if hit and held:
                 touched.append(("resistance", lvl))
         for kind, lvl in touched[:2]:
-            key = f"{t}:{kind}:{round(lvl, 6)}"
-            if key in (state.get("structure_touches") or []):
+            lvl_key = f"{kind}:{round(lvl, 6)}"
+            last_bar = cooldown.get(lvl_key)
+            if last_bar is not None and bar_no - last_bar < cfg.touch_cooldown_bars:
                 continue
+            cooldown[lvl_key] = bar_no
             events.append(
                 RuleEvent(
                     rule="structure_touch",
@@ -257,16 +290,20 @@ def evaluate_closed_bar_rules(
                     strength=0.68,
                     price=price,
                     reasons=[
-                        f"{kind} @ {lvl:.6g}",
-                        f"容差 ±{touch_tol:.6g}（{cfg.structure_touch_atr_mult}×ATR）",
+                        f"{kind} @ {lvl:.6g} · 收盘守住",
+                        f"容差 ±{touch_tol:.6g}（{cfg.structure_touch_atr_mult}×ATR）"
+                        f" · 冷却 {cfg.touch_cooldown_bars} 根",
                     ],
                     break_level=lvl,
                     marker_time=t,
                 )
             )
-            recent = list(state.get("structure_touches") or [])
-            recent.append(key)
-            state["structure_touches"] = recent[-20:]
+        # 只保留最近的冷却记录，防状态膨胀
+        if len(cooldown) > 30:
+            cooldown = dict(
+                sorted(cooldown.items(), key=lambda kv: kv[1])[-20:]
+            )
+        state["touch_cooldown"] = cooldown
 
     # ── Fib 0.5–0.618 回撤区 ──
     if cfg.enable_fib_zone and fib.range > 0:
@@ -329,7 +366,11 @@ def evaluate_closed_bar_rules(
 
     # ── 双线形态突破位触及（早于完整可交易信号） ──
     if cfg.enable_break_level:
-        pattern = detect_pattern(series.candles, DoubleLineConfig())
+        # 告警用宽松突变阈值（1.2）：作为提醒回测命中率 62–77%，样本宝贵；
+        # 策略入场则用更严的默认 2.0（见 DoubleLineConfig）。
+        pattern = detect_pattern(
+            series.candles, DoubleLineConfig(min_sudden_atr_mult=1.2)
+        )
         if pattern and pattern.break_level:
             bl = pattern.break_level
             crossed = False

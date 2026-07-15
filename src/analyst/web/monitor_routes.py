@@ -313,6 +313,29 @@ def monitor_analyze(req: MonitorAnalyzeRequest, background_tasks: BackgroundTask
     return dto
 
 
+@router.get("/api/monitor/cycle-timeline")
+def cycle_timeline(days: int = Query(800, ge=200, le=2000)):
+    """Wolfy 四年周期时间轴 + 狼波动能（前端绘图用）。"""
+    from analyst.compute.cycle_theory import (
+        build_wolfy_timeline,
+        evaluate_cycle_outlook,
+        outlook_to_api_dict,
+    )
+    from analyst.data.fetcher import fetch_candles_history
+    from analyst.monitor.serialize import candle_to_dict
+
+    series = fetch_candles_history("BTC/USDT", "1d", days=days, market="futures")
+    if len(series.candles) < 30:
+        raise HTTPException(400, "历史数据不足")
+    outlook = evaluate_cycle_outlook(series)
+    ts = outlook.as_of
+    timeline = build_wolfy_timeline(ts, past_cycles=1, future_cycles=1)
+    payload = outlook_to_api_dict(outlook, timeline)
+    # 日线收盘价（轻量折线背景）
+    payload["candles"] = [candle_to_dict(c) for c in series.candles[-400:]]
+    return payload
+
+
 @router.websocket("/ws/monitor")
 async def monitor_ws(
     websocket: WebSocket,

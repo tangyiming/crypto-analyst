@@ -654,9 +654,12 @@ def monitor_once(
         strategy=DoubleLineConfig(
             kelly_scale=settings.monitor_kelly_scale,
             stop_buffer_pct=settings.monitor_stop_buffer_pct,
+            stop_buffer_atr_mult=settings.monitor_stop_buffer_atr_mult,
             take_profit_r=settings.monitor_take_profit_r,
+            max_chase_atr=settings.monitor_max_chase_atr,
             ema_trend_period=settings.monitor_ema_trend_period,
             require_ema200=settings.monitor_require_ema200,
+            require_ema_slope=settings.monitor_require_ema_slope,
             trail_to_8r=settings.monitor_trail_to_8r,
             require_fib_zone=fib_zone or settings.monitor_require_fib_zone,
             require_volume=volume or settings.monitor_require_volume,
@@ -722,9 +725,12 @@ def monitor_start(
         strategy=DoubleLineConfig(
             kelly_scale=settings.monitor_kelly_scale,
             stop_buffer_pct=settings.monitor_stop_buffer_pct,
+            stop_buffer_atr_mult=settings.monitor_stop_buffer_atr_mult,
             take_profit_r=settings.monitor_take_profit_r,
+            max_chase_atr=settings.monitor_max_chase_atr,
             ema_trend_period=settings.monitor_ema_trend_period,
             require_ema200=settings.monitor_require_ema200,
+            require_ema_slope=settings.monitor_require_ema_slope,
             trail_to_8r=settings.monitor_trail_to_8r,
             require_fib_zone=fib_zone or settings.monitor_require_fib_zone,
             require_volume=volume or settings.monitor_require_volume,
@@ -763,9 +769,12 @@ def backtest(
     strategy_cfg = DoubleLineConfig(
         kelly_scale=settings.monitor_kelly_scale,
         stop_buffer_pct=settings.monitor_stop_buffer_pct,
+        stop_buffer_atr_mult=settings.monitor_stop_buffer_atr_mult,
         take_profit_r=settings.monitor_take_profit_r,
+        max_chase_atr=settings.monitor_max_chase_atr,
         ema_trend_period=settings.monitor_ema_trend_period,
         require_ema200=settings.monitor_require_ema200,
+        require_ema_slope=settings.monitor_require_ema_slope,
     )
 
     with console.status(f"[bold cyan]回放 {sym} {timeframe} × {bars} 根..."):
@@ -876,6 +885,282 @@ def backtest(
             encoding="utf-8",
         )
         console.print(f"[green]✅ 已保存 {json_out}[/green]")
+
+
+@app.command("strategies")
+def strategies_list():
+    """📚 列出策略库（双线反转 + 经典组合策略）。"""
+    from analyst.compute.strategies.registry import list_strategies
+
+    t = Table(title="策略库")
+    t.add_column("ID", style="cyan")
+    t.add_column("名称")
+    t.add_column("类型")
+    t.add_column("说明")
+    t.add_column("CLI 示例", style="dim")
+    for s in list_strategies():
+        kind = "实时" if s.kind == "realtime" else "组合回测"
+        t.add_row(s.id, s.name, kind, s.description, s.cli or "-")
+    console.print(t)
+    console.print(
+        "[dim]实时策略走 monitor；组合策略走 backtest-classic / cycle-status。[/dim]"
+    )
+
+
+@app.command("backtest-classic")
+def backtest_classic(
+    symbol: str = typer.Argument("BTC", help="币种，如 BTC / ETH / SOL"),
+    timeframe: str = typer.Option("4h", "--timeframe", "-t", help="K 线周期"),
+    days: int = typer.Option(1095, "--days", help="回测历史天数（自动分页拉取）"),
+    strategy: str = typer.Option(
+        "donchian", "--strategy", "-s",
+        help="donchian / ema_cross / boll_mr / cycle_switch / buy_hold",
+    ),
+    long_only: bool = typer.Option(
+        True, "--long-only/--long-short",
+        help="只做多（5 年回测显示做空腿在加密市场拖累收益）",
+    ),
+    fee_pct: float = typer.Option(0.05, "--fee", help="单边手续费 %"),
+    slippage_pct: float = typer.Option(0.02, "--slippage", help="单边滑点 %"),
+    oos_days: int = typer.Option(365, "--oos-days", help="样本外天数（0=不分割）"),
+):
+    """📈 经典组合策略回测：复利收益口径、含成本、牛熊震荡分段 + 样本外。"""
+    from analyst.backtest.classic import (
+        STRATEGIES,
+        CostModel,
+        build_cycle_regime,
+        label_regimes,
+        simulate,
+    )
+    from analyst.data.fetcher import fetch_candles_history
+
+    if strategy not in STRATEGIES:
+        console.print(f"[red]未知策略 {strategy}，可选：{', '.join(STRATEGIES)}[/red]")
+        raise typer.Exit(1)
+
+    sym = _normalize_symbol(symbol)
+    cost = CostModel(fee_pct=fee_pct, slippage_pct=slippage_pct)
+    with console.status(f"[bold cyan]拉取 {sym} {timeframe} × {days} 天历史..."):
+        series = fetch_candles_history(sym, timeframe, days=days, market="futures")
+    candles = series.candles
+    if len(candles) < 300:
+        console.print(f"[red]历史数据不足（{len(candles)} 根）[/red]")
+        raise typer.Exit(1)
+
+    fn = STRATEGIES[strategy]
+    kwargs = {}
+    if strategy in ("donchian", "ema_cross", "boll_mr"):
+        kwargs["long_only"] = long_only
+    elif strategy == "cycle_switch":
+        # 牛熊用 BTC 判定（山寨跟随 BTC beta）
+        with console.status("[bold cyan]拉取 BTC 历史构建牛熊判定..."):
+            btc = fetch_candles_history(
+                "BTC/USDT", timeframe, days=days, market="futures"
+            )
+        kwargs["regime"] = build_cycle_regime(btc.candles)
+    positions = fn(candles, **kwargs) if kwargs else fn(candles)
+    labels = label_regimes(candles)
+    rep = simulate(
+        candles, positions, strategy=strategy, symbol=sym,
+        timeframe=timeframe, cost=cost, regime_labels=labels,
+    )
+
+    if strategy == "cycle_switch":
+        mode = "（牛市多/熊市反弹空）"
+    elif strategy == "buy_hold":
+        mode = ""
+    else:
+        mode = "（只多）" if long_only else "（多空）"
+    t = Table(title=f"📈 {strategy}{mode} · "
+                    f"{sym} {timeframe} · {candles[0].timestamp:%Y-%m-%d} → "
+                    f"{candles[-1].timestamp:%Y-%m-%d}")
+    t.add_column("指标", style="cyan")
+    t.add_column("值", justify="right")
+    t.add_row("总收益（复利）", f"{rep.total_return_pct:+.1f}%")
+    t.add_row("年化 CAGR", f"{rep.cagr_pct:+.1f}%")
+    t.add_row("最大回撤", f"{rep.max_drawdown_pct:.1f}%")
+    t.add_row("夏普（年化）", f"{rep.sharpe:.2f}")
+    t.add_row("调仓次数", str(rep.trades))
+    t.add_row("持仓时间占比", f"{rep.exposure:.0%}")
+    t.add_row("成本假设", f"单边 {cost.one_way * 100:.3f}%")
+    for k, zh in (("bull", "牛市段"), ("bear", "熊市段"), ("chop", "震荡段")):
+        t.add_row(
+            f"{zh}贡献（{rep.regime_bars.get(k, 0)} 根）",
+            f"{rep.regime_return_pct.get(k, 0):+.1f}%",
+        )
+    console.print(t)
+
+    if oos_days > 0:
+        cutoff = candles[-1].timestamp.timestamp() - oos_days * 86400
+        idx = next(
+            (i for i, c in enumerate(candles)
+             if c.timestamp.timestamp() >= cutoff),
+            None,
+        )
+        if idx and idx > 60:
+            oos_rep = simulate(
+                candles[idx:], positions[idx:], strategy=strategy, symbol=sym,
+                timeframe=timeframe, cost=cost,
+            )
+            console.print(
+                f"[bold]样本外（最近 {oos_days} 天）[/bold]：收益 "
+                f"{oos_rep.total_return_pct:+.1f}% · 回撤 "
+                f"{oos_rep.max_drawdown_pct:.1f}% · 夏普 {oos_rep.sharpe:.2f}"
+            )
+    console.print(
+        "[dim]提示：回测≠未来。上线前先 paper trading，单笔风险 ≤ 账户 1%。[/dim]"
+    )
+
+
+@app.command("cycle-outlook")
+def cycle_outlook(
+    timeframe: str = typer.Option("1d", "--timeframe", "-t", help="狼波计算周期（建议 1d）"),
+    days: int = typer.Option(800, "--days", help="拉取历史天数"),
+    telegram: bool = typer.Option(False, "--telegram", help="同时推送到 Telegram"),
+):
+    """🔮 Wolfy 四年周期展望：日历牛熊进度 + 狼波动能提醒。"""
+    from analyst.compute.cycle_theory import evaluate_cycle_outlook, format_outlook_text
+    from analyst.config import get_settings
+    from analyst.data.fetcher import fetch_candles_history
+    from analyst.monitor.notifier import build_default_notifier
+
+    with console.status(f"[bold cyan]拉取 BTC {timeframe} × {days} 天..."):
+        series = fetch_candles_history(
+            "BTC/USDT", timeframe, days=days, market="futures"
+        )
+    outlook = evaluate_cycle_outlook(series)
+    cal = outlook.calendar
+    zh = {"bull": "牛市", "bear": "熊市"}
+
+    body = (
+        f"[bold]图1 刻舟求剑（日历）[/bold]\n"
+        f"当前相位：{zh[cal.phase]} 第 {cal.phase_day}/{cal.phase_total_days} 天\n"
+        f"下一轮里程碑：{cal.next_milestone.label}\n"
+        f"预计日期：{cal.next_milestone.date:%Y-%m-%d}（还有 {cal.days_to_milestone} 天）\n"
+        f"本周期牛市起点：{cal.cycle_bull_start:%Y-%m-%d}\n"
+    )
+    if outlook.wave:
+        w = outlook.wave
+        body += (
+            f"\n[bold]图2 狼波动能（RSI 近似）[/bold]\n"
+            f"RSI={w.rsi:.1f} · {w.heat_label} · 20根涨跌 {w.roc_20_pct:+.1f}%\n"
+        )
+    if outlook.alerts:
+        body += "\n[bold yellow]提醒[/bold yellow]\n" + "\n".join(outlook.alerts)
+    else:
+        body += "\n[dim]暂无临近里程碑提醒（距节点 >90 天）[/dim]"
+
+    console.print(
+        Panel(
+            body,
+            title=f"🔮 周期展望 · BTC · {outlook.as_of:%Y-%m-%d}",
+            border_style="yellow",
+        )
+    )
+    console.print(
+        "[dim]图1：熊市底起算牛 1064 天 / 熊 364 天；"
+        "图2：RSI 热度近似狼波，非 TV 原指标。[/dim]"
+    )
+
+    if telegram:
+        settings = get_settings()
+        text = format_outlook_text(outlook)
+        build_default_notifier(
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+        ).send_text(text)
+        console.print("[green]已尝试推送 Telegram[/green]")
+
+
+@app.command("cycle-status")
+def cycle_status(
+    symbols: str = typer.Argument(
+        "BTC,ETH,SOL,BNB", help="逗号分隔的币种列表"
+    ),
+    timeframe: str = typer.Option("4h", "--timeframe", "-t", help="K 线周期"),
+):
+    """🧭 当前牛熊相位 + cycle_switch 策略各币的实时目标仓位。"""
+    from analyst.compute.cycle_theory import evaluate_cycle_outlook
+    from analyst.backtest.classic import (
+        HALVING_DATES,
+        build_cycle_regime,
+        halving_phase,
+        positions_cycle_switch,
+    )
+    from analyst.data.fetcher import fetch_candles_history
+
+    syms = [_normalize_symbol(s) for s in symbols.split(",") if s.strip()]
+    with console.status("[bold cyan]拉取 BTC 历史构建牛熊判定..."):
+        btc = fetch_candles_history("BTC/USDT", timeframe, days=1825,
+                                    market="futures")
+    # Wolfy 日历展望（1d 精度更适合四年周期）
+    btc_1d = fetch_candles_history("BTC/USDT", "1d", days=800, market="futures")
+    outlook = evaluate_cycle_outlook(btc_1d)
+    wcal = outlook.calendar
+    wzh = {"bull": "牛市", "bear": "熊市"}
+    wolfy_lines = (
+        f"刻舟求剑：{wzh[wcal.phase]} 第 {wcal.phase_day}/{wcal.phase_total_days} 天 · "
+        f"距{wcal.next_milestone.label} {wcal.days_to_milestone} 天"
+        f"（{wcal.next_milestone.date:%Y-%m-%d}）"
+    )
+    if outlook.wave:
+        wolfy_lines += f"\n狼波 RSI={outlook.wave.rsi:.0f}（{outlook.wave.heat_label}）"
+    if outlook.alerts:
+        wolfy_lines += "\n" + "\n".join(outlook.alerts[:4])
+
+    regime = build_cycle_regime(btc.candles)
+    now_ts = btc.candles[-1].timestamp
+    cal = halving_phase(now_ts)
+    reg = regime.get(now_ts, "accum")
+    days_since = (now_ts - max(h for h in HALVING_DATES if h <= now_ts)).days
+    zh = {"bull": "牛市", "bear": "熊市", "accum": "筑底/中性"}
+    console.print(
+        Panel(
+            wolfy_lines,
+            title="🔮 Wolfy 周期展望（图1日历 + 图2狼波）",
+            border_style="yellow",
+        )
+    )
+    console.print(
+        Panel(
+            f"减半日历相位：[bold]{zh[cal]}[/bold]（距上次减半 {days_since} 天）\n"
+            f"双确认最终判定：[bold]{zh[reg]}[/bold]\n"
+            f"[dim]规则：日历+200日线双确认才算熊；熊市清多、只空 z>1.5 的反弹[/dim]",
+            title=f"🧭 cycle_switch 执行相位（BTC · {timeframe} · {now_ts:%Y-%m-%d %H:%M} UTC）",
+            border_style="cyan",
+        )
+    )
+
+    t = Table(title="cycle_switch 当前目标仓位")
+    t.add_column("品种", style="cyan")
+    t.add_column("目标仓位", justify="right")
+    t.add_column("现价", justify="right")
+    t.add_column("40根高点(入场)", justify="right")
+    t.add_column("20根低点(离场)", justify="right")
+    t.add_column("z-score", justify="right")
+    for sym in syms:
+        s = fetch_candles_history(sym, timeframe, days=1825, market="futures")
+        c = s.candles
+        pos = positions_cycle_switch(c, regime)[-1]
+        closes = [x.close for x in c]
+        w = closes[-20:]
+        mean = sum(w) / 20
+        std = (sum((v - mean) ** 2 for v in w) / 20) ** 0.5
+        z = (closes[-1] - mean) / std if std > 0 else 0.0
+        hh = max(x.high for x in c[-41:-1])
+        ll = min(x.low for x in c[-21:-1])
+        pos_txt = (
+            "[green]做多 100%[/green]" if pos > 0
+            else (f"[red]做空 {abs(pos):.0%}[/red]" if pos < 0 else "空仓")
+        )
+        t.add_row(
+            sym, pos_txt, f"{closes[-1]:.6g}", f"{hh:.6g}", f"{ll:.6g}",
+            f"{z:+.2f}",
+        )
+    console.print(t)
+    console.print(
+        "[dim]仅提醒不下单；数据为最近收盘 K（缓存 24h 内）。[/dim]"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -19,11 +19,18 @@ from analyst.compute.strategies.double_line_reversal import (
     DoubleLineConfig,
     evaluate_double_line,
 )
+from analyst.compute.strategies.cycle_switch import (
+    CycleSwitchConfig,
+    build_cycle_regime,
+    evaluate_cycle_switch,
+)
 from analyst.config import get_settings
 from analyst.data.fetcher import Candle, CandleSeries, fetch_candles
+from analyst.data.fetcher import fetch_candles_history
 from analyst.data.ws_kline import stream_klines, stream_mark_price
 from analyst.monitor.notifier import (
     build_default_notifier,
+    format_cycle_alert_text,
     format_rule_alert_text,
 )
 from analyst.monitor.rules import (
@@ -137,6 +144,7 @@ class StreamWorker:
     last_signal_dir: str = "wait"
     closed_bars: int = 0
     alerts_sent: int = 0
+    last_cycle_position: float = 0.0
 
 
 class MonitorHub:
@@ -149,6 +157,8 @@ class MonitorHub:
         self._daemon_symbols: set[str] = set()
         self._daemon_timeframes: list[str] = ["15m"]
         self._startup_tg_sent: bool = False
+        self._cycle_regime: dict | None = None
+        self._last_outlook_key: str | None = None
 
     def _daemon_state_path(self) -> Any:
         from pathlib import Path
@@ -490,9 +500,12 @@ class MonitorHub:
         return DoubleLineConfig(
             kelly_scale=s.monitor_kelly_scale,
             stop_buffer_pct=s.monitor_stop_buffer_pct,
+            stop_buffer_atr_mult=s.monitor_stop_buffer_atr_mult,
             take_profit_r=s.monitor_take_profit_r,
+            max_chase_atr=s.monitor_max_chase_atr,
             ema_trend_period=s.monitor_ema_trend_period,
             require_ema200=s.monitor_require_ema200,
+            require_ema_slope=s.monitor_require_ema_slope,
             trail_to_8r=s.monitor_trail_to_8r,
             require_fib_zone=s.monitor_require_fib_zone,
             require_volume=s.monitor_require_volume,
@@ -720,6 +733,200 @@ class MonitorHub:
             enable_premium=s.monitor_rule_premium,
             funding_extreme_pct=s.monitor_funding_extreme_pct,
             premium_extreme_pct=s.monitor_premium_extreme_pct,
+            volume_spike_ratio=s.monitor_volume_spike_ratio,
+            touch_cooldown_bars=s.monitor_touch_cooldown_bars,
+        )
+
+    async def _btc_candles_for_regime(self, timeframe: str) -> list[Candle]:
+        """构建牛熊判定用的 BTC K 线（优先复用已有 worker）。"""
+        btc_key = str(StreamKey("BTC/USDT", timeframe, "futures"))
+        w = self._workers.get(btc_key)
+        if w and len(w.series.candles) >= 300:
+            return w.series.candles
+        series = await asyncio.to_thread(
+            fetch_candles_history,
+            "BTC/USDT",
+            timeframe,
+            days=1825,
+            market="futures",
+            use_cache=True,
+        )
+        return series.candles
+
+    async def _evaluate_cycle_switch(self, worker: StreamWorker) -> None:
+        """4h 收盘评估 cycle_switch 目标仓位，变化时推页面 + TG。"""
+        from analyst.compute.cycle_theory import (
+            calendar_countdown_dict,
+            format_milestone_countdown,
+            wolfy_calendar_phase,
+        )
+
+        settings = get_settings()
+        if not settings.monitor_cycle_switch_enabled:
+            return
+        tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
+        if worker.key.timeframe.lower() != tf:
+            return
+        if len(worker.series.candles) < 50:
+            return
+
+        btc_candles = await self._btc_candles_for_regime(tf)
+        if len(btc_candles) < 300:
+            return
+        self._cycle_regime = build_cycle_regime(btc_candles)
+        signal = evaluate_cycle_switch(
+            worker.series,
+            self._cycle_regime,
+            prev_position=worker.last_cycle_position,
+        )
+        worker.last_cycle_position = signal.target_position
+
+        await self._broadcast(
+            worker,
+            {
+                "type": "cycle_switch",
+                "symbol": worker.key.symbol,
+                "timeframe": worker.key.timeframe,
+                "market_regime": signal.market_regime,
+                "calendar_phase": signal.calendar_phase,
+                "target_position": signal.target_position,
+                "prev_position": signal.prev_position,
+                "price": signal.price,
+                "reasons": signal.reasons,
+                "z_score": signal.z_score,
+                "donchian_entry": signal.donchian_entry,
+                "donchian_exit": signal.donchian_exit,
+            },
+        )
+        if not signal.changed:
+            return
+
+        last_ts = worker.series.candles[-1].timestamp
+        if last_ts.tzinfo is None:
+            marker = int(last_ts.replace(tzinfo=timezone.utc).timestamp())
+        else:
+            marker = int(last_ts.astimezone(timezone.utc).timestamp())
+        wolfy_cal = wolfy_calendar_phase(btc_candles[-1].timestamp)
+        countdown_line = format_milestone_countdown(wolfy_cal)
+        alert = {
+            "type": "alert",
+            "rule": "cycle_switch",
+            "title": (
+                f"周期切换 · 距转折点 {wolfy_cal.days_to_milestone} 天"
+            ),
+            "symbol": worker.key.symbol,
+            "timeframe": worker.key.timeframe,
+            "direction": (
+                "long" if signal.target_position > 0
+                else ("short" if signal.target_position < 0 else "wait")
+            ),
+            "strength": 0.85,
+            "price": signal.price,
+            "reasons": [countdown_line, *signal.reasons],
+            "cycle_countdown": calendar_countdown_dict(wolfy_cal),
+            "marker_time": marker,
+        }
+        dedupe = (
+            f"cycle|{worker.key.symbol}|{worker.key.timeframe}|"
+            f"{signal.target_position}|{marker}"
+        )
+        if dedupe == worker.last_alert_key:
+            return
+        worker.last_alert_key = dedupe
+        worker.alerts_sent += 1
+        self._alerts.append(alert)
+        await self._broadcast(worker, alert, alert_also=True)
+
+        notifier = build_default_notifier(
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+        )
+        logger.info(
+            "cycle_switch 告警 → TG %s %s pos %.2f→%.2f regime=%s tg=%s",
+            worker.key.symbol,
+            worker.key.timeframe,
+            signal.prev_position,
+            signal.target_position,
+            signal.market_regime,
+            self._telegram_ready(),
+        )
+        await asyncio.to_thread(
+            notifier.send_text,
+            format_cycle_alert_text(
+                worker.key.symbol, worker.key.timeframe, signal, wolfy_cal
+            ),
+        )
+
+    async def _evaluate_cycle_outlook(self, worker: StreamWorker) -> None:
+        """BTC 4h 收盘：Wolfy 日历+狼波临近里程碑提醒（每日最多一条）。"""
+        settings = get_settings()
+        if not settings.monitor_cycle_outlook_enabled:
+            return
+        tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
+        if worker.key.timeframe.lower() != tf:
+            return
+        if worker.key.symbol.upper() != "BTC/USDT":
+            return
+
+        from analyst.compute.cycle_theory import (
+            WOLFY_ALERT_WINDOW_DAYS,
+            calendar_countdown_dict,
+            evaluate_cycle_outlook,
+            format_outlook_text,
+        )
+
+        series_1d = await asyncio.to_thread(
+            fetch_candles_history,
+            "BTC/USDT",
+            "1d",
+            days=800,
+            market="futures",
+            use_cache=True,
+        )
+        outlook = evaluate_cycle_outlook(series_1d)
+        if not outlook.alerts:
+            return
+        if outlook.calendar.days_to_milestone > WOLFY_ALERT_WINDOW_DAYS:
+            return
+
+        bucket = outlook.as_of.strftime("%Y%m%d")
+        dedupe = f"outlook|{bucket}|{outlook.calendar.next_milestone.kind}"
+        if dedupe == self._last_outlook_key:
+            return
+        self._last_outlook_key = dedupe
+
+        alert = {
+            "type": "alert",
+            "rule": "cycle_outlook",
+            "title": (
+                f"周期转折点 · 还剩 {outlook.calendar.days_to_milestone} 天"
+            ),
+            "symbol": worker.key.symbol,
+            "timeframe": worker.key.timeframe,
+            "direction": "info",
+            "strength": 0.7,
+            "price": outlook.price,
+            "reasons": outlook.alerts[:6],
+            "cycle_countdown": calendar_countdown_dict(outlook.calendar),
+            "marker_time": int(outlook.as_of.timestamp()),
+        }
+        worker.alerts_sent += 1
+        self._alerts.append(alert)
+        await self._broadcast(worker, alert, alert_also=True)
+
+        notifier = build_default_notifier(
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+        )
+        logger.info(
+            "cycle_outlook 提醒 → TG %s alerts=%d tg=%s",
+            worker.key.symbol,
+            len(outlook.alerts),
+            self._telegram_ready(),
+        )
+        await asyncio.to_thread(
+            notifier.send_text,
+            format_outlook_text(outlook, worker.key.symbol),
         )
 
     async def _emit_rule_alert(self, worker: StreamWorker, alert: dict[str, Any]) -> None:
@@ -842,6 +1049,16 @@ class MonitorHub:
                     await self._emit_rule_alert(worker, ra)
             except Exception:
                 logger.exception("rule evaluate failed %s", worker.key)
+
+        try:
+            await self._evaluate_cycle_switch(worker)
+        except Exception:
+            logger.exception("cycle_switch evaluate failed %s", worker.key)
+
+        try:
+            await self._evaluate_cycle_outlook(worker)
+        except Exception:
+            logger.exception("cycle_outlook evaluate failed %s", worker.key)
 
     async def inject_demo_alert(
         self,

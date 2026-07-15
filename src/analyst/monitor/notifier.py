@@ -168,3 +168,46 @@ def format_rule_alert_text(symbol: str, timeframe: str, alert: dict) -> str:
         )
     lines.append("规则提醒 only，不下单 / 非 AI")
     return "\n".join(lines)
+
+
+def format_cycle_alert_text(
+    symbol: str,
+    timeframe: str,
+    signal: object,
+    calendar: object | None = None,
+) -> str:
+    """cycle_switch 仓位变化 Telegram 文案。"""
+    from analyst.compute.cycle_theory import (
+        WolfyCalendarState,
+        format_milestone_countdown,
+    )
+    from analyst.compute.strategies.cycle_switch import CycleSwitchSignal
+
+    if not isinstance(signal, CycleSwitchSignal):
+        return f"cycle_switch · {symbol} {timeframe}"
+    zh = {"bull": "牛市", "bear": "熊市", "accum": "筑底"}
+    prev = (
+        "做多" if signal.prev_position > 0
+        else ("做空" if signal.prev_position < 0 else "空仓")
+    )
+    now = (
+        "做多 100%" if signal.target_position > 0
+        else (
+            f"做空 {abs(signal.target_position):.0%}"
+            if signal.target_position < 0
+            else "空仓"
+        )
+    )
+    lines = [
+        f"🧭 cycle_switch · {symbol} {timeframe}",
+    ]
+    if isinstance(calendar, WolfyCalendarState):
+        lines.append(format_milestone_countdown(calendar))
+    lines.extend([
+        f"相位 {zh.get(signal.market_regime, signal.market_regime)} "
+        f"(日历 {zh.get(signal.calendar_phase, signal.calendar_phase)})",
+        f"仓位 {prev} → {now} · price={signal.price:.6g}",
+        "；".join(signal.reasons[:3]),
+        "周期策略提醒 only，不下单",
+    ])
+    return "\n".join(lines)

@@ -73,9 +73,12 @@ class Settings(BaseSettings):
     monitor_timeframe: str = Field(default="15m")
     monitor_kelly_scale: float = Field(default=0.25)
     monitor_stop_buffer_pct: float = Field(default=2.0)
+    monitor_stop_buffer_atr_mult: float = Field(default=1.0)  # 缓冲被 ATR 封顶；0=禁用
     monitor_take_profit_r: float = Field(default=2.0)
+    monitor_max_chase_atr: float = Field(default=1.5)  # 超出突破位该倍 ATR 不追；0=禁用
     monitor_ema_trend_period: int = Field(default=200)
     monitor_require_ema200: bool = Field(default=True)
+    monitor_require_ema_slope: bool = Field(default=False)  # EMA200 需同向倾斜（可选）
     monitor_trail_to_8r: bool = Field(default=False)
     monitor_require_fib_zone: bool = Field(default=False)
     monitor_require_volume: bool = Field(default=False)
@@ -94,6 +97,12 @@ class Settings(BaseSettings):
     monitor_rule_premium: bool = Field(default=True)
     monitor_funding_extreme_pct: float = Field(default=0.05)
     monitor_premium_extreme_pct: float = Field(default=0.30)
+    monitor_volume_spike_ratio: float = Field(default=2.0)   # 放量告警阈值（×20 均量）
+    monitor_touch_cooldown_bars: int = Field(default=12)     # 同一支撑/阻力冷却根数
+    # 牛熊周期切换（方案 D）：4h 收盘评估仓位变化并推 TG
+    monitor_cycle_switch_enabled: bool = Field(default=True)
+    monitor_cycle_switch_timeframe: str = Field(default="4h")
+    monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
     # 关网页也继续盯盘 + Telegram（Web 进程需保持运行）
     monitor_always_on: bool = Field(default=False)
     # 常驻盯盘品种；空则用 DEFAULT_SYMBOLS

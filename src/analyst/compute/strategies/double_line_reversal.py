@@ -2,16 +2,17 @@
 
 来源：加密大漂亮《AI 交易机器人实战》
 https://www.youtube.com/watch?v=fqK-3LK_kF0
-（yt-dlp + Whisper 转写核验）
 
-形态定义（视频口述）：
-- 看涨：阴线后接阳线；看跌：阳线后接阴线
-- 三要件：①突变（跳出整理）②两根各自方向都强势 ③实体/区间大面积重合
-- 入场：看跌跌破两线最低点；看涨突破两线最高点
-- 止损：双线外侧 + 缓冲（视频默认约 2%）
-- 止盈：按 R（入场到止损距离）；视频先定 2R，另有 8R+移动止损方案
-- 趋势过滤：EMA200 之上只做多、之下只做空
-- Kelly：盈利后按凯利思路加仓（本模块给出建议仓位，不自动下单）
+形态（视频口述，本模块机械化为可回测规则）：
+  · 看涨：阴线 + 阳线；看跌：阳线 + 阴线
+  · 三要件：突变（≥2×ATR）· 两根实体均强势 · 区间大面积重合
+  · 入场：突破两线最高/最低点；止损：形态外侧 + 缓冲（默认 2%，小周期 ATR 封顶）
+  · 过滤：EMA200 顺势（可选斜率）；止盈默认 2R
+
+定位：15m 实时盯盘策略（monitor / hub），震荡市期望偏低；
+      与 cycle_switch（4h 周期组合）互补，不互相替代。
+
+仅提醒不下单。
 """
 
 from __future__ import annotations
@@ -32,15 +33,22 @@ class DoubleLineConfig:
     # 形态强度
     min_body_ratio: float = 0.55       # |close-open| / (high-low)
     min_overlap_ratio: float = 0.50    # 两根 K 区间重合 / 较短那根区间
-    min_sudden_atr_mult: float = 1.2   # 两根合并振幅 ≥ ATR(14) * 该倍数 → 突变
+    # 「突变」是形态核心：1.2 意味着两根合计才 1.2×ATR（单根 0.6×＝普通K线），
+    # 太宽松导致大量弱形态入场。回测扫描中 2.0 在全部组合里一致更优。
+    min_sudden_atr_mult: float = 2.0
     atr_period: int = 14
 
     # 执行
     stop_buffer_pct: float = 2.0       # 视频：缓冲约 2%
+    stop_buffer_atr_mult: float = 1.0  # 缓冲上限 = ATR×该值（小周期 2% 过宽）；0=禁用
     take_profit_r: float = 2.0         # 视频回测性价比最优档
+    max_chase_atr: float = 1.5         # 现价超出突破位该倍数 ATR 则放弃追入；0=禁用
     trail_to_8r: bool = False          # True 时给出 8R 移动止损说明
     ema_trend_period: int = 200
     require_ema200: bool = True
+    # EMA200 同向倾斜过滤：概念合理，但回测显示会滤掉盈利单 → 默认关，可选开
+    require_ema_slope: bool = False
+    ema_slope_lookback: int = 8        # 斜率取样根数
 
     # 可选过滤器（她人工盯盘时会看）
     require_volume: bool = False
@@ -183,17 +191,30 @@ def _trail_note(entry: float, stop: float, direction: str, enabled: bool) -> str
     )
 
 
+def _stop_buffer_abs(ref_price: float, atr: float, cfg: DoubleLineConfig) -> float:
+    """止损缓冲绝对值：百分比缓冲，但被 ATR 封顶。
+
+    视频默认 2% 是大周期口径；15m 级别 2% 往往是 10+ 倍 ATR，
+    导致 R 巨大、2R 止盈永远够不着（回测里两笔全是 timeout/sl）。
+    取 min(pct, ATR×mult) 让缓冲跟波动率走，周期大时自动退回 2%。
+    """
+    pct_buf = ref_price * cfg.stop_buffer_pct / 100.0
+    if cfg.stop_buffer_atr_mult > 0 and atr > 0:
+        return min(pct_buf, atr * cfg.stop_buffer_atr_mult)
+    return pct_buf
+
+
 def _build_plan(
     price: float,
     pattern: PatternBars,
     cfg: DoubleLineConfig,
     reasons: list[str],
+    atr: float = 0.0,
 ) -> TradePlan:
-    buf = cfg.stop_buffer_pct / 100.0
     if pattern.direction == "long":
         # 突破入场：用形态高点（或现价若已突破）
         entry = max(price, pattern.break_level)
-        stop = pattern.pattern_low * (1.0 - buf)
+        stop = pattern.pattern_low - _stop_buffer_abs(pattern.pattern_low, atr, cfg)
         r = abs(entry - stop)
         tp1 = entry + cfg.take_profit_r * r
         tp2 = entry + 8.0 * r if cfg.trail_to_8r else entry + 3.0 * r
@@ -210,7 +231,7 @@ def _build_plan(
         )
 
     entry = min(price, pattern.break_level)
-    stop = pattern.pattern_high * (1.0 + buf)
+    stop = pattern.pattern_high + _stop_buffer_abs(pattern.pattern_high, atr, cfg)
     r = abs(entry - stop)
     tp1 = entry - cfg.take_profit_r * r
     tp2 = entry - 8.0 * r if cfg.trail_to_8r else entry - 3.0 * r
@@ -287,7 +308,8 @@ def evaluate_double_line(
 
     if cfg.require_ema200:
         closes = [c.close for c in candles]
-        e200 = ema(closes, cfg.ema_trend_period)[-1]
+        e200_series = ema(closes, cfg.ema_trend_period)
+        e200 = e200_series[-1]
         if pattern.direction == "long" and price < e200:
             failed.append("ema200")
             return DoubleLineSignal(
@@ -314,6 +336,30 @@ def evaluate_double_line(
                 filters_failed=failed,
                 bar_ts=bar_ts,
             )
+        # 斜率过滤：价在 EMA200 上/下但均线走平＝震荡，突破多为假（本次回测两笔亏损皆此类）
+        if cfg.require_ema_slope and len(e200_series) > cfg.ema_slope_lookback:
+            slope = e200 - e200_series[-1 - cfg.ema_slope_lookback]
+            against = (
+                (pattern.direction == "long" and slope <= 0)
+                or (pattern.direction == "short" and slope >= 0)
+            )
+            if against:
+                failed.append("ema_slope")
+                return DoubleLineSignal(
+                    direction="wait",
+                    strength=0.4,
+                    price=price,
+                    pattern=name,
+                    break_level=pattern.break_level,
+                    reasons=reasons
+                    + [
+                        f"EMA{cfg.ema_trend_period} 近 {cfg.ema_slope_lookback} 根"
+                        f"斜率 {slope:+.4g} 与方向相悖（疑似震荡），观望"
+                    ],
+                    filters_passed=passed,
+                    filters_failed=failed,
+                    bar_ts=bar_ts,
+                )
         passed.append("ema200")
         reasons.append(f"EMA{cfg.ema_trend_period} 顺势")
 
@@ -358,7 +404,33 @@ def evaluate_double_line(
         )
     passed.append("breakout")
 
-    plan = _build_plan(price, pattern, cfg, reasons)
+    atr = _atr(candles, cfg.atr_period)
+
+    # 追价保护：价格已远离突破位则放弃（追高入场 → 止损更远、盈亏比恶化）
+    if cfg.max_chase_atr > 0 and atr > 0:
+        chase = (
+            price - pattern.break_level
+            if pattern.direction == "long"
+            else pattern.break_level - price
+        )
+        if chase > atr * cfg.max_chase_atr:
+            return DoubleLineSignal(
+                direction="wait",
+                strength=0.45,
+                price=price,
+                pattern=name,
+                break_level=pattern.break_level,
+                reasons=reasons
+                + [
+                    f"已越过突破位 {chase / atr:.1f}×ATR"
+                    f"（>{cfg.max_chase_atr}×），不追价"
+                ],
+                filters_passed=passed,
+                filters_failed=failed + ["chase"],
+                bar_ts=bar_ts,
+            )
+
+    plan = _build_plan(price, pattern, cfg, reasons, atr=atr)
     if plan.rr_ratio < cfg.take_profit_r * 0.99:
         # 理论上 rr ≈ take_profit_r；若止损过近异常则观望
         return DoubleLineSignal(

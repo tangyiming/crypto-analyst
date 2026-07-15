@@ -103,3 +103,46 @@ def test_flat_no_pattern():
     s = _pad_then([], n=80, base=100)
     sig = evaluate_double_line(s, DoubleLineConfig(require_ema200=False))
     assert sig.direction == "wait"
+
+
+def test_stop_buffer_capped_by_atr():
+    from analyst.compute.strategies.double_line_reversal import _stop_buffer_abs
+
+    cfg = DoubleLineConfig(stop_buffer_pct=2.0, stop_buffer_atr_mult=1.0)
+    # 小周期场景：2% = 2.0，远大于 ATR 0.5 → 取 ATR
+    assert _stop_buffer_abs(100.0, atr=0.5, cfg=cfg) == 0.5
+    # 大周期场景：ATR 5.0 > 2% → 退回 2%
+    assert _stop_buffer_abs(100.0, atr=5.0, cfg=cfg) == 2.0
+    # 禁用封顶
+    cfg_off = DoubleLineConfig(stop_buffer_pct=2.0, stop_buffer_atr_mult=0.0)
+    assert _stop_buffer_abs(100.0, atr=0.5, cfg=cfg_off) == 2.0
+
+
+def test_no_chase_when_far_above_break():
+    # 形态成立后价格已远超突破位 → 不追价，观望
+    s = _pad_then([], n=50, base=100)
+    s.candles[-3] = Candle(
+        timestamp=s.candles[-3].timestamp,
+        open=100, high=100.5, low=96, close=96.2, volume=2000,
+    )
+    s.candles[-2] = Candle(
+        timestamp=s.candles[-2].timestamp,
+        open=96.3, high=100.4, low=96.0, close=100.2, volume=2500,
+    )
+    # 最新根暴涨远离突破位 100.5
+    s.candles[-1] = Candle(
+        timestamp=s.candles[-1].timestamp,
+        open=100.3, high=108.0, low=100.2, close=107.5, volume=3000,
+    )
+    sig = evaluate_double_line(
+        s,
+        DoubleLineConfig(
+            min_body_ratio=0.5,
+            min_overlap_ratio=0.4,
+            min_sudden_atr_mult=0.5,
+            require_ema200=False,
+            max_chase_atr=1.5,
+        ),
+    )
+    assert sig.direction == "wait"
+    assert "chase" in sig.filters_failed

@@ -167,6 +167,85 @@ def fetch_candles(
     return series
 
 
+def fetch_candles_history(
+    symbol: str,
+    timeframe: str = "4h",
+    *,
+    days: int = 1095,
+    market: str = "futures",
+    use_cache: bool = True,
+) -> CandleSeries:
+    """分页拉取长历史 K 线（突破单次 1500 根限制），用于多年回测。
+
+    - 自动按 since 翻页直到覆盖 days 天
+    - 丢弃最后一根（可能未收盘）
+    - 已收盘历史不可变 → 缓存 24h（key 含当天日期，跨天自动刷新）
+    """
+    market = market if market in ("spot", "futures") else "spot"
+    ccxt_sym = _ccxt_symbol(symbol, market)
+    display_sym = ccxt_sym.split(":")[0]
+    today = datetime.utcnow().strftime("%Y%m%d")
+    cache_key = f"ohlcv_hist:{market}:{ccxt_sym}:{timeframe}:{days}:{today}"
+    cache = get_cache()
+
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return _restore_series(cached)
+
+    exchange = get_exchange(market)
+    ms_per_bar = exchange.parse_timeframe(timeframe) * 1000
+    now_ms = int(time.time() * 1000)
+    since = now_ms - days * 86_400_000
+
+    rows_by_ts: dict[int, list] = {}
+    while since < now_ms:
+        page: list | None = None
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                page = exchange.fetch_ohlcv(
+                    ccxt_sym, timeframe=timeframe, since=since, limit=1500
+                )
+                break
+            except Exception as e:
+                last_err = e
+                time.sleep(1 + attempt)
+        if page is None:
+            raise RuntimeError(
+                f"Failed history fetch {ccxt_sym} {timeframe} ({market}): {last_err}"
+            )
+        if not page:
+            break
+        for row in page:
+            rows_by_ts[int(row[0])] = row
+        next_since = int(page[-1][0]) + ms_per_bar
+        if next_since <= since:
+            break
+        since = next_since
+        if len(page) < 2:
+            break
+
+    ordered = [rows_by_ts[k] for k in sorted(rows_by_ts)]
+    if ordered:
+        ordered = ordered[:-1]  # 最后一根可能未收盘
+    candles = [
+        Candle(
+            timestamp=datetime.utcfromtimestamp(row[0] / 1000),
+            open=float(row[1]),
+            high=float(row[2]),
+            low=float(row[3]),
+            close=float(row[4]),
+            volume=float(row[5]),
+        )
+        for row in ordered
+    ]
+    series = CandleSeries(symbol=display_sym, timeframe=timeframe, candles=candles)
+    if use_cache and candles:
+        cache.set(cache_key, _serialize_series(series), expire=24 * 3600)
+    return series
+
+
 def list_usdt_perp_symbols(*, use_cache: bool = True) -> list[str]:
     """币安 U 本位永续 USDT 交易对列表（如 BTC/USDT），用于监控页过滤搜索。"""
     cache = get_cache()
