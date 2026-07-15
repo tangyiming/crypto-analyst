@@ -35,6 +35,70 @@ def _norm_symbol(symbol: str) -> str:
     return s.split(":")[0]
 
 
+def _calc_rr(
+    direction: str,
+    entry: float,
+    stop: float | None,
+    take: float | None,
+) -> float | None:
+    """计划盈亏比 R:R = 潜在盈利距离 / 止损距离。"""
+    if stop is None or take is None:
+        return None
+    risk = abs(entry - float(stop))
+    if risk <= 0:
+        return None
+    if direction == "long":
+        reward = float(take) - entry
+    else:
+        reward = entry - float(take)
+    if reward <= 0:
+        return None
+    return round(reward / risk, 4)
+
+
+def _unrealized_r(
+    direction: str,
+    entry: float,
+    stop: float | None,
+    price: float,
+) -> float | None:
+    """当前浮盈相对 1R 的倍数（负=浮亏）。"""
+    if stop is None:
+        return None
+    risk = abs(entry - float(stop))
+    if risk <= 0:
+        return None
+    if direction == "long":
+        return round((price - entry) / risk, 4)
+    return round((entry - price) / risk, 4)
+
+
+def _paper_leverage() -> float:
+    lev = float(getattr(get_settings(), "monitor_paper_leverage", 5.0) or 5.0)
+    return max(1.0, min(lev, 125.0))
+
+
+def _sizing_metrics(
+    *,
+    qty: float,
+    entry: float,
+    leverage: float | None = None,
+    margin: float | None = None,
+    notional: float | None = None,
+) -> tuple[float, float, float]:
+    """返回 (notional, margin, leverage)。旧仓缺字段时按配置杠杆回算。"""
+    lev = float(leverage) if leverage and leverage > 0 else _paper_leverage()
+    noto = float(notional) if notional and notional > 0 else abs(qty * entry)
+    if margin is not None and margin > 0:
+        mgn = float(margin)
+        # 若历史只存了 margin，反推有效杠杆
+        if noto > 0:
+            lev = max(1.0, round(noto / mgn, 4))
+    else:
+        mgn = noto / lev if lev > 0 else noto
+    return round(noto, 6), round(mgn, 6), round(lev, 4)
+
+
 def _paper_sources() -> set[str]:
     raw = (getattr(get_settings(), "monitor_paper_sources", "") or "").strip()
     if not raw:
@@ -59,6 +123,10 @@ class PaperPosition:
     model_id: str | None = None
     rationale: str = ""
     target_weight: float | None = None  # cycle_switch 目标仓位
+    rr_ratio: float | None = None  # 计划盈亏比
+    notional: float | None = None  # 开仓名义价值
+    margin: float | None = None  # 开仓保证金 = 名义 / 杠杆
+    leverage: float | None = None  # 开仓时使用的杠杆
 
     def unrealized_pnl(self, price: float) -> float:
         if self.direction == "long":
@@ -85,6 +153,11 @@ class PaperTrade:
     strategy: str = "ai_plan"
     session_id: int | None = None
     model_id: str | None = None
+    rr_ratio: float | None = None
+    notional: float | None = None
+    margin: float | None = None
+    leverage: float | None = None
+    margin_roi_pct: float | None = None
 
 
 @dataclass
@@ -121,6 +194,10 @@ class PaperState:
             p = dict(raw)
             p.setdefault("strategy", "ai_plan")
             p.setdefault("target_weight", None)
+            p.setdefault("rr_ratio", None)
+            p.setdefault("notional", None)
+            p.setdefault("margin", None)
+            p.setdefault("leverage", None)
             # 兼容旧字段
             if "stop_loss" not in p:
                 p["stop_loss"] = None
@@ -138,6 +215,11 @@ class PaperState:
                 continue
             t = dict(raw)
             t.setdefault("strategy", "ai_plan")
+            t.setdefault("rr_ratio", None)
+            t.setdefault("notional", None)
+            t.setdefault("margin", None)
+            t.setdefault("leverage", None)
+            t.setdefault("margin_roi_pct", None)
             try:
                 trades.append(PaperTrade(**{
                     k: t[k] for k in PaperTrade.__dataclass_fields__ if k in t
@@ -242,12 +324,44 @@ class PaperBroker:
             decided = wins + losses
             pos_rows = []
             by_strategy: dict[str, dict[str, Any]] = {}
+            used_margin = 0.0
+            total_notional = 0.0
             for p in self.state.positions:
                 px = self._marks.get(p.symbol, p.entry)
                 upnl = p.unrealized_pnl(px)
+                rr = p.rr_ratio
+                if rr is None:
+                    rr = _calc_rr(p.direction, p.entry, p.stop_loss, p.take_profit)
+                noto, mgn, lev = _sizing_metrics(
+                    qty=p.qty,
+                    entry=p.entry,
+                    leverage=p.leverage,
+                    margin=p.margin,
+                    notional=p.notional,
+                )
+                mark_notional = abs(p.qty * px)
+                margin_roi = (upnl / mgn * 100.0) if mgn > 0 else None
+                if p.direction == "long":
+                    price_chg = (px / p.entry - 1.0) * 100.0 if p.entry else 0.0
+                else:
+                    price_chg = (p.entry / px - 1.0) * 100.0 if px else 0.0
+                used_margin += mgn
+                total_notional += mark_notional
                 row = asdict(p)
                 row["mark"] = px
                 row["unrealized_pnl"] = round(upnl, 6)
+                row["rr_ratio"] = rr
+                row["unrealized_r"] = _unrealized_r(
+                    p.direction, p.entry, p.stop_loss, px
+                )
+                row["notional"] = noto
+                row["mark_notional"] = round(mark_notional, 6)
+                row["margin"] = mgn
+                row["leverage"] = lev
+                row["margin_roi_pct"] = (
+                    round(margin_roi, 2) if margin_roi is not None else None
+                )
+                row["price_chg_pct"] = round(price_chg, 4)
                 pos_rows.append(row)
                 bucket = by_strategy.setdefault(
                     p.strategy,
@@ -288,6 +402,35 @@ class PaperBroker:
                 d = b["wins"] + b["losses"]
                 b["win_rate"] = round(b["wins"] / d, 4) if d else None
 
+            acct_lev = (
+                round(total_notional / self.state.equity, 4)
+                if self.state.equity > 0
+                else 0.0
+            )
+            free_margin = round(self.state.equity - used_margin, 6)
+
+            def _trade_row(t: PaperTrade) -> dict[str, Any]:
+                noto, mgn, lev = _sizing_metrics(
+                    qty=t.qty,
+                    entry=t.entry,
+                    leverage=t.leverage,
+                    margin=t.margin,
+                    notional=t.notional,
+                )
+                roi = t.margin_roi_pct
+                if roi is None and mgn > 0:
+                    roi = round(t.pnl_usd / mgn * 100.0, 2)
+                return {
+                    **asdict(t),
+                    "rr_ratio": t.rr_ratio
+                    if t.rr_ratio is not None
+                    else _calc_rr(t.direction, t.entry, t.stop_loss, t.take_profit),
+                    "notional": noto,
+                    "margin": mgn,
+                    "leverage": lev,
+                    "margin_roi_pct": roi,
+                }
+
             return {
                 "enabled": bool(getattr(get_settings(), "monitor_paper_enabled", False)),
                 "sources": sorted(_paper_sources()),
@@ -305,6 +448,11 @@ class PaperBroker:
                     else 0.0,
                     2,
                 ),
+                "leverage": _paper_leverage(),
+                "used_margin": round(used_margin, 6),
+                "free_margin": free_margin,
+                "total_notional": round(total_notional, 6),
+                "account_leverage": acct_lev,
                 "open_positions": len(self.state.positions),
                 "closed_trades": len(closed),
                 "wins": wins,
@@ -312,7 +460,7 @@ class PaperBroker:
                 "win_rate": round(wins / decided, 4) if decided else None,
                 "positions": pos_rows,
                 "by_strategy": list(by_strategy.values()),
-                "recent_trades": [asdict(t) for t in closed[-30:][::-1]],
+                "recent_trades": [_trade_row(t) for t in closed[-30:][::-1]],
                 "equity_curve": list(self.state.equity_curve[-90:]),
                 "updated_at": self.state.updated_at,
                 "marks": dict(self._marks),
@@ -374,6 +522,14 @@ class PaperBroker:
             )
             return None
 
+        plan_rr = plan.get("rr_ratio")
+        try:
+            rr = float(plan_rr) if plan_rr is not None else None
+        except (TypeError, ValueError):
+            rr = None
+        if rr is None or rr <= 0:
+            rr = _calc_rr(direction, entry, stop, take)
+
         with _lock:
             return self._open_locked(
                 symbol=sym,
@@ -387,6 +543,7 @@ class PaperBroker:
                 model_id=model_id,
                 rationale=str(plan.get("rationale") or "")[:200],
                 risk_scale=1.0,
+                rr_ratio=rr,
             )
 
     def sync_cycle_target(
@@ -482,6 +639,7 @@ class PaperBroker:
         rationale: str = "",
         risk_scale: float = 1.0,
         target_weight: float | None = None,
+        rr_ratio: float | None = None,
     ) -> dict[str, Any] | None:
         settings = get_settings()
         max_open = max(1, int(getattr(settings, "monitor_paper_max_positions", 12) or 12))
@@ -515,6 +673,14 @@ class PaperBroker:
         if self.state.cash < fee:
             return None
 
+        if rr_ratio is None:
+            rr_ratio = _calc_rr(direction, entry, stop, take)
+
+        lev = _paper_leverage()
+        noto, mgn, lev = _sizing_metrics(
+            qty=qty, entry=entry, leverage=lev, notional=notional
+        )
+
         self.state.cash -= fee
         self.state.fees_paid += fee
         pos = PaperPosition(
@@ -533,6 +699,10 @@ class PaperBroker:
             model_id=model_id,
             rationale=rationale,
             target_weight=target_weight,
+            rr_ratio=rr_ratio,
+            notional=noto,
+            margin=mgn,
+            leverage=lev,
         )
         self.state.positions.append(pos)
         self._marks[symbol] = entry
@@ -545,12 +715,14 @@ class PaperBroker:
             "cash": round(self.state.cash, 6),
         }
         logger.info(
-            "纸面开仓 [%s] %s %s qty=%.6g entry=%.6g sl=%s tp=%s equity=%.4f",
+            "纸面开仓 [%s] %s %s qty=%.6g entry=%.6g margin=%.4f lev=%.1fx sl=%s tp=%s equity=%.4f",
             strategy,
             direction,
             symbol,
             qty,
             entry,
+            mgn,
+            lev,
             stop,
             take,
             self.state.equity,
@@ -614,6 +786,14 @@ class PaperBroker:
         self.state.cash += raw_pnl - exit_fee
         self.state.fees_paid += exit_fee
         self.state.realized_pnl += pnl
+        noto, mgn, lev = _sizing_metrics(
+            qty=pos.qty,
+            entry=pos.entry,
+            leverage=pos.leverage,
+            margin=pos.margin,
+            notional=pos.notional,
+        )
+        margin_roi = round(pnl / mgn * 100.0, 2) if mgn > 0 else None
         trade = PaperTrade(
             id=pos.id,
             symbol=pos.symbol,
@@ -632,6 +812,13 @@ class PaperBroker:
             strategy=pos.strategy,
             session_id=pos.session_id,
             model_id=pos.model_id,
+            rr_ratio=pos.rr_ratio
+            if pos.rr_ratio is not None
+            else _calc_rr(pos.direction, pos.entry, pos.stop_loss, pos.take_profit),
+            notional=noto,
+            margin=mgn,
+            leverage=lev,
+            margin_roi_pct=margin_roi,
         )
         self.state.trades.append(trade)
         if len(self.state.trades) > 500:

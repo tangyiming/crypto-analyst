@@ -441,6 +441,7 @@ async def backtest_classic_api(req: ClassicBacktestRequest):
             market="futures",
         )
         kwargs["regime"] = build_cycle_regime(btc.candles)
+        kwargs["symbol"] = sym
 
     positions = fn(candles, **kwargs) if kwargs else fn(candles)
     labels = label_regimes(candles)

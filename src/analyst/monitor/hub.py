@@ -913,6 +913,25 @@ class MonitorHub:
         tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
         if worker.key.timeframe.lower() != tf:
             return False
+        allow = settings.cycle_symbols_set
+        sym_u = worker.key.symbol.upper().replace("-", "/").split(":")[0]
+        if allow is not None and sym_u not in allow:
+            # 白名单外：清掉已有纸面 cycle 仓，不再发仓位告警
+            try:
+                if len(worker.series.candles) >= 1:
+                    px = float(worker.series.candles[-1].close)
+                    await self._paper_sync_cycle(
+                        worker,
+                        target_position=0.0,
+                        price=px,
+                        regime="filtered",
+                    )
+            except Exception:
+                logger.exception(
+                    "paper cycle flat failed (filtered) %s", worker.key
+                )
+            worker.last_cycle_position = 0.0
+            return False
         if len(worker.series.candles) < 50:
             return False
 

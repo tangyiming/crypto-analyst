@@ -122,7 +122,7 @@
     .paper-live.has-pos { border-color: rgba(14,203,129,.35); }
     .paper-pos-row {
       display: grid;
-      grid-template-columns: 88px 70px 36px 1fr 72px 72px;
+      grid-template-columns: 68px 58px 24px 1fr 72px 64px 56px;
       gap: 6px;
       padding: 7px 10px;
       border-bottom: 1px solid var(--line);
@@ -1475,7 +1475,9 @@
       </div>
       <div class="cycle-stats" id="paperStats" style="margin-bottom:16px;">
         <div class="cycle-stat"><span class="k">权益</span><span class="v" id="paperEquity">—</span></div>
-        <div class="cycle-stat"><span class="k">收益率</span><span class="v" id="paperReturn">—</span></div>
+        <div class="cycle-stat"><span class="k">账户收益</span><span class="v" id="paperReturn">—</span></div>
+        <div class="cycle-stat"><span class="k">已用保证金</span><span class="v" id="paperUsedMargin">—</span></div>
+        <div class="cycle-stat"><span class="k">账户杠杆</span><span class="v" id="paperAcctLev">—</span></div>
         <div class="cycle-stat"><span class="k">已实现</span><span class="v" id="paperPnl">—</span></div>
         <div class="cycle-stat"><span class="k">浮动盈亏</span><span class="v" id="paperUpnl">—</span></div>
         <div class="cycle-stat"><span class="k">胜率</span><span class="v" id="paperWinRate">—</span></div>
@@ -1874,6 +1876,12 @@
     return (v >= 0 ? '+' : '') + v.toFixed(4);
   }
 
+  function fmtPct(n, digits = 1) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '—';
+    return (v >= 0 ? '+' : '') + v.toFixed(digits) + '%';
+  }
+
   function renderPaperLiveStrip(st) {
     const eq = Number(st.equity || 0);
     const up = Number(st.unrealized_pnl || 0);
@@ -1899,32 +1907,40 @@
     const eq = Number(st.equity || 0);
     const up = Number(st.unrealized_pnl || 0);
     const rp = Number(st.realized_pnl || 0);
+    const used = Number(st.used_margin || 0);
+    const levCfg = Number(st.leverage || 5);
+    const acctLev = Number(st.account_leverage || 0);
     const src = (st.sources || []).join('/');
     sum.innerHTML = `权益 <b style="color:var(--text)">${eq.toFixed(4)}U</b>`
       + ` · 浮盈 <b style="color:${up >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(up)}</b>`
-      + ` · 已实现 <b style="color:${rp >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(rp)}</b>`
-      + ` · ${escapeHtml(src || '—')}`;
+      + ` · 保证金 <b style="color:var(--text)">${used.toFixed(2)}U</b>`
+      + ` · 账户杠杆 <b style="color:var(--text)">${acctLev.toFixed(2)}x</b>`
+      + ` · 设定 ${levCfg}x · ${escapeHtml(src || '—')}`;
 
     const rows = st.positions || [];
     if (!rows.length) {
       list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无纸面持仓。ai_plan / 双线 / cycle_switch 开仓后会实时出现在这里。</div>';
       return;
     }
-    const head = `<div class="paper-pos-row paper-pos-head"><span>策略</span><span>品种</span><span>向</span><span>入场→标记</span><span>止损/盈</span><span>浮盈</span></div>`;
+    const head = `<div class="paper-pos-row paper-pos-head"><span>策略</span><span>品种</span><span>向</span><span>入场→标记</span><span>杠杆·保证金</span><span>收益率</span><span>浮盈</span></div>`;
     const body = rows.map((p) => {
       const upnl = Number(p.unrealized_pnl || 0);
       const dir = p.direction === 'long' ? '多' : '空';
       const dirColor = p.direction === 'long' ? 'var(--green)' : 'var(--red)';
       const mark = Number(p.mark ?? p.entry);
       const entry = Number(p.entry);
-      const sl = p.stop_loss == null ? '—' : Number(p.stop_loss).toPrecision(5);
-      const tp = p.take_profit == null ? '—' : Number(p.take_profit).toPrecision(5);
+      const lev = p.leverage == null ? '—' : `${Number(p.leverage).toFixed(0)}x`;
+      const mgn = p.margin == null ? '—' : Number(p.margin).toFixed(2);
+      const roi = p.margin_roi_pct;
+      const roiTxt = roi == null ? '—' : fmtPct(roi, 1);
+      const roiColor = roi == null ? 'var(--muted)' : (roi >= 0 ? 'var(--green)' : 'var(--red)');
       return `<div class="paper-pos-row" data-sym="${escapeHtml(p.symbol)}" data-tf="${escapeHtml(p.timeframe || '')}">
         <span>${escapeHtml(p.strategy || '')}</span>
         <span>${escapeHtml((p.symbol || '').replace('/USDT', ''))} <span class="muted">${escapeHtml(p.timeframe || '')}</span></span>
         <span style="color:${dirColor}">${dir}</span>
         <span>${entry.toPrecision(5)}→${mark.toPrecision(5)}</span>
-        <span class="muted">${sl}/${tp}</span>
+        <span title="杠杆 × 开仓保证金(名义/杠杆)">${escapeHtml(lev)} · ${escapeHtml(mgn)}U</span>
+        <span style="color:${roiColor}" title="浮盈/保证金">${escapeHtml(roiTxt)}</span>
         <span style="color:${upnl >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(upnl)}</span>
       </div>`;
     }).join('');
@@ -1954,6 +1970,16 @@
       const pct = st.return_pct;
       $('paperReturn').textContent = (pct >= 0 ? '+' : '') + pct + '%';
       $('paperReturn').style.color = pct >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    if ($('paperUsedMargin')) {
+      const used = Number(st.used_margin || 0);
+      const free = Number(st.free_margin || 0);
+      $('paperUsedMargin').textContent = `${used.toFixed(2)} / 闲${free.toFixed(2)}`;
+    }
+    if ($('paperAcctLev')) {
+      const cfg = Number(st.leverage || 5);
+      const acct = Number(st.account_leverage || 0);
+      $('paperAcctLev').textContent = `${acct.toFixed(2)}x · 设定${cfg}x`;
     }
     if ($('paperPnl')) {
       const p = Number(st.realized_pnl || 0);
@@ -2017,20 +2043,30 @@
       } else {
         posEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
           <thead><tr style="color:var(--muted);text-align:left;">
-            <th style="padding:4px 6px;">策略</th><th>品种</th><th>方向</th><th>入场</th><th>标记</th><th>止损</th><th>止盈</th><th>浮盈</th>
+            <th style="padding:4px 6px;">策略</th><th>品种</th><th>方向</th><th>入场</th><th>标记</th>
+            <th>名义</th><th>保证金</th><th>杠杆</th><th>保证金收益</th><th>盈亏比</th><th>浮盈</th>
           </tr></thead>
           <tbody>${rows.map((p) => {
             const up = Number(p.unrealized_pnl || 0);
-            const sl = p.stop_loss == null ? '—' : Number(p.stop_loss).toPrecision(6);
-            const tp = p.take_profit == null ? '—' : Number(p.take_profit).toPrecision(6);
+            const rr = p.rr_ratio == null ? '—' : `1:${Number(p.rr_ratio).toFixed(2)}`;
+            const ur = p.unrealized_r == null ? '' : ` (${Number(p.unrealized_r) >= 0 ? '+' : ''}${Number(p.unrealized_r).toFixed(2)}R)`;
+            const noto = p.notional == null ? '—' : Number(p.notional).toFixed(2);
+            const mgn = p.margin == null ? '—' : Number(p.margin).toFixed(2);
+            const lev = p.leverage == null ? '—' : `${Number(p.leverage).toFixed(0)}x`;
+            const roi = p.margin_roi_pct;
+            const roiTxt = roi == null ? '—' : fmtPct(roi, 1);
+            const roiColor = roi == null ? 'var(--muted)' : (roi >= 0 ? 'var(--green)' : 'var(--red)');
             return `<tr style="border-top:1px solid var(--line);">
               <td style="padding:6px;">${escapeHtml(p.strategy || '')}</td>
               <td>${escapeHtml(p.symbol)} <span class="muted">${escapeHtml(p.timeframe || '')}</span></td>
               <td style="color:${p.direction === 'long' ? 'var(--green)' : 'var(--red)'}">${p.direction}</td>
               <td>${Number(p.entry).toPrecision(6)}</td>
               <td>${Number(p.mark ?? p.entry).toPrecision(6)}</td>
-              <td>${sl}</td>
-              <td>${tp}</td>
+              <td>${escapeHtml(noto)}</td>
+              <td>${escapeHtml(mgn)}</td>
+              <td>${escapeHtml(lev)}</td>
+              <td style="color:${roiColor}">${escapeHtml(roiTxt)}</td>
+              <td title="计划 R:R；括号为当前浮盈相对 1R">${escapeHtml(rr)}${escapeHtml(ur)}</td>
               <td style="color:${up >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(up)}</td>
             </tr>`;
           }).join('')}</tbody></table>`;
@@ -2044,17 +2080,25 @@
       } else {
         trEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
           <thead><tr style="color:var(--muted);text-align:left;">
-            <th style="padding:4px 6px;">策略</th><th>品种</th><th>方向</th><th>结果</th><th>入场→出场</th><th>盈亏</th>
+            <th style="padding:4px 6px;">策略</th><th>品种</th><th>方向</th><th>结果</th><th>入场→出场</th><th>杠杆·保证金</th><th>保证金收益</th><th>盈亏</th>
           </tr></thead>
-          <tbody>${rows.map((t) => `
-            <tr style="border-top:1px solid var(--line);">
+          <tbody>${rows.map((t) => {
+            const lev = t.leverage == null ? '—' : `${Number(t.leverage).toFixed(0)}x`;
+            const mgn = t.margin == null ? '—' : Number(t.margin).toFixed(2);
+            const roi = t.margin_roi_pct;
+            const roiTxt = roi == null ? '—' : fmtPct(roi, 1);
+            const roiColor = roi == null ? 'var(--muted)' : (roi >= 0 ? 'var(--green)' : 'var(--red)');
+            return `<tr style="border-top:1px solid var(--line);">
               <td style="padding:6px;">${escapeHtml(t.strategy || '')}</td>
               <td>${escapeHtml(t.symbol)}</td>
               <td>${escapeHtml(t.direction)}</td>
               <td>${escapeHtml(t.outcome)}</td>
               <td>${Number(t.entry).toPrecision(5)}→${Number(t.exit).toPrecision(5)}</td>
+              <td>${escapeHtml(lev)} · ${escapeHtml(mgn)}U</td>
+              <td style="color:${roiColor}">${escapeHtml(roiTxt)}</td>
               <td style="color:${t.pnl_usd >= 0 ? 'var(--green)' : 'var(--red)'}">${Number(t.pnl_usd).toFixed(4)}</td>
-            </tr>`).join('')}</tbody></table>`;
+            </tr>`;
+          }).join('')}</tbody></table>`;
       }
     }
   }

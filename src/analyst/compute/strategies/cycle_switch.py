@@ -23,6 +23,7 @@
   · 各盯盘币对在配置周期（默认 4h）收盘评估仓位；相位用 BTC 定调
   · 仓位相对上一根 K 线变化 → 页面告警 + AI 候选（不直推 TG；可交易由 AI→ai_plan）
   · 周期位置日更见 cycle_outlook（每天 1 条）
+  · 跟单品种可用 MONITOR_CYCLE_SYMBOLS 白名单（默认 BTC,ETH,SOL）
 
   注意：减半日历边界（牛 550 天 / 熊 400 天）仅拟合 2 个完整周期，
   必须与均线双确认一起用；回测≠未来，上线先 paper trading。
@@ -57,7 +58,7 @@ class CycleSwitchConfig:
     short_size: float = 0.5
     bull_days: int = 550
     bear_days: int = 400
-    ma_period: int = 1200      # 4h × 1200 ≈ 200 日
+    ma_period: int = 1200  # 4h × 1200 ≈ 200 日
     ma_band: float = 0.03
 
 
@@ -65,9 +66,9 @@ class CycleSwitchConfig:
 class CycleSwitchSignal:
     """实时监控：目标仓位 + 牛熊相位。"""
 
-    market_regime: str         # bull / bear / accum
+    market_regime: str  # bull / bear / accum
     calendar_phase: str
-    target_position: float     # 1.0 / 0.0 / -short_size
+    target_position: float  # 1.0 / 0.0 / -short_size
     prev_position: float
     changed: bool
     price: float
@@ -134,8 +135,12 @@ def positions_cycle_switch(
     fade_z: float = 1.5,
     mr_period: int = 20,
     short_size: float = 0.5,
+    **_ignored,
 ) -> list[float]:
-    """生成每根收盘后的目标仓位序列。"""
+    """生成每根收盘后的目标仓位序列。
+
+    ``**_ignored`` 兼容旧调用里多余的 keyword（如 symbol / trail_dd_pct），一律忽略。
+    """
     closes = [c.close for c in candles]
     highs = [c.high for c in candles]
     lows = [c.low for c in candles]
@@ -150,7 +155,7 @@ def positions_cycle_switch(
         if reg == "bear":
             if pos > 0:
                 pos = 0.0
-            window = closes[i - mr_period + 1:i + 1]
+            window = closes[i - mr_period + 1 : i + 1]
             mean = sum(window) / mr_period
             var = sum((v - mean) ** 2 for v in window) / mr_period
             std = var ** 0.5
@@ -162,8 +167,8 @@ def positions_cycle_switch(
         else:
             if pos < 0:
                 pos = 0.0
-            hh = max(highs[i - entry_n:i])
-            lx = min(lows[max(0, i - exit_n):i])
+            hh = max(highs[i - entry_n : i])
+            lx = min(lows[max(0, i - exit_n) : i])
             if pos == 0.0 and c > hh:
                 pos = 1.0
             elif pos > 0 and c < lx:
@@ -224,9 +229,9 @@ def evaluate_cycle_switch(
     highs = [c.high for c in candles]
     lows = [c.low for c in candles]
     i = len(candles) - 1
-    hh = max(highs[i - cfg.entry_n:i]) if i >= cfg.entry_n else None
-    lx = min(lows[max(0, i - cfg.exit_n):i]) if i >= cfg.exit_n else None
-    w = closes[-cfg.mr_period:]
+    hh = max(highs[i - cfg.entry_n : i]) if i >= cfg.entry_n else None
+    lx = min(lows[max(0, i - cfg.exit_n) : i]) if i >= cfg.exit_n else None
+    w = closes[-cfg.mr_period :]
     mean = sum(w) / len(w)
     std = (sum((v - mean) ** 2 for v in w) / len(w)) ** 0.5
     z = (closes[-1] - mean) / std if std > 0 else 0.0

@@ -966,6 +966,7 @@ def backtest_classic(
                 "BTC/USDT", timeframe, days=days, market="futures"
             )
         kwargs["regime"] = build_cycle_regime(btc.candles)
+        kwargs["symbol"] = sym
     positions = fn(candles, **kwargs) if kwargs else fn(candles)
     labels = label_regimes(candles)
     rep = simulate(
@@ -1149,7 +1150,7 @@ def cycle_status(
     for sym in syms:
         s = fetch_candles_history(sym, timeframe, days=1825, market="futures")
         c = s.candles
-        pos = positions_cycle_switch(c, regime)[-1]
+        pos = positions_cycle_switch(c, regime, symbol=sym)[-1]
         closes = [x.close for x in c]
         w = closes[-20:]
         mean = sum(w) / 20

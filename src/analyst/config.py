@@ -129,17 +129,21 @@ class Settings(BaseSettings):
     # 牛熊周期切换（方案 D）：4h 收盘评估仓位变化并推 TG
     monitor_cycle_switch_enabled: bool = Field(default=True)
     monitor_cycle_switch_timeframe: str = Field(default="4h")
+    # cycle_switch 跟单/告警白名单；空=全部盯盘品种。默认砍弱 beta（如 AAVE）
+    monitor_cycle_symbols: str = Field(default="BTC/USDT,ETH/USDT,SOL/USDT")
     monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
     # 收盘有双线/规则候选时才调 AI；AI 结论 long/short 才推 ai_plan 告警
     monitor_ai_on_candidate: bool = Field(default=True)
     monitor_ai_cooldown_minutes: int = Field(default=240)
     # 盯盘 AI 确认只走免费层（Groq/Cerebras/Gemini/OpenRouter/SambaNova）；失败不回落付费
     monitor_ai_free_only: bool = Field(default=True)
-    # 纸面模拟炒币：跟多策略，初始权益 / 单笔风险 / 费率
+    # 纸面模拟炒币：跟多策略，初始权益 / 单笔风险 / 费率 / 杠杆
     monitor_paper_enabled: bool = Field(default=True)
     monitor_paper_equity: float = Field(default=100.0)
     monitor_paper_risk_pct: float = Field(default=0.01)
     monitor_paper_fee_bps: float = Field(default=4.0)
+    # 展示与保证金占用：保证金 = 名义 / 杠杆；收益率 = 浮盈 / 保证金
+    monitor_paper_leverage: float = Field(default=5.0)
     monitor_paper_max_positions: int = Field(default=12)
     monitor_paper_tg: bool = Field(default=True)
     # 纸面跟单来源：ai_plan,double_line,cycle_switch
@@ -170,6 +174,25 @@ class Settings(BaseSettings):
     @property
     def symbols_list(self) -> list[str]:
         return [s.strip() for s in self.default_symbols.split(",") if s.strip()]
+
+    @property
+    def cycle_symbols_set(self) -> set[str] | None:
+        """cycle_switch 白名单。None=不限制；否则仅集合内品种评估/纸面跟单。"""
+        raw = (self.monitor_cycle_symbols or "").strip()
+        if not raw:
+            return None
+        out: set[str] = set()
+        for s in raw.split(","):
+            s = s.strip().upper().replace("-", "/")
+            if not s:
+                continue
+            if "/" not in s:
+                if s.endswith("USDT") and len(s) > 4:
+                    s = f"{s[:-4]}/USDT"
+                else:
+                    s = f"{s}/USDT"
+            out.add(s.split(":")[0])
+        return out or None
 
     @property
     def daemon_symbols_list(self) -> list[str]:

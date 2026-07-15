@@ -51,16 +51,32 @@ def test_paper_open_tp_and_sl(tmp_path, monkeypatch):
     assert len(broker.state.positions) == 1
     assert broker.state.positions[0].qty == 0.1  # risk 0.1 / dist 1
     assert broker.state.positions[0].strategy == "ai_plan"
+    assert broker.state.positions[0].rr_ratio == 2.0
+    assert broker.state.positions[0].leverage == 5.0
+    assert abs(broker.state.positions[0].notional - 10.0) < 1e-6  # 0.1 * 100
+    assert abs(broker.state.positions[0].margin - 2.0) < 1e-6  # 10 / 5x
+    st = broker.status()
+    assert st["positions"][0]["rr_ratio"] == 2.0
+    assert st["positions"][0]["unrealized_r"] is not None
+    assert st["positions"][0]["leverage"] == 5.0
+    assert abs(st["positions"][0]["margin"] - 2.0) < 1e-6
+    assert st["used_margin"] > 0
 
     # 未触及
     assert broker.on_mark("BTC/USDT", 100.5) == []
     assert len(broker.state.positions) == 1
+    st2 = broker.status()
+    assert abs(st2["positions"][0]["unrealized_r"] - 0.5) < 1e-6  # +0.5 / 1R
+    # 浮盈 0.05 / 保证金 2 = 2.5%
+    assert abs(st2["positions"][0]["margin_roi_pct"] - 2.5) < 1e-6
 
     # 止盈
     closed = broker.on_mark("BTC/USDT", 102.0)
     assert len(closed) == 1
     assert closed[0]["trade"]["outcome"] == "tp"
     assert closed[0]["trade"]["pnl_usd"] > 0
+    assert closed[0]["trade"].get("rr_ratio") == 2.0
+    assert closed[0]["trade"].get("margin_roi_pct") is not None
     assert len(broker.state.positions) == 0
     assert broker.state.equity > 10.0
 
