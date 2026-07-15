@@ -142,23 +142,29 @@ async def monitor_daemon_sync(
     symbols: str = Query("", description="逗号分隔品种"),
     timeframe: str = Query("15m"),
 ):
-    """用当前观察列表刷新常驻盯盘并拉起 worker（需 MONITOR_ALWAYS_ON=true）。"""
+    """用当前观察列表热更新常驻盯盘 worker（增删品种无需重启）。"""
     from analyst.config import get_settings
 
     if not get_settings().monitor_always_on:
         raise HTTPException(
             400,
-            "未开启常驻盯盘：请在 .env 设置 MONITOR_ALWAYS_ON=true 并重启服务",
+            "未开启常驻盯盘：请在 .env 设置 MONITOR_ALWAYS_ON=true 后重启一次 Web 服务",
         )
     hub = get_monitor_hub()
     syms = [_norm_symbol(x) for x in symbols.split(",") if x.strip()]
     if not syms:
         raise HTTPException(400, "symbols 不能为空")
-    # 常驻周期默认跟 MONITOR_TIMEFRAME；显式传入才覆盖
-    s = get_settings()
-    tf = (timeframe or "").strip() or s.monitor_timeframe or "15m"
-    hub.save_daemon_state(syms, tf)
+    hub.save_daemon_state(syms)
     info = await hub.start_always_on_workers()
+    info["message"] = (
+        f"已热更新：{len(info.get('symbols') or [])} 品种 · "
+        f"运行 {len(info.get('running') or [])} workers"
+        + (
+            f" · 停止 {len(info.get('stopped') or [])} 个旧流"
+            if info.get("stopped")
+            else ""
+        )
+    )
     return info
 
 
@@ -334,6 +340,123 @@ def cycle_timeline(days: int = Query(800, ge=200, le=2000)):
     # 日线收盘价（轻量折线背景）
     payload["candles"] = [candle_to_dict(c) for c in series.candles[-400:]]
     return payload
+
+
+@router.get("/api/strategies")
+def strategies_catalog():
+    """策略库目录（实时 + 组合）。"""
+    from analyst.compute.strategies.registry import list_strategies
+
+    kind_zh = {"realtime": "实时盯盘", "portfolio": "组合回测"}
+    return {
+        "strategies": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "kind": s.kind,
+                "kind_label": kind_zh.get(s.kind, s.kind),
+                "description": s.description,
+                "cli": s.cli,
+                "module": s.module,
+            }
+            for s in list_strategies()
+        ],
+    }
+
+
+class ClassicBacktestRequest(BaseModel):
+    symbol: str = "BTC/USDT"
+    timeframe: str = "4h"
+    days: int = Field(1095, ge=90, le=2000)
+    strategy: str = "donchian"
+    long_only: bool = True
+    fee_pct: float = 0.05
+    slippage_pct: float = 0.02
+    oos_days: int = Field(365, ge=0, le=730)
+
+
+@router.post("/api/backtest/classic")
+async def backtest_classic_api(req: ClassicBacktestRequest):
+    """经典组合策略回测（Web 表单用）。"""
+    from analyst.backtest.classic import (
+        STRATEGIES,
+        CostModel,
+        build_cycle_regime,
+        label_regimes,
+        simulate,
+    )
+    from analyst.data.fetcher import fetch_candles_history
+
+    if req.strategy not in STRATEGIES:
+        raise HTTPException(400, f"未知策略：{req.strategy}")
+
+    sym = _norm_symbol(req.symbol)
+    tf = req.timeframe.strip().lower()
+    cost = CostModel(fee_pct=req.fee_pct, slippage_pct=req.slippage_pct)
+
+    import asyncio
+
+    series = await asyncio.to_thread(
+        fetch_candles_history, sym, tf, days=req.days, market="futures"
+    )
+    candles = series.candles
+    if len(candles) < 300:
+        raise HTTPException(400, f"历史数据不足（{len(candles)} 根）")
+
+    fn = STRATEGIES[req.strategy]
+    kwargs: dict = {}
+    if req.strategy in ("donchian", "ema_cross", "boll_mr"):
+        kwargs["long_only"] = req.long_only
+    elif req.strategy == "cycle_switch":
+        btc = await asyncio.to_thread(
+            fetch_candles_history,
+            "BTC/USDT",
+            tf,
+            days=req.days,
+            market="futures",
+        )
+        kwargs["regime"] = build_cycle_regime(btc.candles)
+
+    positions = fn(candles, **kwargs) if kwargs else fn(candles)
+    labels = label_regimes(candles)
+    rep = simulate(
+        candles,
+        positions,
+        strategy=req.strategy,
+        symbol=sym,
+        timeframe=tf,
+        cost=cost,
+        regime_labels=labels,
+    )
+
+    oos = None
+    if req.oos_days > 0:
+        cutoff = candles[-1].timestamp.timestamp() - req.oos_days * 86400
+        idx = next(
+            (i for i, c in enumerate(candles) if c.timestamp.timestamp() >= cutoff),
+            None,
+        )
+        if idx and idx > 60:
+            oos_rep = simulate(
+                candles[idx:],
+                positions[idx:],
+                strategy=req.strategy,
+                symbol=sym,
+                timeframe=tf,
+                cost=cost,
+            )
+            oos = oos_rep.to_row()
+
+    return {
+        "report": rep.to_row(),
+        "oos": oos,
+        "range": {
+            "start": candles[0].timestamp.isoformat(),
+            "end": candles[-1].timestamp.isoformat(),
+            "bars": len(candles),
+        },
+        "cost_one_way_pct": round(cost.one_way * 100, 4),
+    }
 
 
 @router.websocket("/ws/monitor")

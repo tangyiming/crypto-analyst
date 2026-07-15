@@ -5,7 +5,7 @@
 <p align="center">
   <img src="docs/images/web-dashboard.png" alt="Web 盯盘与 AI 分析" width="900" />
 </p>
-<p align="center"><em>Web：K 线与计划线 · AI 侧栏 · 四年周期浮层 · 历史会话</em></p>
+<p align="center"><em>Web 盯盘：顶栏 盯盘 → 周期 → 策略库 → 回测 · K 线与计划线 · AI 侧栏 · 周期倒计时告警</em></p>
 
 <p align="center">
   <img src="docs/images/telegram-alert.png" alt="Telegram 告警" width="420" />
@@ -19,7 +19,7 @@
 | | AI 分析 | 实时盯盘 | 周期与组合策略 |
 |---|---|---|---|
 | **做什么** | 拉多周期数据 → LLM 出观点与计划 → 到期对照 K 线验证 | 规则扫形态（双线反转等）→ Web / Telegram 提醒 | Wolfy 四年周期位置 + `cycle_switch` 牛熊切换；经典策略长周期回测 |
-| **入口** | Web 右侧「AI 行情分析」，或 `analyst practice` | 打开 Web；开常驻后关页面也推 TG | Web 顶部「周期」；`analyst cycle-outlook` / `backtest-classic` |
+| **入口** | Web 右侧「AI 行情分析」，或 `analyst practice` | 打开 Web；开常驻后关页面也推 TG | 顶栏「周期」（盯盘后第二项）；`analyst cycle-outlook` / `backtest-classic` |
 | **数据** | 会话写入 `analyst.db` | 观察列表 + 告警；K 线本身不长期落库 | BTC 日线定日历相位；组合回测自动分页拉 2–5 年历史 |
 
 ```
@@ -30,7 +30,12 @@
 
 ### Web 周期图
 
-顶部 **「周期」** 打开四年周期浮层（基于 BTC 日线）：
+<p align="center">
+  <img src="docs/images/cycle-panel.png" alt="四年周期专页" width="900" />
+</p>
+<p align="center"><em>周期专页：相位进度 · 时间轴色带 · 转折点倒计时 · 狼波 RSI</em></p>
+
+顶栏 **「周期」**（紧跟「盯盘」）进入四年周期专页（基于 BTC 日线）：
 
 - **刻舟求剑日历**：牛 1064 天 / 熊 364 天，显示当前相位进度与下一转折点
 - **转折点倒计时**：距预计牛顶 / 熊底还有多少天（≤30 天高亮）
@@ -38,6 +43,10 @@
 - **狼波动能**：RSI 分区（过热 / 超卖），与日历交叉确认
 
 数据每 5 分钟自动刷新；与主图 WebSocket 独立，固定用 BTC 日线。
+
+### Web 应用导航
+
+顶栏从左到右：**盯盘** · **周期** · **策略库** · **回测** · **自动交易**（Soon）。策略库可跳转回测或周期页；回测页与 CLI `backtest-classic` 同源。
 
 ---
 
@@ -99,7 +108,7 @@ analyst config test-llm
 | `DEFAULT_SYMBOLS` | 默认观察列表；常驻品种未单独配置时也用这份 |
 | `MONITOR_ALWAYS_ON` | `true`：Web 进程在跑时关页面也继续盯盘并推 TG |
 | `MONITOR_DAEMON_TIMEFRAMES` | 常驻多周期，如 `15m,1h,4h` |
-| `MONITOR_DAEMON_SYMBOLS` | 常驻品种；空则跟 `DEFAULT_SYMBOLS` / 页面观察列表 |
+| `MONITOR_DAEMON_SYMBOLS` | 常驻品种；空则跟 `DEFAULT_SYMBOLS` / 页面观察列表（常驻模式下加减币**无需重启**） |
 | `MONITOR_CYCLE_SWITCH_ENABLED` | `true`：4h 收盘评估 `cycle_switch` 仓位变化并推 TG |
 | `MONITOR_CYCLE_OUTLOOK_ENABLED` | `true`：BTC 临近周期转折点（≤90 天）时推 TG |
 | `MONITOR_VOLUME_SPIKE_RATIO` | 放量告警阈值（默认 `2.0`） |
@@ -205,7 +214,7 @@ analyst cycle-outlook --telegram   # 同时推 TG
 analyst cycle-status               # cycle_switch 各币实时目标仓位
 ```
 
-Web：`GET /api/monitor/cycle-timeline` · 顶部「周期」按钮 · 底部 Dock「四年周期」
+Web：`GET /api/monitor/cycle-timeline` · 顶栏「周期」专页（盯盘后第二项）
 
 ---
 

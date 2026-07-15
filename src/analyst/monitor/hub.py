@@ -242,24 +242,25 @@ class MonitorHub:
         if not self._daemon_symbols:
             logger.warning("常驻盯盘品种为空")
             return info
-        tfs = list(self._daemon_timeframes) or ["15m"]
-        ok: list[str] = []
-        for sym in sorted(self._daemon_symbols):
-            for tf in tfs:
-                try:
-                    await self._ensure_worker(StreamKey(sym, tf, "futures"))
-                    ok.append(f"{sym}|{tf}")
-                except Exception as e:
-                    logger.warning("daemon worker failed %s %s: %s", sym, tf, e)
+        started, stopped = await self._reconcile_daemon_workers()
+        ok = [
+            str(w.key)
+            for w in self._workers.values()
+            if self.is_daemon_key(w.key) and w.task and not w.task.done()
+        ]
+        if stopped:
+            logger.info("常驻盯盘 reconcile：停止 %d 个过期 worker", len(stopped))
         logger.info(
-            "常驻盯盘已启动 %d workers · %d品种 × %s · TG=%s",
+            "常驻盯盘已同步 %d workers · %d品种 × %s · TG=%s",
             len(ok),
             len(self._daemon_symbols),
-            ",".join(tfs),
+            ",".join(list(self._daemon_timeframes) or ["15m"]),
             self._telegram_ready(),
         )
         info["running"] = ok
-        info["timeframes"] = tfs
+        info["started"] = started
+        info["stopped"] = stopped
+        info["timeframes"] = list(self._daemon_timeframes) or ["15m"]
         info["enabled"] = True
         # 进程内只推一次启动心跳，避免页面 daemon/sync 反复刷 TG
         if self._telegram_ready() and ok and not self._startup_tg_sent:
@@ -558,26 +559,81 @@ class MonitorHub:
             logger.info("started stream worker %s bars=%d", key, len(series.candles))
             return worker
 
+    async def _stop_worker(self, worker: StreamWorker) -> None:
+        """停止单个 worker；若该品种无其它 mark 流则迁到剩余 worker。"""
+        sym = worker.key.symbol
+        market = worker.key.market
+        had_mark = bool(worker.mark_task and not worker.mark_task.done())
+        worker.stop.set()
+        pending = [
+            t for t in (worker.task, worker.mark_task) if t and not t.done()
+        ]
+        for t in pending:
+            t.cancel()
+        for t in pending:
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+        async with self._lock:
+            self._workers.pop(str(worker.key), None)
+        logger.info("stopped stream worker %s", worker.key)
+        if had_mark and market == "futures" and not self._symbol_has_mark_task(sym):
+            for w in self._workers.values():
+                if w.key.symbol == sym and w.key.market == "futures":
+                    w.mark_task = asyncio.create_task(
+                        self._run_mark_loop(w),
+                        name=f"mark-{sym}",
+                    )
+                    logger.info("moved mark stream to %s", w.key)
+                    break
+
+    async def _reconcile_daemon_workers(self) -> tuple[list[str], list[str]]:
+        """按常驻列表增删 worker，无需重启进程。返回 (新启动, 已停止)。"""
+        tfs = list(self._daemon_timeframes) or ["15m"]
+        desired: set[str] = set()
+        started: list[str] = []
+        for sym in sorted(self._daemon_symbols):
+            for tf in tfs:
+                key = StreamKey(sym, tf, "futures")
+                sk = str(key)
+                desired.add(sk)
+                prev = self._workers.get(sk)
+                if prev and prev.task and not prev.task.done():
+                    continue
+                try:
+                    await self._ensure_worker(key)
+                    started.append(sk)
+                except Exception as e:
+                    logger.warning("daemon worker failed %s: %s", sk, e)
+
+        stopped: list[str] = []
+        orphans: list[StreamWorker] = []
+        async with self._lock:
+            for wkey, worker in list(self._workers.items()):
+                if wkey in desired:
+                    continue
+                if worker.clients or worker.alert_clients:
+                    logger.info(
+                        "daemon reconcile: keep %s (browser still subscribed)", wkey
+                    )
+                    continue
+                orphans.append(worker)
+        for worker in orphans:
+            await self._stop_worker(worker)
+            stopped.append(str(worker.key))
+        return started, stopped
+
     async def _maybe_stop_worker(self, key: StreamKey, delay: float) -> None:
         await asyncio.sleep(delay)
         async with self._lock:
             worker = self._workers.get(str(key))
             if not worker or worker.clients or worker.alert_clients:
                 return
-            # 常驻盯盘：无浏览器也不停
             if self.is_daemon_key(key):
                 logger.debug("keep daemon worker alive %s", key)
                 return
-            worker.stop.set()
-            for t in (worker.task, worker.mark_task):
-                if t:
-                    t.cancel()
-                    try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
-            self._workers.pop(str(key), None)
-            logger.info("stopped stream worker %s", key)
+        await self._stop_worker(worker)
 
     async def _run_mark_loop(self, worker: StreamWorker) -> None:
         key = worker.key

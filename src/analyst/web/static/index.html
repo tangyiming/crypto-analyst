@@ -31,10 +31,198 @@
     }
     .desk {
       height: 100vh;
-      display: grid;
-      grid-template-rows: auto minmax(180px, 1fr) minmax(240px, 32vh);
+      display: flex;
+      flex-direction: column;
       background: var(--bg);
     }
+    /* ── 顶栏应用导航 ── */
+    .app-nav {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding: 0 12px;
+      min-height: 42px;
+      flex-shrink: 0;
+      background: #0b0e11;
+      border-bottom: 1px solid var(--line);
+    }
+    .app-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-right: 14px;
+      margin-right: 2px;
+      border-right: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    .app-brand img { width: 20px; height: 20px; border-radius: 4px; }
+    .app-brand span { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0.02em; }
+    .app-nav-links {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      flex: 1;
+      min-width: 0;
+      overflow-x: auto;
+    }
+    .app-nav-link {
+      padding: 10px 14px;
+      font-size: 12px;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .app-nav-link:hover { color: var(--text); }
+    .app-nav-link.active {
+      color: var(--yellow);
+      border-bottom-color: var(--yellow);
+    }
+    .app-nav-link.soon { opacity: 0.72; }
+    .app-nav-link .tag {
+      display: inline-block;
+      font-size: 9px;
+      padding: 1px 5px;
+      margin-left: 5px;
+      border-radius: 8px;
+      background: rgba(240, 185, 11, 0.12);
+      color: var(--yellow);
+      vertical-align: middle;
+    }
+    .app-nav-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      flex-shrink: 0;
+      padding-left: 8px;
+    }
+    .app-view {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .app-view.hidden { display: none !important; }
+    .app-view-monitor {
+      display: grid;
+      grid-template-rows: auto minmax(180px, 1fr) minmax(240px, 32vh);
+    }
+    .app-page {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 20px 24px 28px;
+    }
+    .app-page-head { margin-bottom: 18px; }
+    .app-page-head h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+    .app-page-head p { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.5; }
+    .strategy-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .strategy-card {
+      border: 1px solid var(--line);
+      background: #12161c;
+      border-radius: 8px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .strategy-card .sc-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .strategy-card .sc-name { font-size: 14px; font-weight: 600; }
+    .strategy-card .sc-kind {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+    .sc-kind.realtime { background: rgba(14, 203, 129, 0.15); color: var(--green); }
+    .sc-kind.portfolio { background: rgba(240, 185, 11, 0.12); color: var(--yellow); }
+    .strategy-card .sc-desc { font-size: 12px; color: var(--muted); line-height: 1.45; flex: 1; }
+    .strategy-card .sc-cli {
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #5eb8f0;
+      background: #0b0e11;
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      border-radius: 4px;
+      word-break: break-all;
+    }
+    .strategy-card .sc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .bt-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+      max-width: 880px;
+      margin-bottom: 20px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #12161c;
+    }
+    .bt-field label {
+      display: block;
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .bt-field .sel, .bt-field .inp { width: 100%; }
+    .bt-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+    .btn-primary {
+      padding: 8px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--yellow);
+      color: #0b0e11;
+      border: 0;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .bt-result {
+      max-width: 720px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #12161c;
+      overflow: hidden;
+    }
+    .bt-result table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .bt-result th, .bt-result td {
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+    }
+    .bt-result th { color: var(--muted); font-weight: 500; width: 40%; }
+    .bt-result tr:last-child th, .bt-result tr:last-child td { border-bottom: 0; }
+    .bt-result .pos { color: var(--green); }
+    .bt-result .neg { color: var(--red); }
+    .roadmap {
+      max-width: 560px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #12161c;
+      padding: 16px 18px;
+    }
+    .roadmap li {
+      font-size: 13px;
+      color: var(--text);
+      margin: 10px 0;
+      padding-left: 4px;
+    }
+    .roadmap li.muted { color: var(--muted); }
+    .roadmap li::marker { color: var(--yellow); }
     .chrome {
       background: #0e1218;
       border-bottom: 1px solid var(--line);
@@ -312,60 +500,10 @@
       padding: 8px 10px;
     }
     .dock-pane.hidden { display: none; }
-    /* ── 四年周期悬浮层（全屏顶层） ── */
-    .cycle-overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 100;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px 16px 32px;
-    }
-    .cycle-overlay.hidden { display: none !important; }
-    .cycle-backdrop {
-      position: absolute;
-      inset: 0;
-      background: rgba(11, 14, 17, 0.72);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-      cursor: pointer;
-    }
-    .cycle-float {
-      position: relative;
-      z-index: 1;
-      width: min(920px, 100%);
-      max-height: min(86vh, 880px);
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      background: linear-gradient(180deg, #151a21 0%, #12161c 100%);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      box-shadow:
-        0 24px 64px rgba(0, 0, 0, 0.55),
-        0 0 0 1px rgba(240, 185, 11, 0.06);
-      overflow: hidden;
-      animation: cycle-float-in 0.22s ease-out;
-    }
-    @keyframes cycle-float-in {
-      from { opacity: 0; transform: translateY(12px) scale(0.98); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
-    }
-    .cycle-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--line);
-      flex-shrink: 0;
-      background: rgba(14, 18, 24, 0.9);
-    }
-    .cycle-body {
-      flex: 1;
-      min-height: 0;
-      overflow: auto;
-      padding: 14px 16px 18px;
+    /* ── 四年周期页面 ── */
+    .cycle-page-inner {
+      max-width: 1100px;
+      margin: 0 auto;
     }
     .cycle-stats {
       display: grid;
@@ -407,7 +545,7 @@
     }
     #cyclePriceCanvas {
       width: 100%;
-      height: 168px;
+      height: 240px;
       display: block;
       border: 1px solid var(--line);
       border-radius: 4px;
@@ -557,6 +695,26 @@
 </head>
 <body>
 <div class="desk">
+  <nav class="app-nav" aria-label="主导航">
+    <div class="app-brand">
+      <img src="/favicon.svg" alt="" width="20" height="20" />
+      <span>Crypto Analyst</span>
+    </div>
+    <div class="app-nav-links">
+      <button type="button" class="app-nav-link active" data-app="monitor">盯盘</button>
+      <button type="button" class="app-nav-link" data-app="cycle">周期</button>
+      <button type="button" class="app-nav-link" data-app="strategies">策略库</button>
+      <button type="button" class="app-nav-link" data-app="backtest">回测</button>
+      <button type="button" class="app-nav-link soon" data-app="auto">自动交易<span class="tag">Soon</span></button>
+    </div>
+    <div class="app-nav-status">
+      <span id="connBadge" class="badge">…</span>
+      <span id="tgBadge" class="badge">TG</span>
+      <span id="daemonBadge" class="badge" title="关网页也继续推 TG（需 MONITOR_ALWAYS_ON）">常驻</span>
+    </div>
+  </nav>
+
+  <div id="viewMonitor" class="app-view app-view-monitor">
   <header class="chrome">
     <div class="chrome-main">
       <div class="chrome-group">
@@ -594,11 +752,7 @@
         <div class="mode-seg">
           <button type="button" class="mode-btn active" data-mode="native" id="modeNative">直连图</button>
           <button type="button" class="mode-btn" data-mode="tv" id="modeTv" title="TradingView 免费嵌入：画线无法跨刷新保存">TV 备选</button>
-          <button type="button" class="mode-extra-btn" id="btnCyclePanel" title="Wolfy 四年周期位置">周期</button>
         </div>
-        <span id="connBadge" class="badge">…</span>
-        <span id="tgBadge" class="badge">TG</span>
-        <span id="daemonBadge" class="badge" title="关网页也继续推 TG（需 MONITOR_ALWAYS_ON）">常驻</span>
       </div>
     </div>
 
@@ -663,7 +817,6 @@
 
   <footer class="dock" aria-label="告警与历史">
     <div class="dock-tabs">
-      <button type="button" class="dock-tab" data-dock="cycle">四年周期</button>
       <button type="button" class="dock-tab active" data-dock="alerts">告警记录 <span id="alertCount"></span></button>
       <button type="button" class="dock-tab" data-dock="history">历史分析 <span id="histCount"></span></button>
       <label class="dock-filter shrink-0 flex items-center gap-1 cursor-pointer select-none" style="color:var(--muted);font-size:11px;margin-left:8px;">
@@ -672,36 +825,110 @@
       </label>
       <span class="dock-meta" id="dockHint">点告警 → 直连图标记 · 点历史 → 右侧回看</span>
     </div>
-    <div class="dock-pane hidden" id="paneCycle">
-      <div class="text-xs py-2" style="color:var(--muted)">
-        点击下方按钮打开悬浮周期视图（可点遮罩或 Esc 关闭）。
-        <button type="button" id="btnCycleFromDock" class="chip mt-2">打开周期图</button>
-      </div>
-    </div>
     <div class="dock-pane" id="paneAlerts"></div>
     <div class="dock-pane hidden" id="paneHistory"></div>
   </footer>
-</div>
+  </div>
 
-<div id="cycleOverlay" class="cycle-overlay hidden" aria-label="四年周期位置" role="dialog" aria-modal="true">
-  <div class="cycle-backdrop" id="cycleBackdrop" aria-hidden="true"></div>
-  <div class="cycle-float">
-    <div class="cycle-head">
-      <div>
-        <div class="text-sm font-semibold">四年周期 · 刻舟求剑</div>
-        <div id="cycleSummaryLine" class="text-[11px] mt-0.5" style="color:var(--muted)">加载中…</div>
+  <div id="viewStrategies" class="app-view hidden">
+    <div class="app-page">
+      <div class="app-page-head">
+        <h1>策略库</h1>
+        <p>实时盯盘策略走 monitor 收盘评估；组合策略走经典回测与 cycle_switch 仓位监控。点击卡片可跳转回测或周期页。</p>
       </div>
-      <button type="button" id="btnCycleClose" class="chip" title="关闭（Esc）" style="font-size:16px;line-height:1;padding:4px 10px">×</button>
+      <div id="strategyGrid" class="strategy-grid">
+        <div class="text-xs" style="color:var(--muted)">加载中…</div>
+      </div>
     </div>
-    <div class="cycle-body">
-      <div id="cycleStats" class="cycle-stats"></div>
-      <div class="text-[11px]" style="color:var(--muted)">本相位进度</div>
-      <div class="cycle-phase-bar"><div id="cyclePhaseFill" class="cycle-phase-fill bull" style="width:0%"></div></div>
-      <div id="cyclePhaseLabel" class="text-[11px] font-mono" style="color:var(--text)"></div>
-      <div class="text-[11px] mt-3 mb-1" style="color:var(--muted)">周期时间轴（绿=牛 红=熊 · 黄线=今天 · ◆=减半）</div>
-      <svg id="cycleSvg" class="cycle-timeline-svg" viewBox="0 0 1000 110" preserveAspectRatio="none"></svg>
-      <canvas id="cyclePriceCanvas" height="168"></canvas>
-      <div id="cycleAlerts" class="mt-3"></div>
+  </div>
+
+  <div id="viewCycle" class="app-view hidden">
+    <div class="app-page">
+      <div class="cycle-page-inner">
+        <div class="app-page-head">
+          <h1>四年周期 · 刻舟求剑</h1>
+          <p id="cycleSummaryLine" style="color:var(--muted);margin:0">加载中…</p>
+        </div>
+        <div id="cycleStats" class="cycle-stats"></div>
+        <div class="text-[11px]" style="color:var(--muted)">本相位进度</div>
+        <div class="cycle-phase-bar"><div id="cyclePhaseFill" class="cycle-phase-fill bull" style="width:0%"></div></div>
+        <div id="cyclePhaseLabel" class="text-[11px] font-mono mb-3" style="color:var(--text)"></div>
+        <div class="text-[11px] mb-1" style="color:var(--muted)">周期时间轴（绿=牛 红=熊 · 黄线=今天 · ◆=减半）</div>
+        <svg id="cycleSvg" class="cycle-timeline-svg" viewBox="0 0 1000 110" preserveAspectRatio="none"></svg>
+        <canvas id="cyclePriceCanvas" height="240"></canvas>
+        <div id="cycleAlerts" class="mt-4"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewBacktest" class="app-view hidden">
+    <div class="app-page">
+      <div class="app-page-head">
+        <h1>经典组合回测</h1>
+        <p>复利收益口径，含单边手续费与滑点；牛熊震荡分段贡献 + 可选样本外验证。与 CLI <code style="color:#5eb8f0">analyst backtest-classic</code> 同源。</p>
+      </div>
+      <form id="btForm" class="bt-form" onsubmit="return false;">
+        <div class="bt-field">
+          <label>币种</label>
+          <input class="inp" id="btSymbol" value="BTC" placeholder="BTC / ETH" />
+        </div>
+        <div class="bt-field">
+          <label>策略</label>
+          <select class="sel" id="btStrategy">
+            <option value="donchian">唐奇安通道</option>
+            <option value="ema_cross">EMA 双均线</option>
+            <option value="boll_mr">布林均值回归</option>
+            <option value="cycle_switch">牛熊周期切换</option>
+            <option value="buy_hold">买入持有</option>
+          </select>
+        </div>
+        <div class="bt-field">
+          <label>周期</label>
+          <select class="sel" id="btTimeframe">
+            <option value="4h" selected>4 小时</option>
+            <option value="1h">1 小时</option>
+            <option value="1d">日线</option>
+          </select>
+        </div>
+        <div class="bt-field">
+          <label>历史天数</label>
+          <input class="inp" id="btDays" type="number" value="1095" min="90" max="2000" />
+        </div>
+        <div class="bt-field">
+          <label>样本外（天）</label>
+          <input class="inp" id="btOos" type="number" value="365" min="0" max="730" />
+        </div>
+        <div class="bt-field">
+          <label>只做多</label>
+          <select class="sel" id="btLongOnly">
+            <option value="1" selected>是（推荐）</option>
+            <option value="0">否</option>
+          </select>
+        </div>
+        <div class="bt-actions">
+          <button type="button" class="btn-primary" id="btnRunBacktest">运行回测</button>
+          <span id="btStatus" class="text-[11px]" style="color:var(--muted)">首次约 10–30 秒（拉取历史 K 线）</span>
+        </div>
+      </form>
+      <div id="btResult" class="bt-result hidden"></div>
+    </div>
+  </div>
+
+  <div id="viewAuto" class="app-view hidden">
+    <div class="app-page">
+      <div class="app-page-head">
+        <h1>自动交易</h1>
+        <p>规划中：在回测验证与纸面交易之后，才接入交易所 API 执行。当前版本<strong>只提醒、不下单</strong>。</p>
+      </div>
+      <ul class="roadmap">
+        <li>✅ 实时盯盘 + Telegram 规则告警</li>
+        <li>✅ 双线反转 / cycle_switch 策略评估</li>
+        <li>✅ 经典组合策略 Web 回测</li>
+        <li>✅ Wolfy 四年周期位置与转折点倒计时</li>
+        <li class="muted">⏳ 纸面交易账本（模拟跟单记录）</li>
+        <li class="muted">⏳ 交易所 API 下单（需独立风控模块）</li>
+        <li class="muted">⏳ 仓位管理与 Kelly 仓位建议</li>
+      </ul>
     </div>
   </div>
 </div>
@@ -977,34 +1204,168 @@
     }
   }
 
-  function setCycleBtnActive(on) {
-    $('btnCyclePanel')?.classList.toggle('active', !!on);
+  let activeAppView = 'monitor';
+  let strategiesCache = null;
+
+  function stopCyclePageRefresh() {
+    if (cycleRefreshTimer) {
+      clearInterval(cycleRefreshTimer);
+      cycleRefreshTimer = null;
+    }
   }
 
-  function openCycleOverlay() {
-    const el = $('cycleOverlay');
-    if (!el) return;
-    el.classList.remove('hidden');
-    setCycleBtnActive(true);
+  function startCyclePageRefresh() {
     loadCycleTimeline();
-    if (cycleRefreshTimer) clearInterval(cycleRefreshTimer);
+    stopCyclePageRefresh();
     cycleRefreshTimer = setInterval(() => {
-      if (!$('cycleOverlay')?.classList.contains('hidden')) loadCycleTimeline();
+      if (activeAppView === 'cycle') loadCycleTimeline();
     }, 5 * 60 * 1000);
     requestAnimationFrame(() => {
       if (cycleData) renderCyclePriceCanvas(cycleData);
     });
   }
 
-  function closeCycleOverlay() {
-    $('cycleOverlay')?.classList.add('hidden');
-    setCycleBtnActive(false);
-    if (cycleRefreshTimer) {
-      clearInterval(cycleRefreshTimer);
-      cycleRefreshTimer = null;
+  function switchAppView(name) {
+    const views = {
+      monitor: 'viewMonitor',
+      strategies: 'viewStrategies',
+      backtest: 'viewBacktest',
+      cycle: 'viewCycle',
+      auto: 'viewAuto',
+    };
+    if (!views[name]) return;
+    if (name !== 'cycle') stopCyclePageRefresh();
+    activeAppView = name;
+    try { localStorage.setItem('monitor.appView', name); } catch (_) {}
+    Object.entries(views).forEach(([k, id]) => {
+      $(id)?.classList.toggle('hidden', k !== name);
+    });
+    document.querySelectorAll('.app-nav-link[data-app]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.app === name);
+    });
+    if (name === 'strategies') loadStrategiesPage();
+    if (name === 'cycle') startCyclePageRefresh();
+    if (name === 'monitor') {
+      requestAnimationFrame(() => {
+        if (chartMode === 'native') ensureChart();
+        else if (chartMode === 'tv') mountTradingView(activeSymbol, activeTf, { force: false });
+      });
     }
-    const cycleTab = document.querySelector('.dock-tab[data-dock="cycle"]');
-    if (cycleTab?.classList.contains('active')) switchDock('alerts');
+  }
+
+  async function loadStrategiesPage() {
+    const grid = $('strategyGrid');
+    if (!grid) return;
+    if (strategiesCache) {
+      renderStrategyGrid(strategiesCache);
+      return;
+    }
+    grid.innerHTML = '<div class="text-xs" style="color:var(--muted)">加载中…</div>';
+    try {
+      const r = await fetch('/api/strategies');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      strategiesCache = data.strategies || [];
+      renderStrategyGrid(strategiesCache);
+    } catch (e) {
+      grid.innerHTML = `<div class="text-xs" style="color:var(--red)">加载失败：${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function renderStrategyGrid(items) {
+    const grid = $('strategyGrid');
+    if (!grid) return;
+    if (!items.length) {
+      grid.innerHTML = '<div class="text-xs" style="color:var(--muted)">暂无策略</div>';
+      return;
+    }
+    grid.innerHTML = items.map((s) => {
+      const kindCls = s.kind === 'realtime' ? 'realtime' : 'portfolio';
+      let actions = '';
+      if (s.kind === 'portfolio') {
+        actions += `<button type="button" class="chip" data-bt-strategy="${escapeHtml(s.id)}">去回测</button>`;
+      }
+      if (s.id === 'cycle_switch') {
+        actions += '<button type="button" class="chip" data-open-cycle>查看周期</button>';
+      }
+      return `<div class="strategy-card">
+        <div class="sc-head">
+          <span class="sc-name">${escapeHtml(s.name)}</span>
+          <span class="sc-kind ${kindCls}">${escapeHtml(s.kind_label || s.kind)}</span>
+        </div>
+        <div class="sc-desc">${escapeHtml(s.description)}</div>
+        ${s.cli ? `<div class="sc-cli">${escapeHtml(s.cli)}</div>` : ''}
+        <div class="sc-actions">${actions || '<span class="text-[11px]" style="color:var(--muted)">常驻盯盘自动评估</span>'}</div>
+      </div>`;
+    }).join('');
+    grid.querySelectorAll('[data-bt-strategy]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if ($('btStrategy')) $('btStrategy').value = btn.dataset.btStrategy;
+        switchAppView('backtest');
+      });
+    });
+    grid.querySelectorAll('[data-open-cycle]').forEach((btn) => {
+      btn.addEventListener('click', () => switchAppView('cycle'));
+    });
+  }
+
+  function fmtBtPct(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '—';
+    const cls = n >= 0 ? 'pos' : 'neg';
+    return `<span class="${cls}">${n >= 0 ? '+' : ''}${n.toFixed(1)}%</span>`;
+  }
+
+  async function runWebBacktest() {
+    const btn = $('btnRunBacktest');
+    const status = $('btStatus');
+    const box = $('btResult');
+    if (!btn || !box) return;
+    const body = {
+      symbol: ($('btSymbol')?.value || 'BTC').trim(),
+      strategy: $('btStrategy')?.value || 'donchian',
+      timeframe: $('btTimeframe')?.value || '4h',
+      days: Number($('btDays')?.value) || 1095,
+      oos_days: Number($('btOos')?.value) || 0,
+      long_only: $('btLongOnly')?.value !== '0',
+    };
+    btn.disabled = true;
+    if (status) status.textContent = '回测运行中…';
+    box.classList.add('hidden');
+    try {
+      const r = await fetch('/api/backtest/classic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+      const rep = data.report || {};
+      const regimes = rep.regimes || {};
+      let html = '<table><tbody>';
+      html += `<tr><th>区间</th><td>${escapeHtml((data.range?.start || '').slice(0, 10))} → ${escapeHtml((data.range?.end || '').slice(0, 10))}（${data.range?.bars || '—'} 根）</td></tr>`;
+      html += `<tr><th>总收益（复利）</th><td>${fmtBtPct(rep.total_return_pct)}</td></tr>`;
+      html += `<tr><th>年化 CAGR</th><td>${fmtBtPct(rep.cagr_pct)}</td></tr>`;
+      html += `<tr><th>最大回撤</th><td><span class="neg">-${Math.abs(Number(rep.max_drawdown_pct) || 0).toFixed(1)}%</span></td></tr>`;
+      html += `<tr><th>夏普（年化）</th><td>${rep.sharpe ?? '—'}</td></tr>`;
+      html += `<tr><th>调仓次数</th><td>${rep.trades ?? '—'}</td></tr>`;
+      html += `<tr><th>持仓占比</th><td>${rep.exposure != null ? `${Math.round(rep.exposure * 100)}%` : '—'}</td></tr>`;
+      html += `<tr><th>牛市段贡献</th><td>${fmtBtPct(regimes.bull)}</td></tr>`;
+      html += `<tr><th>熊市段贡献</th><td>${fmtBtPct(regimes.bear)}</td></tr>`;
+      html += `<tr><th>震荡段贡献</th><td>${fmtBtPct(regimes.chop)}</td></tr>`;
+      if (data.oos) {
+        html += `<tr><th>样本外收益</th><td>${fmtBtPct(data.oos.total_return_pct)}（回撤 ${Number(data.oos.max_drawdown_pct || 0).toFixed(1)}%）</td></tr>`;
+      }
+      html += '</tbody></table>';
+      box.innerHTML = html;
+      box.classList.remove('hidden');
+      if (status) status.textContent = '完成';
+    } catch (e) {
+      if (status) status.textContent = `失败：${e.message}`;
+      toast('回测失败', String(e.message), 'short');
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function normalizeSymbol(raw) {
@@ -1022,30 +1383,44 @@
       && (!alert.timeframe || alert.timeframe === activeTf);
   }
 
-  function saveWatchlist() {
+  function saveWatchlist(opts = {}) {
     try { localStorage.setItem('monitor.watchlist', JSON.stringify(watchSymbols)); } catch (_) {}
-    syncDaemonWatchlist();
+    syncDaemonWatchlist({ silent: !!opts.silent });
   }
 
   let alwaysOnEnabled = false;
   let daemonTimeframes = ['15m'];
-  function syncDaemonWatchlist() {
-    if (!alwaysOnEnabled || !watchSymbols.length) return;
-    const qs = new URLSearchParams({
-      symbols: watchSymbols.join(','),
-      timeframe: daemonTimeframes[0] || '15m',
-    });
+  function syncDaemonWatchlist(opts = {}) {
+    const silent = !!opts.silent;
+    if (!alwaysOnEnabled) {
+      if (!silent && watchSymbols.length) {
+        toast('常驻未开', '仅浏览器开着时推流；要关页也告警请设 MONITOR_ALWAYS_ON=true', 'info');
+      }
+      return;
+    }
+    if (!watchSymbols.length) return;
+    const qs = new URLSearchParams({ symbols: watchSymbols.join(',') });
     fetch('/api/monitor/daemon/sync?' + qs.toString(), { method: 'POST' })
-      .then((r) => r.json())
+      .then(async (r) => {
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+        return data;
+      })
       .then((data) => {
-        if (data.enabled && $('daemonBadge')) {
+        if ($('daemonBadge')) {
           const tfs = (data.timeframes || daemonTimeframes).join('/');
-          const n = (data.running || []).length || (data.symbols || []).length;
-          $('daemonBadge').textContent = `常驻 ${n}·${tfs}`;
+          const n = (data.symbols || watchSymbols).length;
+          $('daemonBadge').textContent = `常驻 ${n}币·${tfs}`;
           $('daemonBadge').classList.add('ok');
         }
+        if (!silent) {
+          const msg = data.message || `已同步 ${(data.symbols || []).length} 品种`;
+          toast('常驻已热更新', msg, 'long');
+        }
       })
-      .catch(() => {});
+      .catch((e) => {
+        if (!silent) toast('同步常驻失败', String(e.message || e), 'short');
+      });
   }
 
   function loadWatchlist(fallback) {
@@ -1127,7 +1502,6 @@
     document.querySelectorAll('.mode-btn[data-mode]').forEach((b) => {
       b.classList.toggle('active', b.dataset.mode === chartMode);
     });
-    closeCycleOverlay();
     $('tv_chart').classList.toggle('hidden', chartMode !== 'tv');
     $('lwc_chart').classList.toggle('hidden', chartMode !== 'native');
     if (!remount) return;
@@ -1892,16 +2266,12 @@
     document.querySelectorAll('.dock-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.dock === name);
     });
-    $('paneCycle')?.classList.toggle('hidden', name !== 'cycle');
     $('paneAlerts')?.classList.toggle('hidden', name !== 'alerts');
     $('paneHistory')?.classList.toggle('hidden', name !== 'history');
-    if (name === 'cycle') openCycleOverlay();
     if ($('dockHint')) {
       $('dockHint').textContent = name === 'history'
         ? '点条目 → 右侧回看该次分析'
-        : name === 'cycle'
-          ? '悬浮窗口查看周期时间轴'
-          : '点告警 → 直连图标记';
+        : '点告警 → 直连图标记';
     }
   }
 
@@ -2491,7 +2861,7 @@
 
     const cfg = await fetch('/api/monitor/config').then(r => r.json());
     watchSymbols = loadWatchlist(cfg.symbols || []);
-    saveWatchlist();
+    saveWatchlist({ silent: true });
 
     try {
       chartMode = localStorage.getItem('monitor.chartMode') || 'native';
@@ -2541,7 +2911,7 @@
         $('daemonBadge').textContent = `常驻 ·${tfs}`;
         $('daemonBadge').title = `关网页也推 TG · 多级别 ${tfs}（图表周期不影响）`;
         $('daemonBadge').classList.add('ok');
-        syncDaemonWatchlist();
+        syncDaemonWatchlist({ silent: true });
       } else {
         $('daemonBadge').textContent = '常驻关';
         $('daemonBadge').title = '在 .env 设 MONITOR_ALWAYS_ON=true 并重启 web，关网页也能推 TG';
@@ -2595,19 +2965,19 @@
     });
     $('watchAll').addEventListener('change', () => connect({ silent: true }));
 
-    $('btnCyclePanel')?.addEventListener('click', () => openCycleOverlay());
-    $('btnCycleClose')?.addEventListener('click', () => closeCycleOverlay());
-    $('btnCycleFromDock')?.addEventListener('click', () => openCycleOverlay());
-    $('cycleBackdrop')?.addEventListener('click', () => closeCycleOverlay());
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !$('cycleOverlay')?.classList.contains('hidden')) {
-        closeCycleOverlay();
-      }
+    document.querySelectorAll('.app-nav-link[data-app]').forEach((btn) => {
+      btn.addEventListener('click', () => switchAppView(btn.dataset.app));
     });
+    $('btnRunBacktest')?.addEventListener('click', () => runWebBacktest());
+
+    let savedApp = null;
+    try { savedApp = localStorage.getItem('monitor.appView'); } catch (_) {}
+    if (savedApp && ['monitor', 'strategies', 'backtest', 'cycle', 'auto'].includes(savedApp) && savedApp !== 'monitor') {
+      switchAppView(savedApp);
+    }
+
     window.addEventListener('resize', () => {
-      if (cycleData && !$('cycleOverlay')?.classList.contains('hidden')) {
-        renderCyclePriceCanvas(cycleData);
-      }
+      if (activeAppView === 'cycle' && cycleData) renderCyclePriceCanvas(cycleData);
     });
 
     connect({ silent: false });
