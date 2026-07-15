@@ -103,6 +103,14 @@ class Settings(BaseSettings):
     monitor_cycle_switch_enabled: bool = Field(default=True)
     monitor_cycle_switch_timeframe: str = Field(default="4h")
     monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
+    # 收盘有双线/规则候选时才调 AI；AI 结论 long/short 才推 ai_plan 告警
+    monitor_ai_on_candidate: bool = Field(default=True)
+    monitor_ai_cooldown_minutes: int = Field(default=240)
+    # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
+    # 默认：AI 可交易确认 + 全局周期仓位（UTC 每天最多 1 条）
+    monitor_tg_trade_rules: str = Field(
+        default="ai_plan,cycle_switch"
+    )
     # 关网页也继续盯盘 + Telegram（Web 进程需保持运行）
     monitor_always_on: bool = Field(default=False)
     # 常驻盯盘品种；空则用 DEFAULT_SYMBOLS
@@ -146,6 +154,14 @@ class Settings(BaseSettings):
                 return out
         tf = (self.monitor_timeframe or "15m").strip().lower()
         return [tf] if tf else ["15m"]
+
+    @property
+    def tg_trade_rules_set(self) -> set[str] | None:
+        """None=不限制（全部规则可推 TG）；否则仅集合内规则推 TG。"""
+        raw = (self.monitor_tg_trade_rules or "").strip()
+        if not raw:
+            return None
+        return {x.strip().lower() for x in raw.split(",") if x.strip()}
 
     @property
     def futures_only_list(self) -> list[str]:

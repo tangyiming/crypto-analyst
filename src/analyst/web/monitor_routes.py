@@ -225,6 +225,7 @@ def monitor_chat(req: MonitorChatRequest):
                 "current_price",
                 "structure",
                 "fib",
+                "jack_levels",
                 "indicators",
                 "baseline_plan",
                 "ai_plan",
@@ -362,6 +363,30 @@ def strategies_catalog():
             for s in list_strategies()
         ],
     }
+
+
+@router.get("/api/tools/seed-position")
+def seed_position_api(
+    account: float = Query(10000, gt=0, description="账户权益 USDT"),
+    leverage: float = Query(25, gt=0, le=125),
+    seed_pct: float = Query(0.04, gt=0, le=0.1, description="头仓占权益比例"),
+    max_total_pct: float = Query(0.18, gt=0, le=0.5),
+    add_mode: str = Query("pullback", description="pullback|breakout|none"),
+):
+    """头仓/补仓仓位建议（零下二度风格分层）。"""
+    from analyst.compute.position_sizing import plan_seed_position
+
+    try:
+        plan = plan_seed_position(
+            account,
+            leverage=leverage,
+            seed_pct=seed_pct,
+            max_total_pct=max_total_pct,
+            add_mode=add_mode,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return plan.to_dict()
 
 
 class ClassicBacktestRequest(BaseModel):

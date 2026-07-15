@@ -153,6 +153,7 @@ def build_default_notifier(
 def format_rule_alert_text(symbol: str, timeframe: str, alert: dict) -> str:
     title = alert.get("title") or alert.get("rule") or "规则"
     dir_ = (alert.get("direction") or "").upper()
+    rule = str(alert.get("rule") or "")
     lines = [
         f"📡 {title} · {symbol} {timeframe} · {dir_}",
         f"price={alert.get('price')}",
@@ -166,7 +167,10 @@ def format_rule_alert_text(symbol: str, timeframe: str, alert: dict) -> str:
             f"entry {plan.get('entry_low')}-{plan.get('entry_high')} "
             f"SL {plan.get('stop_loss')} TP {plan.get('take_profit_1')}"
         )
-    lines.append("规则提醒 only，不下单 / 非 AI")
+    if rule == "ai_plan":
+        lines.append("AI 可交易确认 · 不下单")
+    else:
+        lines.append("规则提醒 only，不下单 / 非 AI")
     return "\n".join(lines)
 
 

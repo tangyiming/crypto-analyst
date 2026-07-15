@@ -40,6 +40,10 @@
 
 {macro_block}
 
+# 波段锁点（代码预计算，请直接采用，勿重算）
+
+{jack_block}
+
 # 账户参数
 
 - 账户规模：{account_usd} USDT

@@ -643,6 +643,7 @@ def _build_user_message(
     derivatives_block = _format_derivatives_block(market.get("derivatives"))
     macro_block = _format_macro_block(market.get("macro"))
     recent_lessons = _recent_ai_lessons_markdown(max_items=recent_lessons_max_items)
+    jack_block = _format_jack_block(market, compact=recent_lessons_max_items <= 3)
 
     return template.format(
         symbol=market["symbol"],
@@ -696,15 +697,47 @@ def _build_user_message(
         h1_ema52=_safe(h1, "ema", "ema52"),
         h1_vol_signal=_safe(h1, "volume", "signal"),
         h1_obv_trend=_safe(h1, "volume", "obv_trend"),
-        # 资金面 + 宏观
+        # 资金面 + 宏观 + 锁点
         derivatives_block=derivatives_block,
         macro_block=macro_block,
+        jack_block=jack_block,
         recent_lessons=recent_lessons,
         # 账户
         account_usd=account.get("account_usd", settings.default_account_usd),
         max_risk_pct=account.get("max_risk_pct", settings.max_risk_per_trade_pct),
         max_leverage=account.get("max_leverage", settings.max_leverage),
     )
+
+
+def _format_jack_block(market: dict, *, compact: bool = False) -> str:
+    """从快照中的 jack_levels 生成提示词块；缺失时回退简述。"""
+    raw = market.get("jack_levels")
+    if isinstance(raw, dict) and raw.get("swing_high") is not None:
+        try:
+            from analyst.compute.jack_levels import JackLevels
+
+            jack = JackLevels(**{k: raw[k] for k in JackLevels.__dataclass_fields__ if k in raw})
+            return jack.prompt_block(compact=compact)
+        except Exception:
+            pass
+    # 兼容旧快照：用 30d 高低粗算反弹位
+    try:
+        high = float(market.get("high_30d") or 0)
+        low = float(market.get("low_30d") or 0)
+        if high > low > 0:
+            rng = high - low
+            r382 = low + rng * 0.382
+            r618 = low + rng * 0.618
+            if compact:
+                return f"粗算 H/L={high:.4f}/{low:.4f} 0.382={r382:.4f} 0.618={r618:.4f}"
+            return (
+                f"- 波段高/低（30d 粗算）：{high:.4f} / {low:.4f}\n"
+                f"- 反抽 0.382：{r382:.4f} · 反弹 0.618：{r618:.4f}\n"
+                f"- （完整锁点未写入快照，请结合结构自行校验）"
+            )
+    except (TypeError, ValueError):
+        pass
+    return "（锁点数据不可用）"
 
 
 def _payload_to_plan(payload: dict) -> TradePlan:

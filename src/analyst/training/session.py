@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from analyst.compute import indicators as ind
 from analyst.compute.fibonacci import FibLevels, compute_fib
+from analyst.compute.jack_levels import JackLevels, compute_jack_levels
 from analyst.compute.structure import Structure, detect_structure
 from analyst.compute.volume import analyze_volume
 from analyst.config import get_settings
@@ -25,6 +26,7 @@ class SessionContext:
     indicators: dict
     fib: FibLevels
     structure: Structure
+    jack: JackLevels | None = None
 
 
 # ─────────────────────────────────────
@@ -85,15 +87,43 @@ def create_session(
     structure = detect_structure(primary_series)
     fib = compute_fib(structure.recent_high, structure.recent_low)
 
+    btc_series = None
+    if "BTC" not in symbol.upper().replace("/", ""):
+        try:
+            from analyst.data.fetcher import fetch_candles
+
+            btc_series = fetch_candles(
+                "BTC/USDT",
+                timeframe="1d",
+                limit=60,
+                market=market,
+            )
+        except Exception:
+            btc_series = None
+
+    jack = compute_jack_levels(
+        current_price=market_snap.current_price,
+        structure=structure,
+        fib=fib,
+        daily_indicators=indicators_snap.get("1d"),
+        primary_series=primary_series,
+        btc_series=btc_series,
+        symbol=symbol,
+    )
+
     expire_at = datetime.utcnow() + timedelta(hours=settings.session_expire_hours)
     verify_hours = verify_after_hours or default_verify_hours(timeframe)
+
+    snap_dict = market_snap.to_dict()
+    snap_dict["jack_levels"] = jack.to_dict()
+    snap_dict["primary_timeframe"] = timeframe
 
     db_session = repo.create_session(
         symbol=symbol,
         timeframe=timeframe,
         expire_at=expire_at,
         verify_after_hours=verify_hours,
-        market_snapshot=market_snap.to_dict(),
+        market_snapshot=snap_dict,
         indicators_snapshot=indicators_snap,
     )
 
@@ -103,6 +133,7 @@ def create_session(
         indicators=indicators_snap,
         fib=fib,
         structure=structure,
+        jack=jack,
     )
 
 
@@ -114,7 +145,7 @@ def _ctx_to_market_extras(ctx: SessionContext, latency_ms: int | None = None) ->
 
     tf = ctx.db_session.timeframe
     baseline = generate_baseline_plan(
-        ctx.market.current_price, ctx.fib, ctx.structure
+        ctx.market.current_price, ctx.fib, ctx.structure, jack=ctx.jack
     )
     out = {
         "current_price": ctx.market.current_price,
@@ -136,7 +167,10 @@ def _ctx_to_market_extras(ctx: SessionContext, latency_ms: int | None = None) ->
             "retr_618": ctx.fib.retr_618,
             "retr_786": ctx.fib.retr_786,
             "ext_1272": ctx.fib.ext_1272,
+            "rebound_382": ctx.fib.rebound_382,
+            "rebound_618": ctx.fib.rebound_618,
         },
+        "jack_levels": ctx.jack.to_dict() if ctx.jack else None,
         "indicators": ctx.indicators.get(tf) or next(iter(ctx.indicators.values()), None),
         "baseline_plan": asdict(baseline),
     }
@@ -274,6 +308,104 @@ def run_practice_quick(
     return session_to_dto(refreshed, market_extras=extras)
 
 
+def map_monitor_tf_to_ai_tf(timeframe: str) -> str:
+    """盯盘周期 → AI 快照允许周期（create_session 仅 1d/4h/1h/30m）。"""
+    tf = (timeframe or "").strip().lower()
+    if tf == "15m":
+        return "1h"
+    if tf in ("1d", "4h", "1h", "30m"):
+        return tf
+    return "4h"
+
+
+def run_monitor_ai_confirm(
+    symbol: str,
+    timeframe: str,
+    *,
+    market: str = "futures",
+) -> dict:
+    """盯盘候选确认：拉快照 → LLM → 落库。返回精简结果供告警用。
+
+    Returns:
+        {
+          "direction": str,
+          "plan": dict | None,
+          "session_id": int,
+          "model_id": str | None,
+          "ai_timeframe": str,
+          "price": float | None,
+          "rationale": str,
+        }
+    """
+    from analyst.llm.analyst import analyze_market
+    from analyst.storage import repo
+    from analyst.storage.models import AIPlan
+
+    sym = symbol if "/" in symbol else f"{symbol.upper()}/USDT"
+    ai_tf = map_monitor_tf_to_ai_tf(timeframe)
+    ctx = create_session(sym, ai_tf, verify_after_hours=None, market=market)
+
+    market_dict = dict(ctx.db_session.market_snapshot or {})
+    if not market_dict:
+        market_dict = ctx.market.to_dict()
+    market_dict["primary_timeframe"] = ctx.db_session.timeframe
+    # jack_levels 在 create_session 里写入 DB 快照
+    if "jack_levels" not in market_dict and isinstance(ctx.db_session.market_snapshot, dict):
+        jl = ctx.db_session.market_snapshot.get("jack_levels")
+        if jl:
+            market_dict["jack_levels"] = jl
+
+    try:
+        ai_response = analyze_market(
+            market_snapshot=market_dict,
+            indicators_snapshot=ctx.indicators,
+        )
+    except Exception:
+        repo.delete_session(ctx.db_session.id)
+        raise
+
+    plan = ai_response.plan
+    repo.save_ai_plan(
+        AIPlan(
+            session_id=ctx.db_session.id,
+            direction=plan.direction,
+            entry_low=plan.entry_low,
+            entry_high=plan.entry_high,
+            stop_loss=plan.stop_loss,
+            take_profit_1=plan.take_profit_1,
+            take_profit_2=plan.take_profit_2,
+            confidence=3,
+            rationale=plan.rationale,
+            rr_ratio=plan.rr_ratio,
+            raw_response=ai_response.raw_text,
+            prompt_version=ai_response.prompt_version,
+            model_id=ai_response.model,
+            cost_usd=ai_response.cost_usd,
+        )
+    )
+    repo.update_session_status(ctx.db_session.id, "ai_planned")
+
+    plan_dict = {
+        "direction": plan.direction,
+        "entry_low": plan.entry_low,
+        "entry_high": plan.entry_high,
+        "stop_loss": plan.stop_loss,
+        "take_profit_1": plan.take_profit_1,
+        "take_profit_2": plan.take_profit_2,
+        "rr_ratio": plan.rr_ratio,
+        "rationale": plan.rationale,
+    }
+    return {
+        "direction": plan.direction,
+        "plan": plan_dict,
+        "session_id": ctx.db_session.id,
+        "model_id": ai_response.model,
+        "ai_timeframe": ai_tf,
+        "price": getattr(ctx.market, "current_price", None),
+        "rationale": plan.rationale or "",
+    }
+
+
 def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -> dict:
     """从 DB 里存的 market_snapshot 重组结构/斐波（补跑 AI 时用）。"""
     from dataclasses import asdict
@@ -281,6 +413,7 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
     from typing import Any
 
     from analyst.compute.fibonacci import compute_fib
+    from analyst.compute.jack_levels import JackLevels, compute_jack_levels
     from analyst.compute.plan import generate_baseline_plan
     from analyst.compute.structure import detect_structure
     from analyst.data.fetcher import Candle, CandleSeries
@@ -294,6 +427,7 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
         "high_24h": ms.get("high_24h"),
         "low_24h": ms.get("low_24h"),
         "indicators": indicators_all.get(tf) or next(iter(indicators_all.values()), None),
+        "jack_levels": ms.get("jack_levels"),
     }
     if latency_ms is not None:
         base["latency_ms"] = latency_ms
@@ -319,7 +453,26 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
     structure = detect_structure(series)
     fib = compute_fib(structure.recent_high, structure.recent_low)
     price = float(base["current_price"] or candles[-1].close)
-    baseline = generate_baseline_plan(price, fib, structure)
+
+    jack = None
+    raw_jack = ms.get("jack_levels")
+    if isinstance(raw_jack, dict) and raw_jack.get("swing_high") is not None:
+        try:
+            jack = JackLevels(**{k: raw_jack[k] for k in JackLevels.__dataclass_fields__ if k in raw_jack})
+        except TypeError:
+            jack = None
+    if jack is None:
+        jack = compute_jack_levels(
+            current_price=price,
+            structure=structure,
+            fib=fib,
+            daily_indicators=indicators_all.get("1d"),
+            primary_series=series,
+            symbol=s.symbol or "",
+        )
+        base["jack_levels"] = jack.to_dict()
+
+    baseline = generate_baseline_plan(price, fib, structure, jack=jack)
     base["structure"] = {
         "trend": structure.trend,
         "supports": structure.supports,
@@ -336,6 +489,8 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
         "retr_618": fib.retr_618,
         "retr_786": fib.retr_786,
         "ext_1272": fib.ext_1272,
+        "rebound_382": fib.rebound_382,
+        "rebound_618": fib.rebound_618,
     }
     base["baseline_plan"] = asdict(baseline)
     return base

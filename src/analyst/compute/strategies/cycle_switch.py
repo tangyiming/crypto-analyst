@@ -20,7 +20,8 @@
   · 组合回测：analyst backtest-classic BTC -s cycle_switch --days 1825
   · 实时相位：analyst cycle-status BTC,ETH,SOL
   · 周期展望：analyst cycle-outlook（Wolfy 刻舟求剑 + 狼波提醒）
-  · 4h 收盘仓位变化 → MonitorHub 推 Telegram（MONITOR_CYCLE_SWITCH_*）
+  · 各盯盘币对在配置周期（默认 4h）收盘评估仓位；相位用 BTC 定调
+  · 仓位变化 → 该币页面 + TG + AI 候选；周期位置日更见 cycle_outlook（每天 1 条）
 
   注意：减半日历边界（牛 550 天 / 熊 400 天）仅拟合 2 个完整周期，
   必须与均线双确认一起用；回测≠未来，上线先 paper trading。

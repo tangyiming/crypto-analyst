@@ -10,6 +10,7 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import WebSocket
@@ -159,6 +160,8 @@ class MonitorHub:
         self._startup_tg_sent: bool = False
         self._cycle_regime: dict | None = None
         self._last_outlook_key: str | None = None
+        # AI 候选确认冷却：key = "SYMBOL|ai_tf" → unix ts
+        self._ai_confirm_at: dict[str, float] = {}
 
     def _daemon_state_path(self) -> Any:
         from pathlib import Path
@@ -269,7 +272,7 @@ class MonitorHub:
                 "✅ Crypto Analyst 常驻盯盘已启动\n"
                 f"workers={len(ok)} · 品种={len(self._daemon_symbols)} · "
                 f"周期={','.join(tfs)}\n"
-                "有可交易/规则命中时会再推告警（不下单）"
+                "TG：各币策略点位照推；周期位置日更每天 1 条"
             )
         return info
 
@@ -495,6 +498,76 @@ class MonitorHub:
     def _telegram_ready(self) -> bool:
         s = get_settings()
         return bool(s.telegram_bot_token.strip() and s.telegram_chat_id.strip())
+
+    def _tg_rule_allowed(self, rule: str | None) -> bool:
+        """是否允许该规则推 Telegram。页面告警不受此限制。"""
+        allowed = get_settings().tg_trade_rules_set
+        if allowed is None:
+            return True
+        return (rule or "").strip().lower() in allowed
+
+    def _outlook_tg_state_path(self) -> Path:
+        s = get_settings()
+        return Path(s.data_cache_dir) / "cycle_outlook_tg.json"
+
+    def _ai_confirm_cooldown_path(self) -> Path:
+        s = get_settings()
+        return Path(s.data_cache_dir) / "ai_confirm_cooldown.json"
+
+    def _load_outlook_tg_day(self) -> str | None:
+        path = self._outlook_tg_state_path()
+        try:
+            if not path.is_file():
+                return None
+            data = json.loads(path.read_text(encoding="utf-8"))
+            day = str(data.get("day") or "").strip()
+            return day or None
+        except Exception:
+            return None
+
+    def _save_outlook_tg_day(self, day: str) -> None:
+        path = self._outlook_tg_state_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {"day": day, "sent_at": datetime.now(timezone.utc).isoformat()},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("写入 cycle_outlook TG 日戳失败: %s", e)
+
+    def _load_ai_confirm_cooldown(self) -> None:
+        if self._ai_confirm_at:
+            return
+        path = self._ai_confirm_cooldown_path()
+        try:
+            if not path.is_file():
+                return
+            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = data.get("at") or {}
+            if isinstance(raw, dict):
+                self._ai_confirm_at = {
+                    str(k): float(v) for k, v in raw.items() if v is not None
+                }
+        except Exception:
+            pass
+
+    def _save_ai_confirm_cooldown(self) -> None:
+        path = self._ai_confirm_cooldown_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # 只保留最近 80 条
+            items = sorted(self._ai_confirm_at.items(), key=lambda kv: kv[1])[-80:]
+            self._ai_confirm_at = dict(items)
+            path.write_text(
+                json.dumps({"at": self._ai_confirm_at}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("写入 AI 确认冷却失败: %s", e)
 
     def _strategy_from_settings(self) -> DoubleLineConfig:
         s = get_settings()
@@ -809,8 +882,14 @@ class MonitorHub:
         )
         return series.candles
 
-    async def _evaluate_cycle_switch(self, worker: StreamWorker) -> None:
-        """4h 收盘评估 cycle_switch 目标仓位，变化时推页面 + TG。"""
+    async def _evaluate_cycle_switch(self, worker: StreamWorker) -> bool:
+        """配置周期收盘评估 cycle_switch（每个盯盘币对各自跑）。
+
+        - 牛熊相位仍由 BTC 定调；各币用自身 K 线做唐奇安/反弹做空等执行
+        - 仓位变化（含开仓/平仓）→ 该币页面告警 + TG + AI 候选
+        - 「每天提醒周期位置」不在这里，见 cycle_outlook
+        - 返回 True：本币仓位变化，应触发 AI 候选确认
+        """
         from analyst.compute.cycle_theory import (
             calendar_countdown_dict,
             format_milestone_countdown,
@@ -819,16 +898,16 @@ class MonitorHub:
 
         settings = get_settings()
         if not settings.monitor_cycle_switch_enabled:
-            return
+            return False
         tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
         if worker.key.timeframe.lower() != tf:
-            return
+            return False
         if len(worker.series.candles) < 50:
-            return
+            return False
 
         btc_candles = await self._btc_candles_for_regime(tf)
         if len(btc_candles) < 300:
-            return
+            return False
         self._cycle_regime = build_cycle_regime(btc_candles)
         signal = evaluate_cycle_switch(
             worker.series,
@@ -854,8 +933,9 @@ class MonitorHub:
                 "donchian_exit": signal.donchian_exit,
             },
         )
+
         if not signal.changed:
-            return
+            return False
 
         last_ts = worker.series.candles[-1].timestamp
         if last_ts.tzinfo is None:
@@ -864,13 +944,14 @@ class MonitorHub:
             marker = int(last_ts.astimezone(timezone.utc).timestamp())
         wolfy_cal = wolfy_calendar_phase(btc_candles[-1].timestamp)
         countdown_line = format_milestone_countdown(wolfy_cal)
+        sym = worker.key.symbol
         alert = {
             "type": "alert",
             "rule": "cycle_switch",
             "title": (
-                f"周期切换 · 距转折点 {wolfy_cal.days_to_milestone} 天"
+                f"周期策略 · 距转折点 {wolfy_cal.days_to_milestone} 天"
             ),
-            "symbol": worker.key.symbol,
+            "symbol": sym,
             "timeframe": worker.key.timeframe,
             "direction": (
                 "long" if signal.target_position > 0
@@ -883,38 +964,44 @@ class MonitorHub:
             "marker_time": marker,
         }
         dedupe = (
-            f"cycle|{worker.key.symbol}|{worker.key.timeframe}|"
+            f"cycle|{sym}|{worker.key.timeframe}|"
             f"{signal.target_position}|{marker}"
         )
         if dedupe == worker.last_alert_key:
-            return
+            return True
         worker.last_alert_key = dedupe
         worker.alerts_sent += 1
         self._alerts.append(alert)
         await self._broadcast(worker, alert, alert_also=True)
+
+        if not self._tg_rule_allowed("cycle_switch"):
+            logger.debug("cycle_switch 仅页面（未进 TG 白名单）%s", sym)
+            return True
+        if not self._telegram_ready():
+            return True
 
         notifier = build_default_notifier(
             telegram_bot_token=settings.telegram_bot_token,
             telegram_chat_id=settings.telegram_chat_id,
         )
         logger.info(
-            "cycle_switch 告警 → TG %s %s pos %.2f→%.2f regime=%s tg=%s",
-            worker.key.symbol,
+            "cycle_switch 仓位变化 → TG %s %s pos %.2f→%.2f regime=%s",
+            sym,
             worker.key.timeframe,
             signal.prev_position,
             signal.target_position,
             signal.market_regime,
-            self._telegram_ready(),
         )
         await asyncio.to_thread(
             notifier.send_text,
             format_cycle_alert_text(
-                worker.key.symbol, worker.key.timeframe, signal, wolfy_cal
+                sym, worker.key.timeframe, signal, wolfy_cal
             ),
         )
+        return True
 
     async def _evaluate_cycle_outlook(self, worker: StreamWorker) -> None:
-        """BTC 4h 收盘：Wolfy 日历+狼波临近里程碑提醒（每日最多一条）。"""
+        """BTC：每天提醒一次当前周期位置（UTC 日限 1 条；与各币 cycle_switch 交易点分离）。"""
         settings = get_settings()
         if not settings.monitor_cycle_outlook_enabled:
             return
@@ -925,7 +1012,6 @@ class MonitorHub:
             return
 
         from analyst.compute.cycle_theory import (
-            WOLFY_ALERT_WINDOW_DAYS,
             calendar_countdown_dict,
             evaluate_cycle_outlook,
             format_outlook_text,
@@ -940,50 +1026,56 @@ class MonitorHub:
             use_cache=True,
         )
         outlook = evaluate_cycle_outlook(series_1d)
-        if not outlook.alerts:
-            return
-        if outlook.calendar.days_to_milestone > WOLFY_ALERT_WINDOW_DAYS:
+        if not outlook.summary and not outlook.alerts:
             return
 
-        bucket = outlook.as_of.strftime("%Y%m%d")
-        dedupe = f"outlook|{bucket}|{outlook.calendar.next_milestone.kind}"
-        if dedupe == self._last_outlook_key:
+        # 按 UTC 日期限流：一天只推一次（内存 + 落盘）——这是「周期位置」日更
+        day = datetime.now(timezone.utc).strftime("%Y%m%d")
+        if day == self._last_outlook_key or day == self._load_outlook_tg_day():
             return
-        self._last_outlook_key = dedupe
+        self._last_outlook_key = day
 
         alert = {
             "type": "alert",
             "rule": "cycle_outlook",
             "title": (
-                f"周期转折点 · 还剩 {outlook.calendar.days_to_milestone} 天"
+                f"周期位置 · 距转折点 {outlook.calendar.days_to_milestone} 天"
             ),
             "symbol": worker.key.symbol,
             "timeframe": worker.key.timeframe,
             "direction": "info",
             "strength": 0.7,
             "price": outlook.price,
-            "reasons": outlook.alerts[:6],
+            "reasons": ([outlook.summary] if outlook.summary else [])
+            + list(outlook.alerts[:5]),
             "cycle_countdown": calendar_countdown_dict(outlook.calendar),
-            "marker_time": int(outlook.as_of.timestamp()),
+            "marker_time": int(
+                outlook.as_of.replace(tzinfo=timezone.utc).timestamp()
+                if outlook.as_of.tzinfo is None
+                else outlook.as_of.astimezone(timezone.utc).timestamp()
+            ),
         }
         worker.alerts_sent += 1
         self._alerts.append(alert)
         await self._broadcast(worker, alert, alert_also=True)
+
+        if not self._telegram_ready():
+            self._save_outlook_tg_day(day)
+            return
 
         notifier = build_default_notifier(
             telegram_bot_token=settings.telegram_bot_token,
             telegram_chat_id=settings.telegram_chat_id,
         )
         logger.info(
-            "cycle_outlook 提醒 → TG %s alerts=%d tg=%s",
-            worker.key.symbol,
-            len(outlook.alerts),
-            self._telegram_ready(),
+            "cycle_outlook 日更 → TG days_left=%d",
+            outlook.calendar.days_to_milestone,
         )
         await asyncio.to_thread(
             notifier.send_text,
             format_outlook_text(outlook, worker.key.symbol),
         )
+        self._save_outlook_tg_day(day)
 
     async def _emit_rule_alert(self, worker: StreamWorker, alert: dict[str, Any]) -> None:
         dedupe = (
@@ -1002,6 +1094,19 @@ class MonitorHub:
         worker.alerts_sent += 1
         await self._broadcast(worker, alert, alert_also=True)
 
+        # 噪音规则只上页面，不刷 Telegram
+        rule = str(alert.get("rule") or "")
+        if not self._tg_rule_allowed(rule):
+            logger.debug(
+                "规则告警仅页面 rule=%s %s %s（未进 TG 白名单）",
+                rule,
+                worker.key.symbol,
+                worker.key.timeframe,
+            )
+            return
+        if not self._telegram_ready():
+            return
+
         settings = get_settings()
         notifier = build_default_notifier(
             telegram_bot_token=settings.telegram_bot_token,
@@ -1011,14 +1116,122 @@ class MonitorHub:
             worker.key.symbol, worker.key.timeframe, alert
         )
         logger.info(
-            "规则告警 → TG rule=%s %s %s dir=%s tg=%s",
-            alert.get("rule"),
+            "规则告警 → TG rule=%s %s %s dir=%s",
+            rule,
             worker.key.symbol,
             worker.key.timeframe,
             alert.get("direction"),
-            self._telegram_ready(),
         )
         await asyncio.to_thread(notifier.send_text, text)
+
+    async def _maybe_ai_confirm(
+        self,
+        worker: StreamWorker,
+        *,
+        had_candidate: bool,
+        candidate_rules: list[str],
+    ) -> None:
+        """有双线/规则候选时调 AI；仅 long/short 推 ai_plan 告警（页面+TG）。"""
+        settings = get_settings()
+        if not settings.monitor_ai_on_candidate or not had_candidate:
+            return
+
+        from analyst.training.session import map_monitor_tf_to_ai_tf, run_monitor_ai_confirm
+
+        ai_tf = map_monitor_tf_to_ai_tf(worker.key.timeframe)
+        cool_key = f"{worker.key.symbol.upper()}|{ai_tf}"
+        self._load_ai_confirm_cooldown()
+        cooldown_min = max(0, int(settings.monitor_ai_cooldown_minutes or 0))
+        now = time.time()
+        last = self._ai_confirm_at.get(cool_key)
+        if last is not None and cooldown_min > 0 and (now - last) < cooldown_min * 60:
+            logger.debug(
+                "AI 确认冷却中 %s remain=%.0fs",
+                cool_key,
+                cooldown_min * 60 - (now - last),
+            )
+            return
+
+        # 先占冷却，避免并发收盘重复打
+        self._ai_confirm_at[cool_key] = now
+        self._save_ai_confirm_cooldown()
+
+        logger.info(
+            "AI 候选确认开始 %s → ai_tf=%s rules=%s",
+            worker.key,
+            ai_tf,
+            candidate_rules[:6],
+        )
+        try:
+            result = await asyncio.to_thread(
+                run_monitor_ai_confirm,
+                worker.key.symbol,
+                worker.key.timeframe,
+                market="futures",
+            )
+        except Exception:
+            logger.exception("AI 候选确认失败 %s", worker.key)
+            return
+
+        direction = str(result.get("direction") or "wait").lower()
+        if direction not in ("long", "short"):
+            logger.info(
+                "AI 候选确认 wait %s dir=%s model=%s",
+                worker.key,
+                direction,
+                result.get("model_id"),
+            )
+            return
+
+        plan = result.get("plan") or {}
+        rationale = str(result.get("rationale") or plan.get("rationale") or "")
+        price = result.get("price")
+        if price is None and worker.series.candles:
+            price = worker.series.candles[-1].close
+        last_ts = worker.series.candles[-1].timestamp if worker.series.candles else None
+        if last_ts is None:
+            marker = int(datetime.now(timezone.utc).timestamp())
+        elif last_ts.tzinfo is None:
+            marker = int(last_ts.replace(tzinfo=timezone.utc).timestamp())
+        else:
+            marker = int(last_ts.astimezone(timezone.utc).timestamp())
+
+        reasons = [
+            f"候选规则: {', '.join(candidate_rules[:4]) or 'double_line'}",
+            f"AI 周期 {result.get('ai_timeframe') or ai_tf}",
+        ]
+        if rationale:
+            reasons.append(rationale[:240])
+
+        alert = {
+            "type": "alert",
+            "rule": "ai_plan",
+            "title": "AI 可交易确认",
+            "symbol": worker.key.symbol,
+            "timeframe": worker.key.timeframe,
+            "direction": direction,
+            "strength": 0.9,
+            "price": price,
+            "pattern": "ai_plan",
+            "break_level": None,
+            "reasons": reasons,
+            "filters_passed": ["ai_plan", *candidate_rules[:4]],
+            "marker_time": marker,
+            "plan": plan,
+            "kelly": None,
+            "trail_note": None,
+            "session_id": result.get("session_id"),
+            "model_id": result.get("model_id"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "demo": False,
+        }
+        logger.info(
+            "AI 可交易告警 %s dir=%s session=%s",
+            worker.key,
+            direction,
+            result.get("session_id"),
+        )
+        await self._emit_rule_alert(worker, alert)
 
     async def _evaluate_and_alert(self, worker: StreamWorker) -> None:
         signal = evaluate_double_line(worker.series, worker.strategy)
@@ -1045,6 +1258,9 @@ class MonitorHub:
                 "reasons": signal.reasons[:3],
             },
         )
+        had_candidate = signal.direction != "wait"
+        candidate_rules: list[str] = ["double_line"] if had_candidate else []
+
         if signal.direction != "wait":
             alert = signal_to_alert_dict(
                 worker.key.symbol,
@@ -1063,27 +1279,28 @@ class MonitorHub:
                 worker.alerts_sent += 1
                 await self._broadcast(worker, alert, alert_also=True)
 
-                settings = get_settings()
-                notifier = build_default_notifier(
-                    telegram_bot_token=settings.telegram_bot_token,
-                    telegram_chat_id=settings.telegram_chat_id,
-                )
-                logger.info(
-                    "双线反转告警 → TG %s %s dir=%s strength=%.2f tg=%s",
-                    worker.key.symbol,
-                    worker.key.timeframe,
-                    signal.direction,
-                    signal.strength,
-                    self._telegram_ready(),
-                )
-                await asyncio.to_thread(
-                    notifier.notify,
-                    worker.key.symbol,
-                    worker.key.timeframe,
-                    signal,
-                )
+                # 双线仅页面；TG 改由 AI 确认（ai_plan）
+                if self._tg_rule_allowed("double_line") and self._telegram_ready():
+                    settings = get_settings()
+                    notifier = build_default_notifier(
+                        telegram_bot_token=settings.telegram_bot_token,
+                        telegram_chat_id=settings.telegram_chat_id,
+                    )
+                    logger.info(
+                        "双线反转告警 → TG %s %s dir=%s strength=%.2f",
+                        worker.key.symbol,
+                        worker.key.timeframe,
+                        signal.direction,
+                        signal.strength,
+                    )
+                    await asyncio.to_thread(
+                        notifier.notify,
+                        worker.key.symbol,
+                        worker.key.timeframe,
+                        signal,
+                    )
 
-        # 无 AI 规则批次
+        # 规则批次（页面全量；TG 受白名单限制，默认不含噪音规则）
         settings = get_settings()
         if settings.monitor_rules_enabled:
             try:
@@ -1092,6 +1309,11 @@ class MonitorHub:
                 )
                 worker.rule_state = new_state
                 if events:
+                    had_candidate = True
+                    for e in events:
+                        r = getattr(e, "rule", None) or str(e)
+                        if r not in candidate_rules:
+                            candidate_rules.append(r)
                     logger.info(
                         "规则命中 %s n=%d rules=%s",
                         worker.key,
@@ -1107,7 +1329,11 @@ class MonitorHub:
                 logger.exception("rule evaluate failed %s", worker.key)
 
         try:
-            await self._evaluate_cycle_switch(worker)
+            cycle_candidate = await self._evaluate_cycle_switch(worker)
+            if cycle_candidate:
+                had_candidate = True
+                if "cycle_switch" not in candidate_rules:
+                    candidate_rules.append("cycle_switch")
         except Exception:
             logger.exception("cycle_switch evaluate failed %s", worker.key)
 
@@ -1115,6 +1341,15 @@ class MonitorHub:
             await self._evaluate_cycle_outlook(worker)
         except Exception:
             logger.exception("cycle_outlook evaluate failed %s", worker.key)
+
+        try:
+            await self._maybe_ai_confirm(
+                worker,
+                had_candidate=had_candidate,
+                candidate_rules=candidate_rules,
+            )
+        except Exception:
+            logger.exception("ai confirm failed %s", worker.key)
 
     async def inject_demo_alert(
         self,

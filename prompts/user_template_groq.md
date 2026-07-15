@@ -6,6 +6,7 @@ D: MACD d/h/z/sig={d_dif}/{d_dea}/{d_hist}/{d_zero}/{d_signal} EMA7/30/52={d_ema
 
 衍生品: {derivatives_block}
 情绪: {macro_block}
+锁点: {jack_block}
 账户 USDT {account_usd} 风险{max_risk_pct}% 杠杆≤{max_leverage}x
 
 复盘: {recent_lessons}

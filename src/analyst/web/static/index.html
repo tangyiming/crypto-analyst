@@ -109,7 +109,41 @@
     .app-view.hidden { display: none !important; }
     .app-view-monitor {
       display: grid;
-      grid-template-rows: auto minmax(180px, 1fr) minmax(240px, 32vh);
+      grid-template-rows: auto minmax(0, 1fr);
+      min-height: 0;
+    }
+    /* 左：图表+底部告警；右：AI 通栏占满 */
+    .monitor-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, calc(40vw - 200px));
+      min-height: 0;
+      overflow: hidden;
+    }
+    .monitor-left {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) minmax(248px, calc(16.5vh + 150px));
+      min-height: 0;
+      overflow: hidden;
+      border-right: 1px solid var(--line);
+    }
+    .chart-pane {
+      position: relative;
+      min-height: 0;
+      background: #000;
+      overflow: hidden;
+    }
+    @media (max-width: 960px) {
+      .monitor-body {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(240px, 50vh) minmax(0, 1fr);
+      }
+      .monitor-left { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
+    @media (min-width: 1400px) {
+      .monitor-body { grid-template-columns: minmax(0, 1fr) minmax(320px, calc(42vw - 200px)); }
+    }
+    @media (min-width: 1800px) {
+      .monitor-body { grid-template-columns: minmax(0, 1fr) minmax(360px, calc(44vw - 200px)); }
     }
     .app-page {
       flex: 1;
@@ -403,30 +437,59 @@
       color: var(--muted);
     }
     .badge.ok { color: var(--green); }
-    .workspace {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(380px, 28vw);
-      min-height: 0;
-      overflow: hidden;
-    }
-    @media (max-width: 960px) {
-      .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(200px, 45vh) minmax(0, 1fr); }
-    }
-    @media (min-width: 1400px) {
-      .workspace { grid-template-columns: minmax(0, 1fr) minmax(420px, 460px); }
-    }
     .ai-panel {
       display: flex;
       flex-direction: column;
       min-height: 0;
+      height: 100%;
       background: var(--panel);
-      border-left: 1px solid var(--line);
       overflow: hidden;
     }
     .ai-panel-head {
       padding: 10px 12px;
       border-bottom: 1px solid var(--line);
       flex-shrink: 0;
+    }
+    .ai-tip {
+      position: relative;
+      display: inline-block;
+      border-bottom: 1px dashed #5b6570;
+      cursor: help;
+      transition: color .15s ease, border-color .15s ease;
+    }
+    .ai-tip:hover {
+      color: var(--yellow);
+      border-bottom-color: var(--yellow);
+    }
+    .ai-tip::after {
+      content: attr(data-tip);
+      position: absolute;
+      left: 0;
+      top: calc(100% + 8px);
+      z-index: 30;
+      width: max(220px, 100%);
+      max-width: min(320px, 72vw);
+      padding: 8px 10px;
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 1.45;
+      letter-spacing: 0;
+      color: var(--text);
+      background: #1a1f26;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-2px);
+      transition: opacity .15s ease, transform .15s ease, visibility .15s;
+      pointer-events: none;
+      white-space: normal;
+    }
+    .ai-tip:hover::after {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
     }
     .ai-panel-body {
       flex: 1;
@@ -440,8 +503,8 @@
       background: #0e1218;
       display: flex;
       flex-direction: column;
-      max-height: 46%;
-      min-height: 140px;
+      max-height: 34%;
+      min-height: 120px;
     }
     .ai-chat-log {
       flex: 1;
@@ -467,37 +530,53 @@
       margin-bottom: 4px;
     }
     .ai-chat-compose {
-      display: flex;
-      gap: 6px;
+      position: relative;
       padding: 8px 10px;
       border-top: 1px solid var(--line);
       flex-shrink: 0;
     }
     .ai-chat-compose textarea {
-      flex: 1;
-      min-height: 56px;
-      max-height: 96px;
+      display: block;
+      width: 100%;
+      min-height: 72px;
+      max-height: 120px;
       resize: vertical;
       background: #0b0e11;
       border: 1px solid var(--line);
+      border-radius: 10px;
       color: var(--text);
       font-size: 12px;
-      padding: 6px 8px;
+      line-height: 1.45;
+      padding: 10px 12px 40px;
       outline: none;
       font-family: inherit;
     }
     .ai-chat-compose textarea:focus { border-color: #474d57; }
-    .ai-chat-compose button {
-      align-self: stretch;
-      padding: 0 12px;
-      border: 1px solid #3a2f0b;
-      background: rgba(240,185,11,.14);
-      color: var(--yellow);
+    .ai-chat-compose textarea::placeholder {
+      color: #6b7280;
+      white-space: pre-wrap;
+    }
+    .ai-chat-send {
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      height: 28px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--yellow);
+      color: #0b0e11;
       font-size: 12px;
       font-weight: 600;
       cursor: pointer;
+      transition: opacity .15s ease, transform .1s ease;
     }
-    .ai-chat-compose button:disabled { opacity: 0.5; cursor: wait; }
+    .ai-chat-send:hover { opacity: 0.92; }
+    .ai-chat-send:active { transform: scale(0.97); }
+    .ai-chat-send:disabled {
+      opacity: 0.45;
+      cursor: wait;
+    }
     .ai-sec {
       margin-top: 12px;
       padding-top: 10px;
@@ -512,15 +591,89 @@
       letter-spacing: 0.04em;
       text-transform: uppercase;
     }
+    .ai-sec.ai-sec-primary {
+      padding: 10px 10px 12px;
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0e1218;
+      border-top: 1px solid var(--line);
+    }
+    .ai-sec.ai-sec-primary:first-child { margin-top: 0; }
+    .ai-sec.ai-sec-primary h3 { color: var(--text); text-transform: none; font-size: 12px; letter-spacing: 0; }
+    .ai-sec.ai-sec-muted h3 { opacity: 0.75; }
     .ai-kv {
       display: grid;
-      grid-template-columns: 72px 1fr;
+      grid-template-columns: 88px 1fr;
       gap: 4px 8px;
       font-size: 12px;
       margin-bottom: 4px;
     }
     .ai-kv .k { color: var(--muted); }
     .ai-kv .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .ai-level-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin: 8px 0 4px;
+    }
+    .ai-level-cell {
+      border: 1px solid var(--line);
+      background: #12161c;
+      border-radius: 6px;
+      padding: 7px 8px;
+    }
+    .ai-level-cell .lk {
+      display: block;
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+    .ai-level-cell .lv {
+      font-size: 13px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .ai-level-cell.sl .lv { color: var(--red); }
+    .ai-level-cell.tp .lv { color: var(--green); }
+    .ai-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .ai-chip {
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #12161c;
+      color: var(--text);
+      line-height: 1.35;
+    }
+    .ai-chip b { color: var(--muted); font-weight: 500; margin-right: 4px; }
+    .ai-chip.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    details.ai-fold {
+      margin-top: 10px;
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+    }
+    details.ai-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      user-select: none;
+    }
+    details.ai-fold > summary::-webkit-details-marker { display: none; }
+    details.ai-fold > summary::after { content: ' ▸'; color: var(--muted); }
+    details.ai-fold[open] > summary::after { content: ' ▾'; }
+    details.ai-fold .ai-fold-body { margin-top: 8px; }
     .ai-disclaimer {
       font-size: 11px;
       line-height: 1.45;
@@ -548,15 +701,16 @@
     .ai-dir.short { color: var(--red); background: rgba(246,70,93,.12); }
     .ai-dir.wait { color: var(--yellow); background: rgba(240,185,11,.12); }
     .btn-analyze {
-      width: 100%;
-      margin-top: 8px;
-      padding: 8px 12px;
-      font-size: 13px;
+      flex-shrink: 0;
+      margin: 0;
+      padding: 6px 10px;
+      font-size: 12px;
       font-weight: 600;
       border: 1px solid #3a2f0b;
       background: rgba(240,185,11,.14);
       color: var(--yellow);
       cursor: pointer;
+      white-space: nowrap;
     }
     .btn-analyze:hover { background: rgba(240,185,11,.22); }
     .btn-analyze:disabled { opacity: 0.5; cursor: wait; }
@@ -696,9 +850,23 @@
       line-height: 1.55;
       color: var(--text);
       white-space: pre-wrap;
-      max-height: 220px;
+      max-height: 280px;
       overflow: auto;
+      margin-top: 8px;
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0b0e11;
     }
+    .ai-rationale .ai-r-h {
+      display: block;
+      margin-top: 8px;
+      margin-bottom: 2px;
+      color: var(--yellow);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .ai-rationale .ai-r-h:first-child { margin-top: 0; }
     #chartHost { width: 100%; height: 100%; min-height: 0; background: #000; position: relative; overflow: hidden; }
     #tv_chart, #lwc_chart { width: 100%; height: 100%; position: absolute; inset: 0; overflow: hidden; background: #000; }
     #tv_chart.hidden, #lwc_chart.hidden { display: none !important; }
@@ -873,67 +1041,71 @@
     </div>
   </header>
 
-  <div class="workspace">
-    <div class="min-h-0 relative" style="background:#000;">
-      <div id="chartHost">
-        <div id="tv_chart" class="hidden"></div>
-        <div id="lwc_chart"><div id="chartLegend"></div></div>
+  <div class="monitor-body">
+    <div class="monitor-left">
+      <div class="chart-pane">
+        <div id="chartHost">
+          <div id="tv_chart" class="hidden"></div>
+          <div id="lwc_chart"><div id="chartLegend"></div></div>
+        </div>
+        <div id="alertLevels" class="hidden absolute left-3 bottom-3 z-10 text-[11px] font-mono px-2 py-1"
+             style="background:rgba(18,22,28,.92); border:1px solid var(--line); color:var(--text);"></div>
       </div>
-      <div id="alertLevels" class="hidden absolute left-3 bottom-3 z-10 text-[11px] font-mono px-2 py-1"
-           style="background:rgba(18,22,28,.92); border:1px solid var(--line); color:var(--text);"></div>
+
+      <footer class="dock" aria-label="告警与历史">
+        <div class="dock-tabs">
+          <button type="button" class="dock-tab active" data-dock="alerts">告警记录 <span id="alertCount"></span></button>
+          <button type="button" class="dock-tab" data-dock="history">历史分析 <span id="histCount"></span></button>
+          <label class="dock-filter shrink-0 flex items-center gap-1 cursor-pointer select-none" style="color:var(--muted);font-size:11px;margin-left:8px;">
+            <input type="checkbox" id="dockFilterSym" checked />
+            仅当前币对
+          </label>
+          <span class="dock-meta" id="dockHint">点告警 → 直连图标记 · 点历史 → 右侧回看</span>
+        </div>
+        <div class="dock-pane" id="paneAlerts"></div>
+        <div class="dock-pane hidden" id="paneHistory"></div>
+      </footer>
     </div>
 
     <aside class="ai-panel" aria-label="AI 行情分析">
       <div class="ai-panel-head">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-sm font-semibold">AI 行情分析</span>
+          <span
+            class="text-sm font-semibold ai-tip"
+            data-tip="选择分析周期后点「分析」：先计算结构 / 斐波 / MACD / 量能与规则基线计划，再调用已配置的 LLM 综合给出交易建议。"
+          >AI 行情分析</span>
           <span id="aiStatus" class="text-[11px]" style="color:var(--muted)">就绪</span>
         </div>
         <div class="flex items-center gap-2 mt-2">
-          <span id="aiSymbolLabel" class="text-xs font-mono" style="color:var(--text)">—</span>
-          <select id="analyzeTf" class="sel grow" title="分析主周期">
+          <span id="aiSymbolLabel" class="text-xs font-mono shrink-0" style="color:var(--text)">—</span>
+          <select id="analyzeTf" class="sel grow min-w-0" title="分析主周期">
             <option value="30m">30分</option>
             <option value="1h">1小时</option>
             <option value="4h" selected>4小时</option>
             <option value="1d">日线</option>
           </select>
+          <button type="button" id="btnAnalyze" class="btn-analyze">分析</button>
         </div>
-        <button type="button" id="btnAnalyze" class="btn-analyze">分析当前合约</button>
       </div>
       <div class="ai-panel-body" id="aiPanelBody">
         <div class="ai-disclaimer">
           AI 与规则基线仅供参考，不是投资建议。行情瞬变，仓位与风控请自行判断，切勿盲目跟单。
         </div>
-        <div id="aiIdleHint" class="text-xs leading-relaxed" style="color:var(--muted)">
-          选择分析周期后点击上方按钮：先计算结构 / 斐波 / MACD / 量能与规则基线计划，再调用已配置的 LLM 综合给出交易建议。
-        </div>
         <div id="aiResult" class="hidden"></div>
       </div>
       <div class="ai-chat" aria-label="追问对话框">
-        <div class="ai-chat-log" id="chatLog">
-          <div id="chatHint" class="text-[11px] py-1" style="color:var(--muted)">可对当前合约追问，例如「现在适合追多吗？」「止损放哪更合理？」。建议先点上方分析，回答会更贴盘面。</div>
-        </div>
+        <div class="ai-chat-log" id="chatLog"></div>
         <div class="ai-chat-compose">
-          <textarea id="chatInput" placeholder="向 AI 提问…" rows="2"></textarea>
-          <button type="button" id="btnChatSend">发送</button>
+          <textarea
+            id="chatInput"
+            rows="3"
+            placeholder="可对当前合约追问，例如「现在适合追多吗？」「止损放哪更合理？」建议先点上方分析，回答会更贴盘面。"
+          ></textarea>
+          <button type="button" id="btnChatSend" class="ai-chat-send">发送</button>
         </div>
       </div>
     </aside>
   </div>
-
-  <footer class="dock" aria-label="告警与历史">
-    <div class="dock-tabs">
-      <button type="button" class="dock-tab active" data-dock="alerts">告警记录 <span id="alertCount"></span></button>
-      <button type="button" class="dock-tab" data-dock="history">历史分析 <span id="histCount"></span></button>
-      <label class="dock-filter shrink-0 flex items-center gap-1 cursor-pointer select-none" style="color:var(--muted);font-size:11px;margin-left:8px;">
-        <input type="checkbox" id="dockFilterSym" checked />
-        仅当前币对
-      </label>
-      <span class="dock-meta" id="dockHint">点告警 → 直连图标记 · 点历史 → 右侧回看</span>
-    </div>
-    <div class="dock-pane" id="paneAlerts"></div>
-    <div class="dock-pane hidden" id="paneHistory"></div>
-  </footer>
   </div>
 
   <div id="viewStrategies" class="app-view hidden">
@@ -1117,6 +1289,43 @@
           </div>
           <div class="tool-out" id="w3TextOut"></div>
         </div>
+
+        <div class="tool-panel">
+          <h3>头仓 / 补仓计算器</h3>
+          <p class="text-[11px]" style="color:var(--muted);margin:0 0 10px;line-height:1.45">
+            防踏空小头仓（建议 3–4%）+ 总仓上限（建议 18%）；回踩补仓与突破补仓二选一，不可叠加。
+          </p>
+          <div class="tool-row">
+            <label>账户 U</label>
+            <input class="inp" id="seedAccount" type="number" value="10000" min="1" />
+            <span></span>
+          </div>
+          <div class="tool-row">
+            <label>杠杆</label>
+            <input class="inp" id="seedLev" type="number" value="25" min="1" max="125" />
+            <span></span>
+          </div>
+          <div class="tool-row">
+            <label>头仓%</label>
+            <input class="inp" id="seedPct" type="number" value="4" min="1" max="10" step="0.5" />
+            <span></span>
+          </div>
+          <div class="tool-row">
+            <label>总仓上限%</label>
+            <input class="inp" id="seedMaxPct" type="number" value="18" min="4" max="50" step="1" />
+            <span></span>
+          </div>
+          <div class="tool-row">
+            <label>补仓模式</label>
+            <select class="sel" id="seedMode">
+              <option value="pullback" selected>回踩补仓</option>
+              <option value="breakout">突破补仓</option>
+              <option value="none">仅头仓</option>
+            </select>
+            <button type="button" class="chip" id="btnSeedCalc">计算</button>
+          </div>
+          <div class="tool-out" id="seedOut" style="color:var(--text);line-height:1.55"></div>
+        </div>
       </div>
 
       <div class="tools-section">
@@ -1230,7 +1439,7 @@
   </div>
 </div>
 
-<div id="toasts" class="fixed bottom-52 right-4 z-40 space-y-2 w-80 max-w-[92vw]"></div>
+<div id="toasts" class="fixed top-14 right-4 z-40 space-y-2 w-80 max-w-[92vw]"></div>
 
 <script>
 (() => {
@@ -1810,6 +2019,30 @@
         $('w3TextOut').textContent = '解码失败';
       }
     });
+    const runSeedCalc = () => {
+      const account = Number($('seedAccount')?.value || 0);
+      const lev = Number($('seedLev')?.value || 25);
+      const seedPct = Number($('seedPct')?.value || 4) / 100;
+      const maxPct = Number($('seedMaxPct')?.value || 18) / 100;
+      const mode = $('seedMode')?.value || 'pullback';
+      const out = $('seedOut');
+      if (!out) return;
+      if (!(account > 0) || !(lev > 0)) {
+        out.textContent = '请填写有效账户与杠杆';
+        return;
+      }
+      const addPct = mode === 'none' ? 0 : Math.max(0, maxPct - seedPct);
+      const seedMargin = account * seedPct;
+      const addMargin = account * addPct;
+      const modeZh = { pullback: '回踩补仓', breakout: '突破补仓', none: '仅头仓' }[mode] || mode;
+      out.innerHTML =
+        `头仓保证金 <b>${seedMargin.toFixed(0)}U</b>（${(seedPct*100).toFixed(1)}%）· 名义 ${(seedMargin*lev).toFixed(0)}U<br>` +
+        `补仓（${modeZh}）<b>${addMargin.toFixed(0)}U</b>（${(addPct*100).toFixed(1)}%）· 名义 ${(addMargin*lev).toFixed(0)}U<br>` +
+        `合计保证金 <b>${(seedMargin+addMargin).toFixed(0)}U</b> / 名义 <b>${((seedMargin+addMargin)*lev).toFixed(0)}U</b> @ ${lev}x<br>` +
+        `<span style="color:var(--muted)">已回踩补仓则勿再在突破处二次加仓。</span>`;
+    };
+    $('btnSeedCalc')?.addEventListener('click', runSeedCalc);
+    runSeedCalc();
   }
 
   function initDevTools() {
@@ -2962,7 +3195,7 @@
       box.innerHTML = `<div class="text-xs py-2" style="color:var(--muted)">${
         dockFilterCurrent
           ? `当前 ${activeSymbol} 暂无历史。取消勾选「仅当前币对」可看全部。`
-          : '暂无历史分析。右侧点「分析当前合约」后会出现在这里。'
+          : '暂无历史分析。右侧点「分析」后会出现在这里。'
       }</div>`;
       return;
     }
@@ -3018,9 +3251,7 @@
       renderAiSession(data);
       setAnalyzeBusy(false, statusLabel(data.status));
       // 历史回看：强制载入该次对话
-      renderChatLog(data.chat_log || [], {
-        emptyHint: '该次分析暂无追问记录。可在下方继续问，也会写回本历史。',
-      });
+      renderChatLog(data.chat_log || []);
       if (data.timeframe && $('analyzeTf')) {
         const tf = data.timeframe;
         if (['30m', '1h', '4h', '1d'].includes(tf)) $('analyzeTf').value = tf;
@@ -3102,20 +3333,43 @@
     return `规则建议 ${dirLabel(base.direction)}，AI 建议 ${dirLabel(ai.direction)} —— 方向分歧，优先缩小仓位或观望，勿盲信任一侧。`;
   }
 
-  function planBlock(title, plan) {
+  function formatRationaleHtml(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return '';
+    // 按【小节】分段，便于扫读
+    const parts = raw.split(/(?=【[^】]+】)/);
+    const html = parts.map((p) => {
+      const m = p.match(/^【([^】]+)】(.*)$/s);
+      if (!m) return escapeHtml(p);
+      return `<span class="ai-r-h">【${escapeHtml(m[1])}】</span>${escapeHtml(m[2].replace(/^\n/, ''))}`;
+    }).join('');
+    return `<div class="ai-rationale">${html}</div>`;
+  }
+
+  function planBlock(title, plan, { primary = false, muted = false } = {}) {
     if (!plan) return '';
-    const levels = plan.direction !== 'wait'
-      ? `<div class="ai-kv"><span class="k">入场</span><span class="v">${fmtNum(plan.entry_low)} – ${fmtNum(plan.entry_high)}</span></div>
-         <div class="ai-kv"><span class="k">止损</span><span class="v" style="color:var(--red)">${fmtNum(plan.stop_loss)}</span></div>
-         <div class="ai-kv"><span class="k">止盈1</span><span class="v" style="color:var(--green)">${fmtNum(plan.take_profit_1)}</span></div>
-         ${plan.take_profit_2 != null ? `<div class="ai-kv"><span class="k">止盈2</span><span class="v" style="color:var(--green)">${fmtNum(plan.take_profit_2)}</span></div>` : ''}
-         <div class="ai-kv"><span class="k">盈亏比</span><span class="v">${plan.rr_ratio != null ? Number(plan.rr_ratio).toFixed(2) : '—'}</span></div>`
-      : '';
-    return `<div class="ai-sec">
+    const cls = ['ai-sec'];
+    if (primary) cls.push('ai-sec-primary');
+    if (muted) cls.push('ai-sec-muted');
+    let levels = '';
+    if (plan.direction !== 'wait') {
+      levels = `<div class="ai-level-grid">
+        <div class="ai-level-cell"><span class="lk">入场</span><span class="lv">${fmtNum(plan.entry_low)} – ${fmtNum(plan.entry_high)}</span></div>
+        <div class="ai-level-cell sl"><span class="lk">止损</span><span class="lv">${fmtNum(plan.stop_loss)}</span></div>
+        <div class="ai-level-cell tp"><span class="lk">止盈 1</span><span class="lv">${fmtNum(plan.take_profit_1)}</span></div>
+        <div class="ai-level-cell">${plan.take_profit_2 != null
+          ? `<span class="lk">止盈 2</span><span class="lv" style="color:var(--green)">${fmtNum(plan.take_profit_2)}</span>`
+          : `<span class="lk">盈亏比</span><span class="lv">${plan.rr_ratio != null ? Number(plan.rr_ratio).toFixed(2) : '—'}</span>`}</div>
+      </div>`;
+      if (plan.take_profit_2 != null) {
+        levels += `<div class="ai-kv"><span class="k">盈亏比</span><span class="v">${plan.rr_ratio != null ? Number(plan.rr_ratio).toFixed(2) : '—'}</span></div>`;
+      }
+    }
+    return `<div class="${cls.join(' ')}">
       <h3>${title}</h3>
-      <div class="mb-2"><span class="ai-dir ${dirClass(plan.direction)}">${dirLabel(plan.direction)}</span></div>
+      <div class="mb-1"><span class="ai-dir ${dirClass(plan.direction)}">${dirLabel(plan.direction)}</span></div>
       ${levels}
-      ${plan.rationale ? `<div class="ai-rationale mt-2" style="color:var(--muted)">${escapeHtml(plan.rationale)}</div>` : ''}
+      ${plan.rationale ? formatRationaleHtml(plan.rationale) : ''}
     </div>`;
   }
 
@@ -3131,14 +3385,11 @@
     lastAnalyzeSession = session;
     // 切换到另一会话时，重载该会话对话；同会话轮询不打断正在聊的内容
     if (session?.id && session.id !== prevId) {
-      renderChatLog(session.chat_log || [], {
-        emptyHint: '本会话追问会保存在「历史分析」里，点该条即可回看。',
-      });
+      renderChatLog(session.chat_log || []);
     } else if (session?.id && Array.isArray(session.chat_log)
       && session.chat_log.length > chatHistory.length) {
       renderChatLog(session.chat_log);
     }
-    $('aiIdleHint').classList.add('hidden');
     const box = $('aiResult');
     box.classList.remove('hidden');
     const ind = session.indicators || {};
@@ -3147,14 +3398,53 @@
     const ema = ind.ema || {};
     const vol = ind.volume || {};
     const fib = session.fib || {};
+    const jack = session.jack_levels || {};
+
+    const biasZh = { up: '偏多', down: '偏空', range: '震荡' }[jack.daily_bias] || (jack.daily_bias || '—');
+    const horizonZh = jack.horizon === 'swing' ? '波段' : (jack.horizon === 'short' ? '短线反抽' : (jack.horizon || '—'));
+    const confBits = [];
+    if (jack.confluence_382) confBits.push('0.382↔BOLL');
+    if (jack.confluence_618) confBits.push('0.618↔BOLL');
+    const confStr = confBits.length ? confBits.join(' · ') : '无';
+    const touchStr = (jack.touch_level != null && jack.touch_count > 0)
+      ? `${fmtNum(jack.touch_level)} ×${jack.touch_count}`
+      : '—';
+
+    const hasJack = jack.swing_high != null || jack.rebound_618 != null;
+
+    // 锁点：完整键值 + 顶部摘要 chips（信息量与可读性兼顾）
+    const jackSec = hasJack ? `<div class="ai-sec">
+      <h3>波段锁点</h3>
+      <div class="ai-chips">
+        <span class="ai-chip"><b>定调</b>${escapeHtml(biasZh)}</span>
+        <span class="ai-chip"><b>视野</b>${escapeHtml(horizonZh)}${jack.htf_ready === false ? ' · 未成熟' : ''}</span>
+        <span class="ai-chip mono"><b>0.382</b>${fmtNum(jack.rebound_382)}</span>
+        <span class="ai-chip mono"><b>0.618</b>${fmtNum(jack.rebound_618)}</span>
+        <span class="ai-chip mono"><b>防守</b>${fmtNum(jack.defense_level)}</span>
+      </div>
+      <div class="mt-2">
+        <div class="ai-kv"><span class="k">波段 H/L</span><span class="v">${fmtNum(jack.swing_high)} / ${fmtNum(jack.swing_low)}</span></div>
+        <div class="ai-kv"><span class="k">反抽 0.382</span><span class="v">${fmtNum(jack.rebound_382)}</span></div>
+        <div class="ai-kv"><span class="k">目标 0.618</span><span class="v">${fmtNum(jack.rebound_618)}</span></div>
+        <div class="ai-kv"><span class="k">回撤 0.382/0.618</span><span class="v">${fmtNum(jack.retr_382)} / ${fmtNum(jack.retr_618)}</span></div>
+        <div class="ai-kv"><span class="k">BOLL 中轨</span><span class="v">${jack.boll_mid != null ? fmtNum(jack.boll_mid) : '—'} · 共振 ${escapeHtml(confStr)}</span></div>
+        <div class="ai-kv"><span class="k">日线定调</span><span class="v">${escapeHtml(biasZh)} · 防守 ${fmtNum(jack.defense_level)}</span></div>
+        <div class="ai-kv"><span class="k">视野</span><span class="v">${escapeHtml(horizonZh)}${jack.htf_ready === false ? '（高周期未成熟）' : ''}</span></div>
+        <div class="ai-kv"><span class="k">关键位触及</span><span class="v">${touchStr}</span></div>
+        <div class="ai-kv"><span class="k">vs BTC</span><span class="v">${escapeHtml(jack.rs_note || '—')}</span></div>
+      </div>
+      ${jack.summary_line ? `<div class="ai-rationale mt-2" style="max-height:none">${escapeHtml(jack.summary_line)}</div>` : ''}
+      <div class="text-[10px] mt-2" style="color:var(--muted)">头仓分层 → 顶栏 Web3「头仓/补仓计算器」</div>
+    </div>` : '';
 
     const quant = `<div class="ai-sec">
-      <h3>数据指标 · ${session.timeframe || ''}</h3>
+      <h3>数据指标 · ${escapeHtml(session.timeframe || '')}</h3>
       <div class="ai-kv"><span class="k">现价</span><span class="v">${fmtNum(session.current_price, 6)}</span></div>
       <div class="ai-kv"><span class="k">结构</span><span class="v">${st.trend || '—'}</span></div>
       <div class="ai-kv"><span class="k">支撑</span><span class="v">${(st.supports || []).slice(0, 3).map((x) => fmtNum(x)).join(' / ') || '—'}</span></div>
       <div class="ai-kv"><span class="k">阻力</span><span class="v">${(st.resistances || []).slice(0, 3).map((x) => fmtNum(x)).join(' / ') || '—'}</span></div>
-      <div class="ai-kv"><span class="k">Fib 0.5/0.618</span><span class="v">${fmtNum(fib.retr_500)} / ${fmtNum(fib.retr_618)}</span></div>
+      <div class="ai-kv"><span class="k">Fib 回撤 0.5/0.618</span><span class="v">${fmtNum(fib.retr_500)} / ${fmtNum(fib.retr_618)}</span></div>
+      <div class="ai-kv"><span class="k">Fib 反弹 0.382/0.618</span><span class="v">${fmtNum(fib.rebound_382 ?? jack.rebound_382)} / ${fmtNum(fib.rebound_618 ?? jack.rebound_618)}</span></div>
       <div class="ai-kv"><span class="k">MACD</span><span class="v">${macd.cross_signal || '—'} · hist ${fmtNum(macd.histogram, 6)}</span></div>
       <div class="ai-kv"><span class="k">EMA</span><span class="v">7 ${fmtNum(ema.ema7)} · 30 ${fmtNum(ema.ema30)}</span></div>
       <div class="ai-kv"><span class="k">量能</span><span class="v">${vol.signal || '—'} · ×${vol.ratio != null ? vol.ratio : '—'}</span></div>
@@ -3167,17 +3457,22 @@
 
     let aiHtml = '';
     if (session.ai_plan) {
-      aiHtml = planBlock('AI 计划', session.ai_plan);
+      aiHtml = planBlock('AI 计划', session.ai_plan, { primary: true });
       if (session.ai_plan.model_id) {
         aiHtml += `<div class="text-[10px] mt-1" style="color:var(--muted)">模型 ${escapeHtml(session.ai_plan.model_id)} · ${escapeHtml(session.ai_plan.prompt_version || '')}</div>`;
       }
     } else if (session.status === 'ai_failed') {
-      aiHtml = `<div class="ai-sec"><h3>AI 计划</h3><div style="color:var(--red);font-size:12px">${escapeHtml(session.ai_error || '生成失败')}</div></div>`;
+      aiHtml = `<div class="ai-sec ai-sec-primary"><h3>AI 计划</h3><div style="color:var(--red);font-size:12px">${escapeHtml(session.ai_error || '生成失败')}</div></div>`;
     } else {
-      aiHtml = `<div class="ai-sec"><h3>AI 计划</h3><div class="text-xs" style="color:var(--muted)">推理中，规则基线可先参考…</div></div>`;
+      aiHtml = `<div class="ai-sec ai-sec-primary"><h3>AI 计划</h3><div class="text-xs" style="color:var(--muted)">推理中…下方锁点与规则基线可先看</div></div>`;
     }
 
-    box.innerHTML = advice + quant + planBlock('规则基线（非 AI）', session.baseline_plan) + aiHtml;
+    // AI 优先，但锁点/指标恢复完整展开（不折叠）
+    box.innerHTML = aiHtml
+      + advice
+      + jackSec
+      + quant
+      + planBlock('规则基线（非 AI）', session.baseline_plan, { muted: true });
   }
 
   let analyzePollTimer = null;
@@ -3186,18 +3481,13 @@
   let chatHistory = [];
   let chatBusy = false;
 
-  function renderChatLog(log, { emptyHint } = {}) {
+  function renderChatLog(log) {
     const box = $('chatLog');
     if (!box) return;
     box.innerHTML = '';
     chatHistory = [];
     const turns = Array.isArray(log) ? log : [];
-    if (!turns.length) {
-      const tip = emptyHint
-        || '可对当前合约追问。建议先点上方分析；对话会随该次分析写入历史。';
-      box.innerHTML = `<div id="chatHint" class="text-[11px] py-1" style="color:var(--muted)">${escapeHtml(tip)}</div>`;
-      return;
-    }
+    if (!turns.length) return;
     turns.forEach((t) => {
       const role = t.role === 'assistant' ? 'assistant' : 'user';
       const content = t.content || '';
@@ -3209,8 +3499,6 @@
   function appendChatBubble(role, text, { persistLocal = false } = {}) {
     const log = $('chatLog');
     if (!log) return;
-    const hint = $('chatHint');
-    if (hint) hint.remove();
     const box = document.createElement('div');
     box.className = `ai-chat-bubble ${role === 'user' ? 'user' : 'assistant'}`;
     box.innerHTML = `<div class="who">${role === 'user' ? '我' : 'AI'}</div><div>${escapeHtml(text)}</div>`;
@@ -3228,6 +3516,7 @@
       current_price: s.current_price,
       structure: s.structure,
       fib: s.fib,
+      jack_levels: s.jack_levels,
       indicators: s.indicators,
       baseline_plan: s.baseline_plan,
       ai_plan: s.ai_plan,
@@ -3240,7 +3529,7 @@
     const q = (input?.value || '').trim();
     if (!q) return;
     if (!lastAnalyzeSession?.id) {
-      toast('请先分析', '先点「分析当前合约」，对话才会写入对应历史', 'info');
+      toast('请先分析', '先点「分析」，对话才会写入对应历史', 'info');
       return;
     }
     chatBusy = true;
@@ -3290,7 +3579,7 @@
     const btn = $('btnAnalyze');
     if (btn) {
       btn.disabled = on;
-      btn.textContent = on ? '分析中…' : '分析当前合约';
+      btn.textContent = on ? '分析中…' : '分析';
     }
     if ($('aiStatus')) $('aiStatus').textContent = statusText || (on ? '进行中' : '就绪');
   }
@@ -3322,11 +3611,8 @@
     if (analyzeBusy) return;
     const tf = $('analyzeTf')?.value || mapChartTfToAnalyze(activeTf);
     setAnalyzeBusy(true, '拉数中');
-    $('aiIdleHint')?.classList.add('hidden');
     // 新分析：先清空对话框，避免串到上一条历史
-    renderChatLog([], {
-      emptyHint: '分析生成中…完成后可在此追问，对话会记入本条历史。',
-    });
+    renderChatLog([]);
     lastAnalyzeSession = null;
     try {
       const r = await fetch('/api/monitor/analyze', {
@@ -3355,7 +3641,6 @@
     } catch (e) {
       setAnalyzeBusy(false, '失败');
       toast('分析失败', String(e.message || e), 'short');
-      $('aiIdleHint')?.classList.remove('hidden');
     }
   }
 
