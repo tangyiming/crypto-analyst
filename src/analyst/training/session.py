@@ -337,9 +337,13 @@ def run_monitor_ai_confirm(
           "rationale": str,
         }
     """
+    from analyst.config import get_settings
     from analyst.llm.analyst import analyze_market
     from analyst.storage import repo
     from analyst.storage.models import AIPlan
+
+    settings = get_settings()
+    free_only = bool(getattr(settings, "monitor_ai_free_only", True))
 
     sym = symbol if "/" in symbol else f"{symbol.upper()}/USDT"
     ai_tf = map_monitor_tf_to_ai_tf(timeframe)
@@ -359,6 +363,7 @@ def run_monitor_ai_confirm(
         ai_response = analyze_market(
             market_snapshot=market_dict,
             indicators_snapshot=ctx.indicators,
+            free_only=free_only,
         )
     except Exception:
         repo.delete_session(ctx.db_session.id)

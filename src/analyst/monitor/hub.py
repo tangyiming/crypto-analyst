@@ -31,7 +31,6 @@ from analyst.data.fetcher import fetch_candles_history
 from analyst.data.ws_kline import stream_klines, stream_mark_price
 from analyst.monitor.notifier import (
     build_default_notifier,
-    format_cycle_alert_text,
     format_rule_alert_text,
 )
 from analyst.monitor.rules import (
@@ -886,9 +885,9 @@ class MonitorHub:
         """配置周期收盘评估 cycle_switch（每个盯盘币对各自跑）。
 
         - 牛熊相位仍由 BTC 定调；各币用自身 K 线做唐奇安/反弹做空等执行
-        - 仓位变化（含开仓/平仓）→ 该币页面告警 + TG + AI 候选
-        - 「每天提醒周期位置」不在这里，见 cycle_outlook
-        - 返回 True：本币仓位变化，应触发 AI 候选确认
+        - 相对上一根 K 仓位变化 → 页面告警 + AI 候选（不直推 TG）
+        - 可交易确认：等 AI 出 long/short 后走 ai_plan 推 TG
+        - 「每天提醒周期位置」见 cycle_outlook
         """
         from analyst.compute.cycle_theory import (
             calendar_countdown_dict,
@@ -973,30 +972,14 @@ class MonitorHub:
         worker.alerts_sent += 1
         self._alerts.append(alert)
         await self._broadcast(worker, alert, alert_also=True)
-
-        if not self._tg_rule_allowed("cycle_switch"):
-            logger.debug("cycle_switch 仅页面（未进 TG 白名单）%s", sym)
-            return True
-        if not self._telegram_ready():
-            return True
-
-        notifier = build_default_notifier(
-            telegram_bot_token=settings.telegram_bot_token,
-            telegram_chat_id=settings.telegram_chat_id,
-        )
+        # 不直推 TG：等 AI 确认可交易后再走 ai_plan
         logger.info(
-            "cycle_switch 仓位变化 → TG %s %s pos %.2f→%.2f regime=%s",
+            "cycle_switch 仓位变化仅页面+AI候选 %s %s pos %.2f→%.2f regime=%s",
             sym,
             worker.key.timeframe,
             signal.prev_position,
             signal.target_position,
             signal.market_regime,
-        )
-        await asyncio.to_thread(
-            notifier.send_text,
-            format_cycle_alert_text(
-                sym, worker.key.timeframe, signal, wolfy_cal
-            ),
         )
         return True
 
@@ -1169,8 +1152,14 @@ class MonitorHub:
                 worker.key.timeframe,
                 market="futures",
             )
-        except Exception:
+        except Exception as e:
             logger.exception("AI 候选确认失败 %s", worker.key)
+            await self._emit_ai_confirm_failure(
+                worker,
+                ai_tf=ai_tf,
+                candidate_rules=candidate_rules,
+                error=e,
+            )
             return
 
         direction = str(result.get("direction") or "wait").lower()
@@ -1232,6 +1221,67 @@ class MonitorHub:
             result.get("session_id"),
         )
         await self._emit_rule_alert(worker, alert)
+
+    async def _emit_ai_confirm_failure(
+        self,
+        worker: StreamWorker,
+        *,
+        ai_tf: str,
+        candidate_rules: list[str],
+        error: Exception,
+    ) -> None:
+        """免费 AI 确认失败：上页面 + 推 TG（不回落付费，需人知晓）。"""
+        err = str(error).strip() or error.__class__.__name__
+        if len(err) > 280:
+            err = err[:277] + "..."
+        price = None
+        if worker.series.candles:
+            price = worker.series.candles[-1].close
+        marker = int(datetime.now(timezone.utc).timestamp())
+        alert = {
+            "type": "alert",
+            "rule": "ai_confirm_fail",
+            "title": "免费 AI 确认失败",
+            "symbol": worker.key.symbol,
+            "timeframe": worker.key.timeframe,
+            "direction": "info",
+            "strength": 0.5,
+            "price": price,
+            "pattern": "ai_confirm_fail",
+            "break_level": None,
+            "reasons": [
+                f"分析周期 {ai_tf}（仅 Groq，未回落付费）",
+                f"候选: {', '.join(candidate_rules[:4]) or '-'}",
+                err,
+            ],
+            "filters_passed": ["ai_confirm_fail"],
+            "marker_time": marker,
+            "plan": None,
+            "kelly": None,
+            "trail_note": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "demo": False,
+        }
+        # 页面：走去重广播；TG：直推（不受可交易白名单限制）
+        dedupe = (
+            f"ai_fail|{worker.key.symbol}|{worker.key.timeframe}|"
+            f"{marker // 1800}"  # 同半小时内同币同周期只记一条页面
+        )
+        if dedupe not in worker.last_rule_keys:
+            worker.last_rule_keys.add(dedupe)
+            self._alerts.append(alert)
+            worker.alerts_sent += 1
+            await self._broadcast(worker, alert, alert_also=True)
+
+        if self._telegram_ready():
+            text = (
+                f"⚠️ 免费 AI 确认失败 · {worker.key.symbol} {worker.key.timeframe}\n"
+                f"分析周期 {ai_tf} · 仅 Groq，未用付费模型\n"
+                f"候选: {', '.join(candidate_rules[:4]) or '-'}\n"
+                f"{err}"
+            )
+            logger.warning("AI 确认失败 → TG %s", worker.key)
+            await self._notify_telegram_text(text)
 
     async def _evaluate_and_alert(self, worker: StreamWorker) -> None:
         signal = evaluate_double_line(worker.series, worker.strategy)

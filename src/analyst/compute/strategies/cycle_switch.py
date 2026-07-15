@@ -21,7 +21,8 @@
   · 实时相位：analyst cycle-status BTC,ETH,SOL
   · 周期展望：analyst cycle-outlook（Wolfy 刻舟求剑 + 狼波提醒）
   · 各盯盘币对在配置周期（默认 4h）收盘评估仓位；相位用 BTC 定调
-  · 仓位变化 → 该币页面 + TG + AI 候选；周期位置日更见 cycle_outlook（每天 1 条）
+  · 仓位相对上一根 K 线变化 → 页面告警 + AI 候选（不直推 TG；可交易由 AI→ai_plan）
+  · 周期位置日更见 cycle_outlook（每天 1 条）
 
   注意：减半日历边界（牛 550 天 / 熊 400 天）仅拟合 2 个完整周期，
   必须与均线双确认一起用；回测≠未来，上线先 paper trading。
@@ -210,6 +211,8 @@ def evaluate_cycle_switch(
         short_size=cfg.short_size,
     )
     target = positions[-1]
+    # 用上一根收盘仓位判断变化，避免进程重启时 prev=0 误报「空仓→持仓」
+    prev_bar = positions[-2] if len(positions) >= 2 else 0.0
     last = candles[-1]
     ts = last.timestamp
     reg = regime.get(ts, "accum")
@@ -234,17 +237,32 @@ def evaluate_cycle_switch(
         f"目标仓位={_position_label(target)}",
     ]
     if reg == "bear":
-        reasons.append(f"z-score={z:+.2f}（做空需 >{cfg.fade_z}）")
+        if target < 0 and prev_bar >= 0:
+            reasons.append(f"新开空：z-score={z:+.2f} > {cfg.fade_z}")
+        elif target < 0:
+            reasons.append(f"持有空仓：z-score={z:+.2f}（平仓需 ≤0）")
+        elif target == 0 and prev_bar < 0:
+            reasons.append(f"平空：z-score={z:+.2f} ≤ 0")
+        else:
+            reasons.append(f"观望未开空：z-score={z:+.2f}（需 >{cfg.fade_z}）")
     else:
         if hh is not None:
-            reasons.append(f"唐奇安入场位={hh:.6g} 离场位={lx:.6g}")
+            reasons.append(f"唐奇安入场={hh:.6g} / 离场={lx:.6g}")
+        if target > 0 and prev_bar <= 0:
+            reasons.append("唐奇安突破开多")
+        elif target == 0 and prev_bar > 0:
+            reasons.append("唐奇安跌破离场")
+        elif target > 0:
+            reasons.append("持有多仓（唐奇安）")
+        else:
+            reasons.append("观望：未突破唐奇安入场位")
 
     return CycleSwitchSignal(
         market_regime=reg,
         calendar_phase=cal,
         target_position=target,
-        prev_position=prev_position,
-        changed=abs(target - prev_position) > 1e-9,
+        prev_position=prev_bar,
+        changed=abs(target - prev_bar) > 1e-9,
         price=last.close,
         reasons=reasons,
         donchian_entry=hh,

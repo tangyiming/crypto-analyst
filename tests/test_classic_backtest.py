@@ -171,7 +171,8 @@ def test_cycle_switch_positions():
     assert pos3[60] == -0.5 and pos3[61] == 0.0
 
 
-def test_evaluate_cycle_switch_detects_change():
+def test_evaluate_cycle_switch_no_false_change_on_restart():
+    """持有中重启（prev_position 参数=0）不应误报仓位变化。"""
     from analyst.compute.strategies.cycle_switch import evaluate_cycle_switch
     from analyst.data.fetcher import CandleSeries
 
@@ -183,8 +184,11 @@ def test_evaluate_cycle_switch_detects_change():
         prev_position=0.0,
     )
     assert sig.target_position == 1.0
-    assert sig.changed is True
     assert sig.market_regime == "bull"
+    assert sig.prev_position == 1.0
+    assert sig.changed is False
+    assert any("唐奇安" in r for r in sig.reasons)
+
 
 
 def test_label_regimes_basic():

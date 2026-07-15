@@ -157,10 +157,25 @@ def analyze_market(
     market_snapshot: dict,
     indicators_snapshot: dict,
     user_account: dict | None = None,
+    *,
+    free_only: bool = False,
 ) -> LLMResponse:
-    """让 AI 分析市场并给出交易计划。"""
+    """让 AI 分析市场并给出交易计划。
+
+    Args:
+        free_only: True 时只走免费前置层（当前为 Groq），失败不回落 b.ai / DeepSeek 等付费线路。
+                   盯盘自动「候选确认」应开启，避免刷爆付费额度。
+    """
     settings = get_settings()
     provider = settings.llm_provider.lower()
+    groq_key = (getattr(settings, "groq_api_key", "") or "").strip()
+    try_groq = bool(groq_key and getattr(settings, "llm_try_groq_first", True))
+
+    if free_only and not try_groq:
+        raise RuntimeError(
+            "盯盘 AI 确认仅用免费模型：请配置 GROQ_API_KEY（且 LLM_TRY_GROQ_FIRST=true），"
+            "不会回落 DeepSeek / b.ai / Anthropic 等付费线路"
+        )
 
     system = load_system_prompt(settings.llm_prompt_version)
     template = load_user_template(settings.llm_prompt_version)
@@ -175,8 +190,7 @@ def analyze_market(
             f"不支持的 LLM_PROVIDER: {provider}（可选: deepseek / openai / anthropic）"
         )
 
-    groq_key = (getattr(settings, "groq_api_key", "") or "").strip()
-    if groq_key and getattr(settings, "llm_try_groq_first", True):
+    if try_groq:
         try:
             sys_g = load_system_prompt("groq")
             tpl_g = load_user_template("groq")
@@ -204,7 +218,12 @@ def analyze_market(
                 prompt_version_for_response="groq",
             )
         except Exception as exc:
+            if free_only:
+                raise RuntimeError(f"盯盘 AI 确认仅用免费 Groq，调用失败: {exc}") from exc
             _log.warning("Groq 请求失败，尝试 b.ai 或主线路: %s", exc)
+
+    if free_only:
+        raise RuntimeError("盯盘 AI 确认 free_only=True，拒绝付费回落")
 
     bai_key = (getattr(settings, "bai_api_key", "") or "").strip()
     bai_model = (getattr(settings, "bai_model", "") or "").strip()

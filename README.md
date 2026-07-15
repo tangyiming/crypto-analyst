@@ -26,7 +26,7 @@
 |------|------|----------|
 | 双线 / 规则噪音（放量、触及等） | 有 | 默认不推（可改白名单） |
 | 收盘有候选 → AI 确认 `long`/`short`（`ai_plan`） | 有 | 推 |
-| 各币 `cycle_switch` 仓位变化 | 有 | 推（该币） |
+| 各币 `cycle_switch` 仓位变化 | 有（触发 AI 候选） | 不直推；等 AI 确认 |
 | 周期位置日更（`cycle_outlook`，BTC） | 有 | UTC **每天最多 1 条** |
 
 ### Web 周期图
@@ -145,11 +145,12 @@ analyst config test-llm
 | `MONITOR_ALWAYS_ON` | `true`：Web 进程在跑时关页面也继续盯盘并推 TG |
 | `MONITOR_DAEMON_TIMEFRAMES` | 常驻多周期，如 `15m,1h,4h` |
 | `MONITOR_DAEMON_SYMBOLS` | 常驻品种；空则跟 `DEFAULT_SYMBOLS` / 页面观察列表（常驻模式下加减币**无需重启**） |
-| `MONITOR_CYCLE_SWITCH_ENABLED` | `true`：各盯盘币对在配置周期（默认 4h）跑 `cycle_switch`；仓位变化 → 页面 + **该币 TG** + AI 候选。相位由 BTC 定调 |
-| `MONITOR_CYCLE_OUTLOOK_ENABLED` | `true`：每天提醒一次当前周期位置（BTC，**UTC 每天最多 1 条**；与各币交易点分离） |
-| `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有双线/规则候选时才调 AI；结论 `long`/`short` 才推 `ai_plan` |
+| `MONITOR_CYCLE_SWITCH_ENABLED` | `true`：各盯盘币对跑 `cycle_switch`；相对上一根 K 仓位变化 → 页面 + AI 候选（**不直推 TG**） |
+| `MONITOR_CYCLE_OUTLOOK_ENABLED` | `true`：每天提醒一次当前周期位置（BTC，**UTC 每天最多 1 条**） |
+| `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有双线/规则/`cycle_switch` 候选时才调 AI；结论 `long`/`short` 才推 `ai_plan` |
+| `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认**只用免费 Groq**，失败不回落付费线路（需 `GROQ_API_KEY`） |
 | `MONITOR_AI_COOLDOWN_MINUTES` | 同品种+AI 周期冷却（默认 240），防候选刷屏 |
-| `MONITOR_TG_TRADE_RULES` | TG 白名单；默认 `ai_plan,cycle_switch`。空=全部规则推 TG |
+| `MONITOR_TG_TRADE_RULES` | TG 白名单；默认仅 `ai_plan`。空=全部规则推 TG |
 | `MONITOR_TOUCH_COOLDOWN_BARS` | 支撑/阻力触及告警冷却根数（页面仍提示；默认不进 TG） |
 | `TELEGRAM_BOT_TOKEN` / `CHAT_ID` | 告警推送 |
 
@@ -244,7 +245,7 @@ analyst backtest-classic ETH -s ema_cross -t 4h --oos-days 365
 
 - **图 1 日历**：锚定历次熊市底部，牛市 1064 天 → 预计见顶，熊市 364 天 → 预计见底
 - **图 2 狼波**：RSI + 短期动量近似 TradingView 狼波指数，红区过热、蓝区超卖
-- **提醒**：`cycle_outlook` **每天**推一次当前周期位置；各币 `cycle_switch` 仓位变化单独推送；页面与告警均显示倒计时天数
+- **提醒**：`cycle_outlook` **每天**推一次当前周期位置；各币 `cycle_switch` 仓位变化上页面并触发 AI，**可交易才推 TG**（`ai_plan`）
 
 ```bash
 analyst cycle-outlook              # 终端查看当前相位与倒计时

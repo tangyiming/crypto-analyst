@@ -106,10 +106,12 @@ class Settings(BaseSettings):
     # 收盘有双线/规则候选时才调 AI；AI 结论 long/short 才推 ai_plan 告警
     monitor_ai_on_candidate: bool = Field(default=True)
     monitor_ai_cooldown_minutes: int = Field(default=240)
+    # 盯盘 AI 确认只走免费层（Groq）；失败不回落付费 DeepSeek/b.ai/Anthropic
+    monitor_ai_free_only: bool = Field(default=True)
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
     # 默认：AI 可交易确认 + 全局周期仓位（UTC 每天最多 1 条）
     monitor_tg_trade_rules: str = Field(
-        default="ai_plan,cycle_switch"
+        default="ai_plan"
     )
     # 关网页也继续盯盘 + Telegram（Web 进程需保持运行）
     monitor_always_on: bool = Field(default=False)
