@@ -223,6 +223,109 @@
     }
     .roadmap li.muted { color: var(--muted); }
     .roadmap li::marker { color: var(--yellow); }
+    .tools-section { margin-bottom: 28px; }
+    .tools-section h2 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin: 0 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--line);
+    }
+    .tools-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 10px;
+    }
+    .tool-card {
+      border: 1px solid var(--line);
+      background: #12161c;
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color .15s;
+    }
+    a.tool-card:hover { border-color: var(--yellow); }
+    .tool-card .tc-name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .tool-card .tc-desc { font-size: 11px; color: var(--muted); line-height: 1.45; flex: 1; }
+    .tool-card .tc-meta {
+      font-size: 10px;
+      color: #5eb8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .tool-card .tc-tag {
+      align-self: flex-start;
+      font-size: 9px;
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: rgba(240, 185, 11, 0.1);
+      color: var(--yellow);
+    }
+    .tool-panel {
+      border: 1px solid var(--line);
+      background: #12161c;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      max-width: 720px;
+    }
+    .tool-panel h3 { font-size: 13px; font-weight: 600; margin: 0 0 10px; }
+    .tool-row {
+      display: grid;
+      grid-template-columns: 90px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .tool-row label { font-size: 11px; color: var(--muted); }
+    .tool-row .inp, .tool-row .sel { width: 100%; }
+    .tool-row .chip { cursor: pointer; }
+    .tool-out {
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--green);
+      word-break: break-all;
+      min-height: 1.4em;
+    }
+    .tool-ta {
+      width: 100%;
+      min-height: 120px;
+      background: #0b0e11;
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 10px;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      resize: vertical;
+    }
+    .tool-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+    .fw-fit {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-left: 6px;
+    }
+    .fw-fit.high { background: rgba(14, 203, 129, 0.15); color: var(--green); }
+    .fw-fit.mid { background: rgba(240, 185, 11, 0.12); color: var(--yellow); }
+    .fw-fit.low { background: rgba(132, 142, 156, 0.2); color: var(--muted); }
+    .fw-note {
+      max-width: 880px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #12161c;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .fw-note strong { color: var(--text); font-weight: 600; }
     .chrome {
       background: #0e1218;
       border-bottom: 1px solid var(--line);
@@ -705,6 +808,9 @@
       <button type="button" class="app-nav-link" data-app="cycle">周期</button>
       <button type="button" class="app-nav-link" data-app="strategies">策略库</button>
       <button type="button" class="app-nav-link" data-app="backtest">回测</button>
+      <button type="button" class="app-nav-link" data-app="frameworks">开源框架</button>
+      <button type="button" class="app-nav-link" data-app="web3">Web3</button>
+      <button type="button" class="app-nav-link" data-app="devtools">开发工具</button>
       <button type="button" class="app-nav-link soon" data-app="auto">自动交易<span class="tag">Soon</span></button>
     </div>
     <div class="app-nav-status">
@@ -914,6 +1020,195 @@
     </div>
   </div>
 
+  <div id="viewFrameworks" class="app-view hidden">
+    <div class="app-page">
+      <div class="app-page-head">
+        <h1>开源量化框架</h1>
+        <p>调研精选：可与本平台互补的开源策略库 / 交易框架。当前以导航与集成路线为主，不内嵌整套 bot。</p>
+      </div>
+      <div class="fw-note">
+        <strong>与本平台怎么配合：</strong>
+        Crypto Analyst 专注 AI 分析、规则盯盘、周期位置与经典回测；自动下单仍规划中。
+        更合适的集成方式是「外挂执行引擎」：本平台出信号 / 告警，Freqtrade / Jesse 等负责回测优化与 dry-run。
+        许可证注意：Freqtrade 为 GPL-3.0，若深度链接需评估合规；Jesse / Hummingbot / vectorbt / Lean 多为 MIT 或 Apache-2.0，更易做适配层。
+      </div>
+      <div class="tools-section">
+        <h2>推荐集成优先级</h2>
+        <div class="tools-grid" id="frameworkGrid"></div>
+      </div>
+      <div class="tools-section">
+        <h2>建议集成路线</h2>
+        <ul class="roadmap">
+          <li>✅ 本平台：盯盘告警 · 策略库 · 经典回测 · 周期工具</li>
+          <li>⏳ 阶段 A：策略信号导出 JSON / Webhook，对接 Freqtrade dry-run</li>
+          <li>⏳ 阶段 B：可选 sidecar 运行 Jesse / Freqtrade，结果回写告警面板</li>
+          <li>⏳ 阶段 C：研究侧用 vectorbt 做参数扫描，优胜参数回灌本平台回测</li>
+          <li class="muted">⏸ Hummingbot：做市 / 套利场景，与当前「提醒型」定位不同，暂不优先</li>
+          <li class="muted">⏸ NautilusTrader / Lean：机构级事件驱动，复杂度高，长期可选</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewWeb3" class="app-view hidden">
+    <div class="app-page">
+      <div class="app-page-head">
+        <h1>Web3 工具</h1>
+        <p>内置常用换算 + 精选链上 / DeFi 在线工具。本地计算不出私钥；外链工具请自行核对网址。</p>
+      </div>
+
+      <div class="tools-section">
+        <h2>内置工具</h2>
+        <div class="tool-panel">
+          <h3>ETH 单位换算（Wei / Gwei / Ether）</h3>
+          <div class="tool-row">
+            <label>Ether</label>
+            <input class="inp" id="w3Ether" type="text" placeholder="1" value="1" />
+            <button type="button" class="chip" data-w3-sync="ether">同步</button>
+          </div>
+          <div class="tool-row">
+            <label>Gwei</label>
+            <input class="inp" id="w3Gwei" type="text" placeholder="1000000000" />
+            <button type="button" class="chip" data-w3-sync="gwei">同步</button>
+          </div>
+          <div class="tool-row">
+            <label>Wei</label>
+            <input class="inp" id="w3Wei" type="text" placeholder="1000000000000000000" />
+            <button type="button" class="chip" data-w3-sync="wei">同步</button>
+          </div>
+        </div>
+
+        <div class="tool-panel">
+          <h3>十进制 ↔ 十六进制</h3>
+          <div class="tool-row">
+            <label>十进制</label>
+            <input class="inp" id="w3Dec" type="text" placeholder="255" />
+            <button type="button" class="chip" id="btnDecToHex">→ Hex</button>
+          </div>
+          <div class="tool-row">
+            <label>十六进制</label>
+            <input class="inp" id="w3Hex" type="text" placeholder="0xff" />
+            <button type="button" class="chip" id="btnHexToDec">→ Dec</button>
+          </div>
+          <div class="tool-out" id="w3HexOut"></div>
+        </div>
+
+        <div class="tool-panel">
+          <h3>地址格式检查</h3>
+          <div class="tool-row">
+            <label>地址</label>
+            <input class="inp" id="w3Addr" type="text" placeholder="0x…" spellcheck="false" />
+            <button type="button" class="chip" id="btnCheckAddr">检查</button>
+          </div>
+          <div class="tool-out" id="w3AddrOut"></div>
+        </div>
+
+        <div class="tool-panel">
+          <h3>UTF-8 ↔ Hex（调用数据预览）</h3>
+          <div class="tool-row">
+            <label>文本</label>
+            <input class="inp" id="w3Text" type="text" placeholder="transfer" />
+            <button type="button" class="chip" id="btnTextToHex">→ Hex</button>
+          </div>
+          <div class="tool-row">
+            <label>Hex</label>
+            <input class="inp" id="w3TextHex" type="text" placeholder="0x…" spellcheck="false" />
+            <button type="button" class="chip" id="btnHexToText">→ 文本</button>
+          </div>
+          <div class="tool-out" id="w3TextOut"></div>
+        </div>
+      </div>
+
+      <div class="tools-section">
+        <h2>链上浏览器 &amp; 行情</h2>
+        <div class="tools-grid" id="web3LinksBrowse"></div>
+      </div>
+      <div class="tools-section">
+        <h2>DeFi / 数据 / 安全</h2>
+        <div class="tools-grid" id="web3LinksDefi"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewDevtools" class="app-view hidden">
+    <div class="app-page">
+      <div class="app-page-head">
+        <h1>开发工具</h1>
+        <p>常用本地编解码与格式化；下方为精选在线工具外链（JWT、正则、Cron 等）。</p>
+      </div>
+
+      <div class="tools-section">
+        <h2>内置工具</h2>
+        <div class="tool-panel">
+          <h3>JSON 格式化 / 压缩</h3>
+          <textarea class="tool-ta" id="devJsonIn" placeholder='{"a":1}'></textarea>
+          <div class="tool-actions">
+            <button type="button" class="chip" id="btnJsonPretty">格式化</button>
+            <button type="button" class="chip" id="btnJsonMin">压缩</button>
+            <button type="button" class="chip" id="btnJsonCopy">复制结果</button>
+          </div>
+          <div class="tool-out" id="devJsonStatus"></div>
+        </div>
+
+        <div class="tool-panel">
+          <h3>Base64 编解码</h3>
+          <textarea class="tool-ta" id="devB64In" placeholder="输入文本或 Base64"></textarea>
+          <div class="tool-actions">
+            <button type="button" class="chip" id="btnB64Enc">编码</button>
+            <button type="button" class="chip" id="btnB64Dec">解码</button>
+          </div>
+          <div class="tool-out" id="devB64Out"></div>
+        </div>
+
+        <div class="tool-panel">
+          <h3>URL 编解码</h3>
+          <div class="tool-row">
+            <label>输入</label>
+            <input class="inp" id="devUrlIn" type="text" placeholder="https://example.com?q=你好" />
+            <span></span>
+          </div>
+          <div class="tool-actions">
+            <button type="button" class="chip" id="btnUrlEnc">Encode</button>
+            <button type="button" class="chip" id="btnUrlDec">Decode</button>
+          </div>
+          <div class="tool-out" id="devUrlOut"></div>
+        </div>
+
+        <div class="tool-panel">
+          <h3>Unix 时间戳</h3>
+          <div class="tool-row">
+            <label>时间戳</label>
+            <input class="inp" id="devTs" type="text" placeholder="秒或毫秒" />
+            <button type="button" class="chip" id="btnTsToDate">→ 日期</button>
+          </div>
+          <div class="tool-row">
+            <label>ISO / 本地</label>
+            <input class="inp" id="devDate" type="text" placeholder="2026-07-15T08:00:00Z" />
+            <button type="button" class="chip" id="btnDateToTs">→ 时间戳</button>
+          </div>
+          <div class="tool-actions">
+            <button type="button" class="chip" id="btnTsNow">填入当前时间</button>
+          </div>
+          <div class="tool-out" id="devTsOut"></div>
+        </div>
+
+        <div class="tool-panel">
+          <h3>UUID v4</h3>
+          <div class="tool-actions">
+            <button type="button" class="chip" id="btnUuid">生成</button>
+            <button type="button" class="chip" id="btnUuidCopy">复制</button>
+          </div>
+          <div class="tool-out" id="devUuidOut"></div>
+        </div>
+      </div>
+
+      <div class="tools-section">
+        <h2>在线工具外链</h2>
+        <div class="tools-grid" id="devLinksGrid"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="viewAuto" class="app-view hidden">
     <div class="app-page">
       <div class="app-page-head">
@@ -925,7 +1220,9 @@
         <li>✅ 双线反转 / cycle_switch 策略评估</li>
         <li>✅ 经典组合策略 Web 回测</li>
         <li>✅ Wolfy 四年周期位置与转折点倒计时</li>
+        <li>✅ Web3 / 开发工具 / 开源框架导航</li>
         <li class="muted">⏳ 纸面交易账本（模拟跟单记录）</li>
+        <li class="muted">⏳ Freqtrade / Jesse dry-run 信号对接（见「开源框架」）</li>
         <li class="muted">⏳ 交易所 API 下单（需独立风控模块）</li>
         <li class="muted">⏳ 仓位管理与 Kelly 仓位建议</li>
       </ul>
@@ -1231,6 +1528,9 @@
       strategies: 'viewStrategies',
       backtest: 'viewBacktest',
       cycle: 'viewCycle',
+      frameworks: 'viewFrameworks',
+      web3: 'viewWeb3',
+      devtools: 'viewDevtools',
       auto: 'viewAuto',
     };
     if (!views[name]) return;
@@ -1245,12 +1545,373 @@
     });
     if (name === 'strategies') loadStrategiesPage();
     if (name === 'cycle') startCyclePageRefresh();
+    if (name === 'frameworks') renderFrameworksPage();
+    if (name === 'web3') initWeb3Tools();
+    if (name === 'devtools') initDevTools();
     if (name === 'monitor') {
       requestAnimationFrame(() => {
         if (chartMode === 'native') ensureChart();
         else if (chartMode === 'tv') mountTradingView(activeSymbol, activeTf, { force: false });
       });
     }
+  }
+
+  function renderLinkGrid(elId, items) {
+    const el = $(elId);
+    if (!el) return;
+    el.innerHTML = items.map((t) => `
+      <a class="tool-card" href="${escapeHtml(t.url)}" target="_blank" rel="noopener noreferrer">
+        <span class="tc-name">${escapeHtml(t.name)}</span>
+        <span class="tc-desc">${escapeHtml(t.desc)}</span>
+        <span class="tc-meta">${escapeHtml(t.meta || t.url.replace(/^https?:\/\//, '').split('/')[0])}</span>
+        ${t.tag ? `<span class="tc-tag">${escapeHtml(t.tag)}</span>` : ''}
+      </a>
+    `).join('');
+  }
+
+  const FRAMEWORKS = [
+    {
+      name: 'Freqtrade',
+      fit: 'high', fitLabel: '优先集成',
+      desc: '加密交易 bot 事实标准：回测、Hyperopt、FreqAI、Telegram/WebUI、30+ 交易所。适合作为本平台自动交易的 dry-run / 实盘执行侧车。',
+      license: 'GPL-3.0',
+      stars: '50k+',
+      url: 'https://github.com/freqtrade/freqtrade',
+      note: '信号 Webhook / REST 对接最顺；注意 GPL 合规。',
+    },
+    {
+      name: 'Jesse',
+      fit: 'high', fitLabel: '优先集成',
+      desc: '现代 Python 加密框架，回测严谨（防未来函数），API 清晰。适合研究级策略验证，再把优胜逻辑迁入本平台策略库。',
+      license: 'MIT',
+      stars: '7.6k+',
+      url: 'https://github.com/jesse-ai/jesse',
+      note: 'MIT 更易做适配层；适合「研究 → 本平台盯盘」。',
+    },
+    {
+      name: 'vectorbt',
+      fit: 'high', fitLabel: '研究加速',
+      desc: '向量化回测，参数扫描极快。可与本平台经典回测互补：vectorbt 扫参，本平台做可解释分段（牛熊）报告。',
+      license: '开源 / PRO',
+      stars: '6k+',
+      url: 'https://github.com/polakowo/vectorbt',
+      note: '不负责实盘，专注研究流水线。',
+    },
+    {
+      name: 'Hummingbot',
+      fit: 'mid', fitLabel: '场景互补',
+      desc: '做市与跨所套利（CEX+DEX）。与当前「提醒型盯盘」定位不同，若未来做流动性策略可单独部署。',
+      license: 'Apache-2.0',
+      stars: '18k+',
+      url: 'https://github.com/hummingbot/hummingbot',
+      note: '不建议与现有告警引擎强耦合。',
+    },
+    {
+      name: 'OctoBot',
+      fit: 'mid', fitLabel: '可选',
+      desc: '自带 Web UI 与预置策略，上手快。可作独立 bot，与本平台并行使用。',
+      license: 'GPL-3.0',
+      stars: '5k+',
+      url: 'https://github.com/Drakkar-Software/OctoBot',
+      note: '适合「一键 bot」，深度集成价值一般。',
+    },
+    {
+      name: 'NautilusTrader',
+      fit: 'low', fitLabel: '长期可选',
+      desc: 'Rust 核心 + Python API，事件驱动、低延迟。适合未来高频 / 机构级执行层。',
+      license: 'LGPL-3.0',
+      stars: '6k+',
+      url: 'https://github.com/nautechsystems/nautilus_trader',
+      note: '学习曲线陡，短期不优先。',
+    },
+    {
+      name: 'Lean (QuantConnect)',
+      fit: 'low', fitLabel: '长期可选',
+      desc: '多资产机构级引擎（股/期/期权/加密）。云端或本地；与本平台加密永续垂直场景重叠有限。',
+      license: 'Apache-2.0',
+      stars: '18k+',
+      url: 'https://github.com/QuantConnect/Lean',
+      note: '多资产研究时可参考，非加密 bot 首选。',
+    },
+    {
+      name: 'Backtrader',
+      fit: 'mid', fitLabel: '经典参考',
+      desc: '经典 Python 回测库，文档与社区策略多。本平台 classic 回测已覆盖核心需求，可作对照实现。',
+      license: 'GPL-3.0',
+      stars: '15k+',
+      url: 'https://github.com/mementum/backtrader',
+      note: '上游维护偏缓，适合学习而非新集成。',
+    },
+  ];
+
+  function renderFrameworksPage() {
+    const grid = $('frameworkGrid');
+    if (!grid || grid.dataset.ready === '1') return;
+    grid.innerHTML = FRAMEWORKS.map((f) => `
+      <a class="tool-card" href="${escapeHtml(f.url)}" target="_blank" rel="noopener noreferrer">
+        <span class="tc-name">${escapeHtml(f.name)}<span class="fw-fit ${escapeHtml(f.fit)}">${escapeHtml(f.fitLabel)}</span></span>
+        <span class="tc-desc">${escapeHtml(f.desc)}</span>
+        <span class="tc-meta">${escapeHtml(f.license)} · ★ ${escapeHtml(f.stars)}</span>
+        <span class="tc-tag">${escapeHtml(f.note)}</span>
+      </a>
+    `).join('');
+    grid.dataset.ready = '1';
+  }
+
+  const WEB3_LINKS_BROWSE = [
+    { name: 'Etherscan', desc: '以太坊区块浏览器：交易、合约、Gas、内部转账。', url: 'https://etherscan.io/', tag: '浏览器' },
+    { name: 'BscScan', desc: 'BNB Chain 浏览器。', url: 'https://bscscan.com/', tag: '浏览器' },
+    { name: 'Arbiscan', desc: 'Arbitrum 浏览器。', url: 'https://arbiscan.io/', tag: 'L2' },
+    { name: 'Basescan', desc: 'Base 浏览器。', url: 'https://basescan.org/', tag: 'L2' },
+    { name: 'DexScreener', desc: '多链 DEX K 线、流动性与新池监控。', url: 'https://dexscreener.com/', tag: '行情' },
+    { name: 'Birdeye', desc: 'Solana / 多链代币分析与行情。', url: 'https://birdeye.so/', tag: '行情' },
+    { name: 'CoinGecko', desc: '市值、价格、合约地址与生态数据。', url: 'https://www.coingecko.com/', tag: '数据' },
+    { name: 'TradingView', desc: '图表与社区脚本（本站也有 TV 备选）。', url: 'https://www.tradingview.com/', tag: '图表' },
+  ];
+
+  const WEB3_LINKS_DEFI = [
+    { name: 'DefiLlama', desc: 'TVL、稳定币、收益与跨链桥数据总览。', url: 'https://defillama.com/', tag: 'DeFi' },
+    { name: 'DeBank', desc: '多链钱包资产与协议仓位一览。', url: 'https://debank.com/', tag: '组合' },
+    { name: 'Zapper', desc: 'DeFi 仓位聚合与操作入口。', url: 'https://zapper.xyz/', tag: '组合' },
+    { name: 'Revoke.cash', desc: '检查并撤销危险合约授权。', url: 'https://revoke.cash/', tag: '安全' },
+    { name: 'Token Approval Checker', desc: 'Etherscan 授权检查器。', url: 'https://etherscan.io/tokenapprovalchecker', tag: '安全' },
+    { name: 'Chainlist', desc: '一键添加 RPC / 链配置到钱包。', url: 'https://chainlist.org/', tag: 'RPC' },
+    { name: 'L2Beat', desc: 'L2 风险、TVL 与阶段评级。', url: 'https://l2beat.com/', tag: 'L2' },
+    { name: 'Dune', desc: '链上 SQL 分析与社区看板。', url: 'https://dune.com/', tag: '分析' },
+    { name: 'Tenderly', desc: '交易模拟、调试与告警。', url: 'https://dashboard.tenderly.co/', tag: '开发' },
+    { name: 'ABI Decoder', desc: '在线解析 calldata / 事件日志。', url: 'https://www.ethabi.io/', tag: 'ABI' },
+  ];
+
+  const DEV_LINKS = [
+    { name: 'JSONCrack', desc: 'JSON 可视化树图，调试嵌套结构。', url: 'https://jsoncrack.com/', tag: 'JSON' },
+    { name: 'JWT.io', desc: 'JWT 解码与校验。', url: 'https://jwt.io/', tag: 'Auth' },
+    { name: 'regex101', desc: '正则调试，多语言引擎。', url: 'https://regex101.com/', tag: '正则' },
+    { name: 'crontab.guru', desc: 'Cron 表达式可读化。', url: 'https://crontab.guru/', tag: 'Cron' },
+    { name: 'Can I use', desc: '浏览器 API / CSS 兼容性。', url: 'https://caniuse.com/', tag: '前端' },
+    { name: 'Excalidraw', desc: '手绘风架构图 / 流程图。', url: 'https://excalidraw.com/', tag: '图' },
+    { name: 'Carbon', desc: '代码截图分享。', url: 'https://carbon.now.sh/', tag: '分享' },
+    { name: 'Hoppscotch', desc: '开源 API 客户端（Postman 平替）。', url: 'https://hoppscotch.io/', tag: 'API' },
+    { name: 'Webhook.site', desc: '临时 Webhook 接收与调试。', url: 'https://webhook.site/', tag: 'Webhook' },
+    { name: 'RequestBin', desc: 'HTTP 请求抓取查看。', url: 'https://pipedream.com/requestbin', tag: 'HTTP' },
+    { name: 'Diffchecker', desc: '文本 / JSON diff。', url: 'https://www.diffchecker.com/', tag: 'Diff' },
+    { name: 'CyberChef', desc: '编码、哈希、加密万能工作台。', url: 'https://gchq.github.io/CyberChef/', tag: '编解码' },
+  ];
+
+  let web3Inited = false;
+  let devInited = false;
+
+  function syncEthUnits(from) {
+    const WEI_PER_ETH = 10n ** 18n;
+    const WEI_PER_GWEI = 10n ** 9n;
+    try {
+      let wei;
+      if (from === 'ether') {
+        const v = ($('w3Ether').value || '').trim();
+        if (!v) return;
+        const [i, f = ''] = v.split('.');
+        const frac = (f + '0'.repeat(18)).slice(0, 18);
+        wei = BigInt(i || '0') * WEI_PER_ETH + BigInt(frac || '0');
+      } else if (from === 'gwei') {
+        const v = ($('w3Gwei').value || '').trim();
+        if (!v) return;
+        const [i, f = ''] = v.split('.');
+        const frac = (f + '0'.repeat(9)).slice(0, 9);
+        wei = BigInt(i || '0') * WEI_PER_GWEI + BigInt(frac || '0');
+      } else {
+        const v = ($('w3Wei').value || '').trim().replace(/^0x/i, '');
+        if (!v) return;
+        wei = v.startsWith('0') && /[a-f]/i.test(v) ? BigInt('0x' + v) : BigInt(v);
+      }
+      if (from !== 'wei') $('w3Wei').value = wei.toString();
+      if (from !== 'gwei') {
+        const g = wei / WEI_PER_GWEI;
+        const gr = wei % WEI_PER_GWEI;
+        $('w3Gwei').value = gr === 0n ? g.toString() : `${g}.${gr.toString().padStart(9, '0').replace(/0+$/, '')}`;
+      }
+      if (from !== 'ether') {
+        const e = wei / WEI_PER_ETH;
+        const er = wei % WEI_PER_ETH;
+        $('w3Ether').value = er === 0n ? e.toString() : `${e}.${er.toString().padStart(18, '0').replace(/0+$/, '')}`;
+      }
+    } catch (e) {
+      toast('单位换算失败', String(e.message || e), 'short');
+    }
+  }
+
+  function initWeb3Tools() {
+    renderLinkGrid('web3LinksBrowse', WEB3_LINKS_BROWSE);
+    renderLinkGrid('web3LinksDefi', WEB3_LINKS_DEFI);
+    if (web3Inited) return;
+    web3Inited = true;
+    syncEthUnits('ether');
+    document.querySelectorAll('[data-w3-sync]').forEach((btn) => {
+      btn.addEventListener('click', () => syncEthUnits(btn.dataset.w3Sync));
+    });
+    ['w3Ether', 'w3Gwei', 'w3Wei'].forEach((id) => {
+      $(id)?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const map = { w3Ether: 'ether', w3Gwei: 'gwei', w3Wei: 'wei' };
+          syncEthUnits(map[id]);
+        }
+      });
+    });
+    $('btnDecToHex')?.addEventListener('click', () => {
+      try {
+        const n = BigInt(($('w3Dec').value || '').trim());
+        const h = '0x' + n.toString(16);
+        $('w3Hex').value = h;
+        $('w3HexOut').textContent = h;
+      } catch (e) {
+        $('w3HexOut').textContent = '无效十进制';
+      }
+    });
+    $('btnHexToDec')?.addEventListener('click', () => {
+      try {
+        let v = ($('w3Hex').value || '').trim();
+        if (!v.startsWith('0x') && !v.startsWith('0X')) v = '0x' + v;
+        const n = BigInt(v);
+        $('w3Dec').value = n.toString();
+        $('w3HexOut').textContent = n.toString();
+      } catch (e) {
+        $('w3HexOut').textContent = '无效十六进制';
+      }
+    });
+    $('btnCheckAddr')?.addEventListener('click', () => {
+      const a = ($('w3Addr').value || '').trim();
+      const out = $('w3AddrOut');
+      if (!/^0x[a-fA-F0-9]{40}$/.test(a)) {
+        out.style.color = 'var(--red)';
+        out.textContent = '格式无效：需要 0x + 40 位十六进制';
+        return;
+      }
+      const lower = a.toLowerCase();
+      const mixed = a !== lower && a !== a.toUpperCase();
+      out.style.color = 'var(--green)';
+      out.textContent = mixed
+        ? `长度与字符合法（含大小写，可能为 EIP-55 校验和地址）：${lower}`
+        : `长度与字符合法：${lower}（提示：完整 EIP-55 校验需 keccak，可用 Etherscan 二次确认）`;
+    });
+    $('btnTextToHex')?.addEventListener('click', () => {
+      const t = $('w3Text').value || '';
+      const bytes = new TextEncoder().encode(t);
+      const hex = '0x' + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+      $('w3TextHex').value = hex;
+      $('w3TextOut').textContent = hex;
+    });
+    $('btnHexToText')?.addEventListener('click', () => {
+      try {
+        let h = ($('w3TextHex').value || '').trim().replace(/^0x/i, '');
+        if (h.length % 2) throw new Error('奇数长度');
+        const bytes = new Uint8Array(h.match(/.{1,2}/g).map((x) => parseInt(x, 16)));
+        const t = new TextDecoder().decode(bytes);
+        $('w3Text').value = t;
+        $('w3TextOut').textContent = t;
+      } catch (e) {
+        $('w3TextOut').textContent = '解码失败';
+      }
+    });
+  }
+
+  function initDevTools() {
+    renderLinkGrid('devLinksGrid', DEV_LINKS);
+    if (devInited) return;
+    devInited = true;
+    $('btnJsonPretty')?.addEventListener('click', () => {
+      try {
+        const obj = JSON.parse($('devJsonIn').value);
+        $('devJsonIn').value = JSON.stringify(obj, null, 2);
+        $('devJsonStatus').style.color = 'var(--green)';
+        $('devJsonStatus').textContent = '格式化成功';
+      } catch (e) {
+        $('devJsonStatus').style.color = 'var(--red)';
+        $('devJsonStatus').textContent = `JSON 错误：${e.message}`;
+      }
+    });
+    $('btnJsonMin')?.addEventListener('click', () => {
+      try {
+        const obj = JSON.parse($('devJsonIn').value);
+        $('devJsonIn').value = JSON.stringify(obj);
+        $('devJsonStatus').style.color = 'var(--green)';
+        $('devJsonStatus').textContent = '已压缩';
+      } catch (e) {
+        $('devJsonStatus').style.color = 'var(--red)';
+        $('devJsonStatus').textContent = `JSON 错误：${e.message}`;
+      }
+    });
+    $('btnJsonCopy')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText($('devJsonIn').value || '');
+        $('devJsonStatus').textContent = '已复制';
+      } catch (_) {
+        $('devJsonStatus').textContent = '复制失败';
+      }
+    });
+    $('btnB64Enc')?.addEventListener('click', () => {
+      try {
+        $('devB64Out').textContent = btoa(unescape(encodeURIComponent($('devB64In').value || '')));
+      } catch (e) {
+        $('devB64Out').textContent = '编码失败';
+      }
+    });
+    $('btnB64Dec')?.addEventListener('click', () => {
+      try {
+        const t = decodeURIComponent(escape(atob(($('devB64In').value || '').trim())));
+        $('devB64Out').textContent = t;
+        $('devB64In').value = t;
+      } catch (e) {
+        $('devB64Out').textContent = '解码失败';
+      }
+    });
+    $('btnUrlEnc')?.addEventListener('click', () => {
+      $('devUrlOut').textContent = encodeURIComponent($('devUrlIn').value || '');
+    });
+    $('btnUrlDec')?.addEventListener('click', () => {
+      try {
+        const t = decodeURIComponent($('devUrlIn').value || '');
+        $('devUrlOut').textContent = t;
+        $('devUrlIn').value = t;
+      } catch (e) {
+        $('devUrlOut').textContent = '解码失败';
+      }
+    });
+    $('btnTsNow')?.addEventListener('click', () => {
+      const ms = Date.now();
+      $('devTs').value = String(Math.floor(ms / 1000));
+      $('devDate').value = new Date(ms).toISOString();
+      $('devTsOut').textContent = `当前：${ms} ms · ${new Date(ms).toLocaleString()}`;
+    });
+    $('btnTsToDate')?.addEventListener('click', () => {
+      let n = Number(($('devTs').value || '').trim());
+      if (!Number.isFinite(n)) {
+        $('devTsOut').textContent = '无效时间戳';
+        return;
+      }
+      if (n < 1e12) n *= 1000;
+      const d = new Date(n);
+      $('devDate').value = d.toISOString();
+      $('devTsOut').textContent = `${d.toISOString()} · 本地 ${d.toLocaleString()}`;
+    });
+    $('btnDateToTs')?.addEventListener('click', () => {
+      const d = new Date(($('devDate').value || '').trim());
+      if (Number.isNaN(d.getTime())) {
+        $('devTsOut').textContent = '无效日期';
+        return;
+      }
+      $('devTs').value = String(Math.floor(d.getTime() / 1000));
+      $('devTsOut').textContent = `${d.getTime()} ms · ${Math.floor(d.getTime() / 1000)} s`;
+    });
+    $('btnUuid')?.addEventListener('click', () => {
+      const id = crypto.randomUUID();
+      $('devUuidOut').textContent = id;
+    });
+    $('btnUuidCopy')?.addEventListener('click', async () => {
+      const v = $('devUuidOut').textContent || '';
+      if (!v) return;
+      try {
+        await navigator.clipboard.writeText(v);
+        toast('已复制', v, 'short');
+      } catch (_) {}
+    });
   }
 
   async function loadStrategiesPage() {
@@ -2972,7 +3633,7 @@
 
     let savedApp = null;
     try { savedApp = localStorage.getItem('monitor.appView'); } catch (_) {}
-    if (savedApp && ['monitor', 'strategies', 'backtest', 'cycle', 'auto'].includes(savedApp) && savedApp !== 'monitor') {
+    if (savedApp && ['monitor', 'strategies', 'backtest', 'cycle', 'frameworks', 'web3', 'devtools', 'auto'].includes(savedApp) && savedApp !== 'monitor') {
       switchAppView(savedApp);
     }
 
