@@ -265,11 +265,14 @@ class MonitorHub:
     def worker_health(self) -> list[dict[str, Any]]:
         """供 /api/monitor/daemon 诊断：每个 worker 是否存活、最近收盘评估。"""
         rows: list[dict[str, Any]] = []
-        now = datetime.now(timezone.utc)
+        # candle.timestamp 为 naive UTC，统一用 naive 比较
+        now = datetime.utcnow()
         for w in sorted(self._workers.values(), key=lambda x: str(x.key)):
             task_ok = bool(w.task and not w.task.done())
             mark_ok = bool(w.mark_task and not w.mark_task.done())
             last_c = w.last_closed_at
+            if last_c is not None and last_c.tzinfo is not None:
+                last_c = last_c.replace(tzinfo=None)
             rows.append(
                 {
                     "key": str(w.key),
@@ -672,7 +675,7 @@ class MonitorHub:
                 market=key.market,
                 stop_event=worker.stop,
             ):
-                worker.last_tick_at = datetime.now(timezone.utc)
+                worker.last_tick_at = datetime.utcnow()
                 self._upsert(worker, candle)
                 await self._broadcast(
                     worker,
@@ -830,7 +833,7 @@ class MonitorHub:
                         "规则命中 %s n=%d rules=%s",
                         worker.key,
                         len(events),
-                        [e.get("rule") for e in events[:5]],
+                        [getattr(e, "rule", str(e)) for e in events[:5]],
                     )
                 for ev in events:
                     ra = rule_event_to_alert(

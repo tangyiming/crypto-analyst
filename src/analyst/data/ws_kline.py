@@ -13,14 +13,24 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from websockets.asyncio.client import connect
 
 from analyst.data.fetcher import Candle
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 SPOT_WS = "wss://stream.binance.com:9443/ws"
 FUTURES_WS = "wss://fstream.binance.com/ws"
+SPOT_REST_KLINES = "https://api.binance.com/api/v3/klines"
+FUTURES_REST_KLINES = "https://fapi.binance.com/fapi/v1/klines"
+FUTURES_REST_PREMIUM = "https://fapi.binance.com/fapi/v1/premiumIndex"
+
+# WS 连上但静默超过该秒数 → 判定该端点不出数据，切 REST 轮询兜底
+WS_NO_DATA_TIMEOUT = 45.0
+# REST 兜底持续时间，到点后回头再试 WS
+REST_FALLBACK_SECONDS = 300.0
+REST_POLL_INTERVAL = 2.5
 
 # 币安 U 本位 K 线周期（官方全部）
 BINANCE_FUTURES_INTERVALS: list[str] = [
@@ -106,6 +116,63 @@ def _parse_mark_price_msg(payload: dict) -> dict[str, Any] | None:
     }
 
 
+def _rest_fetch_latest_klines(
+    symbol: str, timeframe: str, *, market: str, limit: int = 2
+) -> list[tuple[Candle, bool]]:
+    """REST 拉最近 K 线。倒数第二根视为已收盘，最后一根为进行中。"""
+    base = FUTURES_REST_KLINES if market == "futures" else SPOT_REST_KLINES
+    fsym = symbol.split(":")[0].replace("/", "").upper()
+    r = httpx.get(
+        base,
+        params={"symbol": fsym, "interval": timeframe, "limit": limit},
+        timeout=10.0,
+    )
+    r.raise_for_status()
+    rows = r.json()
+    out: list[tuple[Candle, bool]] = []
+    for i, k in enumerate(rows):
+        candle = Candle(
+            timestamp=datetime.fromtimestamp(int(k[0]) / 1000, tz=timezone.utc).replace(
+                tzinfo=None
+            ),
+            open=float(k[1]),
+            high=float(k[2]),
+            low=float(k[3]),
+            close=float(k[4]),
+            volume=float(k[5]),
+        )
+        out.append((candle, i < len(rows) - 1))
+    return out
+
+
+async def _rest_poll_klines(
+    symbol: str,
+    timeframe: str,
+    *,
+    market: str,
+    stop_event: asyncio.Event,
+    duration: float,
+) -> AsyncIterator[tuple[Candle, bool]]:
+    """WS 不出数据时的 REST 轮询兜底：进行中 K 实时刷新，收盘只推一次。"""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + duration
+    last_closed_ts: datetime | None = None
+    while not stop_event.is_set() and loop.time() < deadline:
+        try:
+            rows = await asyncio.to_thread(
+                _rest_fetch_latest_klines, symbol, timeframe, market=market, limit=3
+            )
+            for candle, is_closed in rows:
+                if is_closed:
+                    if last_closed_ts is not None and candle.timestamp <= last_closed_ts:
+                        continue
+                    last_closed_ts = candle.timestamp
+                yield candle, is_closed
+        except Exception as e:
+            logger.warning("REST kline poll failed %s %s: %s", symbol, timeframe, e)
+        await asyncio.sleep(REST_POLL_INTERVAL)
+
+
 async def stream_klines(
     symbol: str,
     timeframe: str,
@@ -116,6 +183,9 @@ async def stream_klines(
 ) -> AsyncIterator[tuple[Candle, bool]]:
     """持续订阅 K 线；断线自动重连。
 
+    WS 连上但长时间（WS_NO_DATA_TIMEOUT）收不到 K 线时（网络层静默丢流），
+    自动降级为 REST 轮询一段时间，再回头重试 WS。
+
     Yields:
         (candle, is_closed) —— is_closed=True 表示该根已收盘，可做策略评估。
     """
@@ -124,19 +194,28 @@ async def stream_klines(
     backoff = 1.0
 
     while not stop_event.is_set():
+        got_data = False
         try:
             logger.info("WS connect %s", url)
             async with connect(url, ping_interval=20, ping_timeout=60) as ws:
                 backoff = 1.0
+                silent_for = 0.0
                 while not stop_event.is_set():
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                     except TimeoutError:
+                        silent_for += 1.0
+                        if not got_data and silent_for >= WS_NO_DATA_TIMEOUT:
+                            raise _WsSilent(
+                                f"WS 静默 {silent_for:.0f}s 无 K 线：{url}"
+                            )
                         continue
                     payload = json.loads(raw)
                     parsed = _parse_kline_msg(payload)
                     if parsed is None:
                         continue
+                    silent_for = 0.0
+                    got_data = True
                     candle, is_closed = parsed
                     if on_kline is not None:
                         maybe = on_kline(candle, is_closed)
@@ -145,6 +224,22 @@ async def stream_klines(
                     yield candle, is_closed
         except asyncio.CancelledError:
             raise
+        except _WsSilent as e:
+            logger.warning("%s — 切 REST 轮询 %.0fs", e, REST_FALLBACK_SECONDS)
+            async for item in _rest_poll_klines(
+                symbol,
+                timeframe,
+                market=market,
+                stop_event=stop_event,
+                duration=REST_FALLBACK_SECONDS,
+            ):
+                candle, is_closed = item
+                if on_kline is not None:
+                    maybe = on_kline(candle, is_closed)
+                    if asyncio.iscoroutine(maybe):
+                        await maybe
+                yield candle, is_closed
+            logger.info("REST 兜底结束，重试 WS %s", url)
         except Exception as e:
             if stop_event.is_set():
                 break
@@ -153,34 +248,81 @@ async def stream_klines(
             backoff = min(backoff * 2, 30.0)
 
 
+class _WsSilent(Exception):
+    """WS 已连接但迟迟无业务数据。"""
+
+
+def _rest_fetch_premium(symbol: str) -> dict[str, Any] | None:
+    fsym = symbol.split(":")[0].replace("/", "").upper()
+    r = httpx.get(FUTURES_REST_PREMIUM, params={"symbol": fsym}, timeout=10.0)
+    r.raise_for_status()
+    data = r.json()
+    mark = float(data["markPrice"])
+    index = float(data.get("indexPrice") or 0) or None
+    premium_pct = (mark - index) / index * 100.0 if index else None
+    return {
+        "mark_price": mark,
+        "index_price": index,
+        "funding_rate": float(data.get("lastFundingRate") or 0),
+        "estimated_settle_price": (
+            float(data["estimatedSettlePrice"]) if data.get("estimatedSettlePrice") else None
+        ),
+        "premium_pct": premium_pct,
+        "next_funding_time": int(data["nextFundingTime"]) if data.get("nextFundingTime") else None,
+        "event_time": int(data["time"]) if data.get("time") else None,
+    }
+
+
 async def stream_mark_price(
     symbol: str,
     *,
     speed: str = "1s",
     stop_event: asyncio.Event | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """订阅 U 本位标记价格流。"""
+    """订阅 U 本位标记价格流；WS 静默时降级 REST premiumIndex 轮询。"""
     url = mark_price_url(symbol, speed=speed)
     stop_event = stop_event or asyncio.Event()
     backoff = 1.0
 
     while not stop_event.is_set():
+        got_data = False
         try:
             logger.info("WS connect %s", url)
             async with connect(url, ping_interval=20, ping_timeout=60) as ws:
                 backoff = 1.0
+                silent_for = 0.0
                 while not stop_event.is_set():
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                     except TimeoutError:
+                        silent_for += 1.0
+                        if not got_data and silent_for >= WS_NO_DATA_TIMEOUT:
+                            raise _WsSilent(
+                                f"markPrice WS 静默 {silent_for:.0f}s：{url}"
+                            )
                         continue
                     payload = json.loads(raw)
                     parsed = _parse_mark_price_msg(payload)
                     if parsed is None:
                         continue
+                    silent_for = 0.0
+                    got_data = True
                     yield parsed
         except asyncio.CancelledError:
             raise
+        except _WsSilent as e:
+            logger.warning("%s — 切 REST 轮询 %.0fs", e, REST_FALLBACK_SECONDS)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + REST_FALLBACK_SECONDS
+            while not stop_event.is_set() and loop.time() < deadline:
+                try:
+                    prem = await asyncio.to_thread(_rest_fetch_premium, symbol)
+                    if prem:
+                        yield prem
+                except Exception as pe:
+                    logger.warning("REST premium poll failed %s: %s", symbol, pe)
+                await asyncio.sleep(3.0)
+            logger.info("REST 兜底结束，重试 markPrice WS %s", url)
         except Exception as e:
             if stop_event.is_set():
                 break
