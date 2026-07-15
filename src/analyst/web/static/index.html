@@ -100,6 +100,45 @@
       flex-shrink: 0;
       padding-left: 8px;
     }
+    .paper-live {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-right: 8px;
+      padding: 3px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255,255,255,.03);
+      cursor: pointer;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      white-space: nowrap;
+      max-width: min(420px, 38vw);
+      overflow: hidden;
+    }
+    .paper-live:hover { border-color: var(--muted); }
+    .paper-live .pl-k { color: var(--muted); margin-right: 3px; }
+    .paper-live .pl-v { font-weight: 600; }
+    .paper-live.has-pos { border-color: rgba(14,203,129,.35); }
+    .paper-pos-row {
+      display: grid;
+      grid-template-columns: 88px 70px 36px 1fr 72px 72px;
+      gap: 6px;
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      cursor: pointer;
+    }
+    .paper-pos-row:hover { background: rgba(255,255,255,.03); }
+    .paper-pos-head {
+      color: var(--muted);
+      font-weight: 500;
+      position: sticky;
+      top: 0;
+      background: var(--panel, #0b0e11);
+      z-index: 1;
+    }
     .app-view {
       flex: 1;
       min-height: 0;
@@ -979,9 +1018,14 @@
       <button type="button" class="app-nav-link" data-app="frameworks">开源框架</button>
       <button type="button" class="app-nav-link" data-app="web3">Web3</button>
       <button type="button" class="app-nav-link" data-app="devtools">开发工具</button>
-      <button type="button" class="app-nav-link soon" data-app="auto">自动交易<span class="tag">Soon</span></button>
+      <button type="button" class="app-nav-link" data-app="auto">自动交易<span class="tag">纸面</span></button>
     </div>
     <div class="app-nav-status">
+      <button type="button" class="paper-live" id="paperLiveStrip" title="打开纸面账本" aria-label="纸面实时盈亏">
+        <span><span class="pl-k">纸面</span><span class="pl-v" id="plEquity">10.00</span></span>
+        <span><span class="pl-k">浮盈</span><span class="pl-v" id="plUpnl">+0.00</span></span>
+        <span><span class="pl-k">仓</span><span class="pl-v" id="plPos">0</span></span>
+      </button>
       <span id="connBadge" class="badge">…</span>
       <span id="tgBadge" class="badge">TG</span>
       <span id="daemonBadge" class="badge" title="关网页也继续推 TG（需 MONITOR_ALWAYS_ON）">常驻</span>
@@ -1055,6 +1099,7 @@
       <footer class="dock" aria-label="告警与历史">
         <div class="dock-tabs">
           <button type="button" class="dock-tab active" data-dock="alerts">告警记录 <span id="alertCount"></span></button>
+          <button type="button" class="dock-tab" data-dock="paper">纸面仓位 <span id="paperDockCount"></span></button>
           <button type="button" class="dock-tab" data-dock="history">历史分析 <span id="histCount"></span></button>
           <label class="dock-filter shrink-0 flex items-center gap-1 cursor-pointer select-none" style="color:var(--muted);font-size:11px;margin-left:8px;">
             <input type="checkbox" id="dockFilterSym" checked />
@@ -1063,6 +1108,10 @@
           <span class="dock-meta" id="dockHint">点告警 → 直连图标记 · 点历史 → 右侧回看</span>
         </div>
         <div class="dock-pane" id="paneAlerts"></div>
+        <div class="dock-pane hidden" id="panePaper">
+          <div id="paperDockSummary" class="muted" style="padding:8px 10px;font-size:11px;border-bottom:1px solid var(--line);">加载中…</div>
+          <div id="paperDockList"></div>
+        </div>
         <div class="dock-pane hidden" id="paneHistory"></div>
       </footer>
     </div>
@@ -1421,19 +1470,34 @@
   <div id="viewAuto" class="app-view hidden">
     <div class="app-page">
       <div class="app-page-head">
-        <h1>自动交易</h1>
-        <p>规划中：在回测验证与纸面交易之后，才接入交易所 API 执行。当前版本<strong>只提醒、不下单</strong>。</p>
+        <h1>纸面模拟炒币</h1>
+        <p>跟单 <strong>ai_plan / double_line / cycle_switch</strong>；有止盈止损的仓按标记价平，周期仓按信号平。<strong>非真金、不调交易所 API</strong>。顶栏与盯盘底部「纸面仓位」约 2 秒刷新浮盈。</p>
       </div>
+      <div class="cycle-stats" id="paperStats" style="margin-bottom:16px;">
+        <div class="cycle-stat"><span class="k">权益</span><span class="v" id="paperEquity">—</span></div>
+        <div class="cycle-stat"><span class="k">收益率</span><span class="v" id="paperReturn">—</span></div>
+        <div class="cycle-stat"><span class="k">已实现</span><span class="v" id="paperPnl">—</span></div>
+        <div class="cycle-stat"><span class="k">浮动盈亏</span><span class="v" id="paperUpnl">—</span></div>
+        <div class="cycle-stat"><span class="k">胜率</span><span class="v" id="paperWinRate">—</span></div>
+        <div class="cycle-stat"><span class="k">持仓/成交</span><span class="v" id="paperCounts">—</span></div>
+        <div class="cycle-stat"><span class="k">开关</span><span class="v" id="paperEnabled">—</span></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">
+        <button type="button" class="btn-analyze" id="paperRefreshBtn">刷新</button>
+        <button type="button" class="btn-analyze" id="paperResetBtn" style="background:rgba(246,70,93,.14);color:var(--red);">重置为 10U</button>
+        <span class="muted" style="font-size:11px;" id="paperUpdated">—</span>
+        <span class="muted" style="font-size:11px;" id="paperSources">—</span>
+      </div>
+      <h2 style="font-size:14px;margin:0 0 8px;">按策略盈亏</h2>
+      <div id="paperByStrategy" class="muted" style="font-size:12px;margin-bottom:18px;">加载中…</div>
+      <h2 style="font-size:14px;margin:0 0 8px;">当前持仓</h2>
+      <div id="paperPositions" class="muted" style="font-size:12px;margin-bottom:18px;">加载中…</div>
+      <h2 style="font-size:14px;margin:0 0 8px;">最近成交</h2>
+      <div id="paperTrades" class="muted" style="font-size:12px;margin-bottom:18px;">加载中…</div>
       <ul class="roadmap">
-        <li>✅ 实时盯盘 + Telegram 规则告警</li>
-        <li>✅ 双线反转 / cycle_switch 策略评估</li>
-        <li>✅ 经典组合策略 Web 回测</li>
-        <li>✅ Wolfy 四年周期位置与转折点倒计时</li>
-        <li>✅ Web3 / 开发工具 / 开源框架导航</li>
-        <li class="muted">⏳ 纸面交易账本（模拟跟单记录）</li>
+        <li>✅ 多策略纸面账本（ai_plan · double_line · cycle_switch · 10U 起）</li>
         <li class="muted">⏳ Freqtrade / Jesse dry-run 信号对接（见「开源框架」）</li>
-        <li class="muted">⏳ 交易所 API 下单（需独立风控模块）</li>
-        <li class="muted">⏳ 仓位管理与 Kelly 仓位建议</li>
+        <li class="muted">⏳ 交易所 API 真下单（需独立风控）</li>
       </ul>
     </div>
   </div>
@@ -1712,12 +1776,37 @@
 
   let activeAppView = 'monitor';
   let strategiesCache = null;
+  let paperRefreshTimer = null;
+  let paperRefreshMs = 0;
+  let paperLastStatus = null;
+  let paperFetchBusy = false;
 
   function stopCyclePageRefresh() {
     if (cycleRefreshTimer) {
       clearInterval(cycleRefreshTimer);
       cycleRefreshTimer = null;
     }
+  }
+
+  function schedulePaperRefresh(ms) {
+    if (paperRefreshTimer && paperRefreshMs === ms) return;
+    if (paperRefreshTimer) clearInterval(paperRefreshTimer);
+    paperRefreshMs = ms;
+    paperRefreshTimer = setInterval(() => { refreshPaperLive(); }, ms);
+  }
+
+  function startPaperLivePoll() {
+    refreshPaperLive();
+    schedulePaperRefresh(2000);
+  }
+
+  function startPaperPageRefresh() {
+    // 自动交易页：沿用全局纸面轮询，并立刻刷一次完整页
+    refreshPaperLive({ fullPage: true });
+  }
+
+  function stopPaperPageRefresh() {
+    // 离开自动交易页不停止全局轮询（顶栏/仓位 dock 仍要实时）
   }
 
   function startCyclePageRefresh() {
@@ -1744,6 +1833,7 @@
     };
     if (!views[name]) return;
     if (name !== 'cycle') stopCyclePageRefresh();
+    if (name !== 'auto') stopPaperPageRefresh();
     activeAppView = name;
     try { localStorage.setItem('monitor.appView', name); } catch (_) {}
     Object.entries(views).forEach(([k, id]) => {
@@ -1757,6 +1847,7 @@
     if (name === 'frameworks') renderFrameworksPage();
     if (name === 'web3') initWeb3Tools();
     if (name === 'devtools') initDevTools();
+    if (name === 'auto') startPaperPageRefresh();
     if (name === 'monitor') {
       requestAnimationFrame(() => {
         if (chartMode === 'native') ensureChart();
@@ -1776,6 +1867,223 @@
         ${t.tag ? `<span class="tc-tag">${escapeHtml(t.tag)}</span>` : ''}
       </a>
     `).join('');
+  }
+
+  function fmtPnl(n) {
+    const v = Number(n || 0);
+    return (v >= 0 ? '+' : '') + v.toFixed(4);
+  }
+
+  function renderPaperLiveStrip(st) {
+    const eq = Number(st.equity || 0);
+    const up = Number(st.unrealized_pnl || 0);
+    const n = Number(st.open_positions || 0);
+    if ($('plEquity')) $('plEquity').textContent = eq.toFixed(2) + 'U';
+    if ($('plUpnl')) {
+      $('plUpnl').textContent = fmtPnl(up);
+      $('plUpnl').style.color = up >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    if ($('plPos')) $('plPos').textContent = String(n);
+    $('paperLiveStrip')?.classList.toggle('has-pos', n > 0);
+    const tag = document.querySelector('.app-nav-link[data-app="auto"] .tag');
+    if (tag) tag.textContent = n > 0 ? `${n}仓` : '纸面';
+    if ($('paperDockCount')) {
+      $('paperDockCount').textContent = n > 0 ? String(n) : '';
+    }
+  }
+
+  function renderPaperDock(st) {
+    const sum = $('paperDockSummary');
+    const list = $('paperDockList');
+    if (!sum || !list) return;
+    const eq = Number(st.equity || 0);
+    const up = Number(st.unrealized_pnl || 0);
+    const rp = Number(st.realized_pnl || 0);
+    const src = (st.sources || []).join('/');
+    sum.innerHTML = `权益 <b style="color:var(--text)">${eq.toFixed(4)}U</b>`
+      + ` · 浮盈 <b style="color:${up >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(up)}</b>`
+      + ` · 已实现 <b style="color:${rp >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(rp)}</b>`
+      + ` · ${escapeHtml(src || '—')}`;
+
+    const rows = st.positions || [];
+    if (!rows.length) {
+      list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无纸面持仓。ai_plan / 双线 / cycle_switch 开仓后会实时出现在这里。</div>';
+      return;
+    }
+    const head = `<div class="paper-pos-row paper-pos-head"><span>策略</span><span>品种</span><span>向</span><span>入场→标记</span><span>止损/盈</span><span>浮盈</span></div>`;
+    const body = rows.map((p) => {
+      const upnl = Number(p.unrealized_pnl || 0);
+      const dir = p.direction === 'long' ? '多' : '空';
+      const dirColor = p.direction === 'long' ? 'var(--green)' : 'var(--red)';
+      const mark = Number(p.mark ?? p.entry);
+      const entry = Number(p.entry);
+      const sl = p.stop_loss == null ? '—' : Number(p.stop_loss).toPrecision(5);
+      const tp = p.take_profit == null ? '—' : Number(p.take_profit).toPrecision(5);
+      return `<div class="paper-pos-row" data-sym="${escapeHtml(p.symbol)}" data-tf="${escapeHtml(p.timeframe || '')}">
+        <span>${escapeHtml(p.strategy || '')}</span>
+        <span>${escapeHtml((p.symbol || '').replace('/USDT', ''))} <span class="muted">${escapeHtml(p.timeframe || '')}</span></span>
+        <span style="color:${dirColor}">${dir}</span>
+        <span>${entry.toPrecision(5)}→${mark.toPrecision(5)}</span>
+        <span class="muted">${sl}/${tp}</span>
+        <span style="color:${upnl >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(upnl)}</span>
+      </div>`;
+    }).join('');
+    list.innerHTML = head + body;
+    list.querySelectorAll('.paper-pos-row[data-sym]').forEach((row) => {
+      row.addEventListener('click', () => {
+        const sym = row.dataset.sym;
+        const tf = row.dataset.tf;
+        if (sym) {
+          activeSymbol = sym;
+          if (tf && $('timeframe')) {
+            const opt = [...$('timeframe').options].find((o) => o.value === tf);
+            if (opt) $('timeframe').value = tf;
+          }
+          switchAppView('monitor');
+          connect({ silent: true });
+        }
+      });
+    });
+  }
+
+  function renderPaperFullPage(st) {
+    const en = !!st.enabled;
+    if ($('paperEnabled')) $('paperEnabled').textContent = en ? '开启' : '关闭';
+    if ($('paperEquity')) $('paperEquity').textContent = Number(st.equity).toFixed(4) + ' U';
+    if ($('paperReturn')) {
+      const pct = st.return_pct;
+      $('paperReturn').textContent = (pct >= 0 ? '+' : '') + pct + '%';
+      $('paperReturn').style.color = pct >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    if ($('paperPnl')) {
+      const p = Number(st.realized_pnl || 0);
+      $('paperPnl').textContent = fmtPnl(p);
+      $('paperPnl').style.color = p >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    if ($('paperUpnl')) {
+      const u = Number(st.unrealized_pnl || 0);
+      $('paperUpnl').textContent = fmtPnl(u);
+      $('paperUpnl').style.color = u >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    if ($('paperWinRate')) {
+      $('paperWinRate').textContent = st.win_rate == null
+        ? '—'
+        : `${(st.win_rate * 100).toFixed(0)}% (${st.wins}/${st.wins + st.losses})`;
+    }
+    if ($('paperCounts')) {
+      $('paperCounts').textContent = `${st.open_positions} / ${st.closed_trades}`;
+    }
+    if ($('paperUpdated')) {
+      $('paperUpdated').textContent = st.updated_at
+        ? `更新 ${st.updated_at}`
+        : '';
+    }
+    if ($('paperSources')) {
+      const src = (st.sources || []).join(' · ') || '—';
+      $('paperSources').textContent = `来源 ${src}`;
+    }
+
+    const byEl = $('paperByStrategy');
+    if (byEl) {
+      const rows = st.by_strategy || [];
+      if (!rows.length) {
+        byEl.innerHTML = '<span class="muted">尚无按策略统计。策略信号开仓后会在此汇总已实现 / 浮动盈亏。</span>';
+      } else {
+        byEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
+          <thead><tr style="color:var(--muted);text-align:left;">
+            <th style="padding:4px 6px;">策略</th><th>持仓</th><th>已实现</th><th>浮动</th><th>成交</th><th>胜率</th>
+          </tr></thead>
+          <tbody>${rows.map((b) => {
+            const rp = Number(b.realized_pnl || 0);
+            const up = Number(b.unrealized_pnl || 0);
+            const wr = b.win_rate == null ? '—' : `${(b.win_rate * 100).toFixed(0)}%`;
+            return `<tr style="border-top:1px solid var(--line);">
+              <td style="padding:6px;">${escapeHtml(b.strategy)}</td>
+              <td>${b.open}</td>
+              <td style="color:${rp >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(rp)}</td>
+              <td style="color:${up >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(up)}</td>
+              <td>${b.trades}</td>
+              <td>${wr}</td>
+            </tr>`;
+          }).join('')}</tbody></table>`;
+      }
+    }
+
+    const posEl = $('paperPositions');
+    if (posEl) {
+      const rows = st.positions || [];
+      if (!rows.length) {
+        posEl.innerHTML = '<span class="muted">暂无持仓。ai_plan / 双线 / cycle_switch 信号会自动开纸面仓。</span>';
+      } else {
+        posEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
+          <thead><tr style="color:var(--muted);text-align:left;">
+            <th style="padding:4px 6px;">策略</th><th>品种</th><th>方向</th><th>入场</th><th>标记</th><th>止损</th><th>止盈</th><th>浮盈</th>
+          </tr></thead>
+          <tbody>${rows.map((p) => {
+            const up = Number(p.unrealized_pnl || 0);
+            const sl = p.stop_loss == null ? '—' : Number(p.stop_loss).toPrecision(6);
+            const tp = p.take_profit == null ? '—' : Number(p.take_profit).toPrecision(6);
+            return `<tr style="border-top:1px solid var(--line);">
+              <td style="padding:6px;">${escapeHtml(p.strategy || '')}</td>
+              <td>${escapeHtml(p.symbol)} <span class="muted">${escapeHtml(p.timeframe || '')}</span></td>
+              <td style="color:${p.direction === 'long' ? 'var(--green)' : 'var(--red)'}">${p.direction}</td>
+              <td>${Number(p.entry).toPrecision(6)}</td>
+              <td>${Number(p.mark ?? p.entry).toPrecision(6)}</td>
+              <td>${sl}</td>
+              <td>${tp}</td>
+              <td style="color:${up >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(up)}</td>
+            </tr>`;
+          }).join('')}</tbody></table>`;
+      }
+    }
+    const trEl = $('paperTrades');
+    if (trEl) {
+      const rows = st.recent_trades || [];
+      if (!rows.length) {
+        trEl.innerHTML = '<span class="muted">暂无成交记录。</span>';
+      } else {
+        trEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
+          <thead><tr style="color:var(--muted);text-align:left;">
+            <th style="padding:4px 6px;">策略</th><th>品种</th><th>方向</th><th>结果</th><th>入场→出场</th><th>盈亏</th>
+          </tr></thead>
+          <tbody>${rows.map((t) => `
+            <tr style="border-top:1px solid var(--line);">
+              <td style="padding:6px;">${escapeHtml(t.strategy || '')}</td>
+              <td>${escapeHtml(t.symbol)}</td>
+              <td>${escapeHtml(t.direction)}</td>
+              <td>${escapeHtml(t.outcome)}</td>
+              <td>${Number(t.entry).toPrecision(5)}→${Number(t.exit).toPrecision(5)}</td>
+              <td style="color:${t.pnl_usd >= 0 ? 'var(--green)' : 'var(--red)'}">${Number(t.pnl_usd).toFixed(4)}</td>
+            </tr>`).join('')}</tbody></table>`;
+      }
+    }
+  }
+
+  async function refreshPaperLive(opts = {}) {
+    if (paperFetchBusy) return;
+    paperFetchBusy = true;
+    try {
+      const st = await fetch('/api/paper/status').then((r) => r.json());
+      paperLastStatus = st;
+      renderPaperLiveStrip(st);
+      renderPaperDock(st);
+      if (opts.fullPage || activeAppView === 'auto') {
+        renderPaperFullPage(st);
+      }
+      const n = Number(st.open_positions || 0);
+      schedulePaperRefresh(n > 0 ? 2000 : 5000);
+    } catch (e) {
+      console.warn('refreshPaperLive', e);
+      if (opts.fullPage && $('paperPositions')) {
+        $('paperPositions').textContent = '加载失败：' + e;
+      }
+    } finally {
+      paperFetchBusy = false;
+    }
+  }
+
+  async function loadPaperPage() {
+    await refreshPaperLive({ fullPage: true });
   }
 
   const FRAMEWORKS = [
@@ -3161,12 +3469,18 @@
       btn.classList.toggle('active', btn.dataset.dock === name);
     });
     $('paneAlerts')?.classList.toggle('hidden', name !== 'alerts');
+    $('panePaper')?.classList.toggle('hidden', name !== 'paper');
     $('paneHistory')?.classList.toggle('hidden', name !== 'history');
     if ($('dockHint')) {
-      $('dockHint').textContent = name === 'history'
-        ? '点条目 → 右侧回看该次分析'
-        : '点告警 → 直连图标记';
+      if (name === 'history') {
+        $('dockHint').textContent = '点条目 → 右侧回看该次分析';
+      } else if (name === 'paper') {
+        $('dockHint').textContent = '点仓位 → 切到该币 · 约 2 秒刷新浮盈';
+      } else {
+        $('dockHint').textContent = '点告警 → 直连图标记';
+      }
     }
+    if (name === 'paper') refreshPaperLive();
   }
 
   function statusLabel(st) {
@@ -3755,6 +4069,20 @@
           (msg.reasons || []).slice(0, 2).join('；') || '规则提醒',
           msg.direction,
         );
+      } else if (msg.type === 'paper_open' || msg.type === 'paper_close') {
+        refreshPaperLive({ fullPage: activeAppView === 'auto' });
+        const pos = msg.position || msg.trade || {};
+        const tag = pos.strategy || 'paper';
+        const pnl = msg.trade ? ` pnl=${msg.trade.pnl_usd}` : '';
+        toast(
+          `📄 纸面 · ${tag}`,
+          `${pos.symbol || ''} ${pos.direction || ''}${pnl} · equity=${msg.equity}`,
+          msg.type === 'paper_close' && msg.trade && msg.trade.pnl_usd < 0 ? 'short' : 'long',
+        );
+        if (msg.type === 'paper_open' || msg.type === 'paper_close') {
+          // 开平仓后切到底部纸面仓位，方便立刻看到
+          if (activeAppView === 'monitor') switchDock('paper');
+        }
       } else if (msg.type === 'status') {
         if (msg.level === 'error') toast('流状态', msg.message, 'short');
       }
@@ -3915,6 +4243,29 @@
       btn.addEventListener('click', () => switchAppView(btn.dataset.app));
     });
     $('btnRunBacktest')?.addEventListener('click', () => runWebBacktest());
+    $('paperRefreshBtn')?.addEventListener('click', () => loadPaperPage());
+    $('paperResetBtn')?.addEventListener('click', async () => {
+      if (!confirm('确认重置纸面账户为初始资金？持仓与成交记录将清空。')) return;
+      try {
+        await fetch('/api/paper/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: true }),
+        }).then((r) => {
+          if (!r.ok) throw new Error('reset failed');
+          return r.json();
+        });
+        toast('纸面账户', '已重置', 'long');
+        refreshPaperLive({ fullPage: true });
+      } catch (e) {
+        toast('重置失败', String(e), 'short');
+      }
+    });
+    $('paperLiveStrip')?.addEventListener('click', () => {
+      switchAppView('auto');
+    });
+
+    startPaperLivePoll();
 
     let savedApp = null;
     try { savedApp = localStorage.getItem('monitor.appView'); } catch (_) {}

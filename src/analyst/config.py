@@ -108,6 +108,17 @@ class Settings(BaseSettings):
     monitor_ai_cooldown_minutes: int = Field(default=240)
     # 盯盘 AI 确认只走免费层（Groq）；失败不回落付费 DeepSeek/b.ai/Anthropic
     monitor_ai_free_only: bool = Field(default=True)
+    # 纸面模拟炒币：只跟 ai_plan，初始权益 / 单笔风险 / 费率
+    monitor_paper_enabled: bool = Field(default=True)
+    monitor_paper_equity: float = Field(default=10.0)
+    monitor_paper_risk_pct: float = Field(default=0.01)
+    monitor_paper_fee_bps: float = Field(default=4.0)
+    monitor_paper_max_positions: int = Field(default=12)
+    monitor_paper_tg: bool = Field(default=True)
+    # 纸面跟单来源：ai_plan,double_line,cycle_switch
+    monitor_paper_sources: str = Field(
+        default="ai_plan,double_line,cycle_switch"
+    )
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
     # 默认：AI 可交易确认 + 全局周期仓位（UTC 每天最多 1 条）
     monitor_tg_trade_rules: str = Field(

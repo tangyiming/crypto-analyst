@@ -502,3 +502,31 @@ async def monitor_ws(
         market="futures",
         watch_symbols=watch_symbols,
     )
+
+
+# ── 纸面模拟炒币 ──
+
+
+@router.get("/api/paper/status")
+def paper_status():
+    from analyst.trading.paper import get_paper_broker
+
+    return get_paper_broker().status()
+
+
+class PaperResetRequest(BaseModel):
+    confirm: bool = False
+    equity: float | None = None
+
+
+@router.post("/api/paper/reset")
+def paper_reset(req: PaperResetRequest):
+    if not req.confirm:
+        raise HTTPException(400, "请传 confirm=true 以重置纸面账户")
+    from analyst.trading.paper import get_paper_broker
+
+    settings = get_settings()
+    start = req.equity if req.equity is not None else settings.monitor_paper_equity
+    broker = get_paper_broker()
+    broker.reset(starting_equity=float(start))
+    return broker.status()
