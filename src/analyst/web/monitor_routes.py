@@ -8,13 +8,14 @@ from pydantic import BaseModel, Field
 
 from analyst.config import get_settings
 from analyst.data.fetcher import list_usdt_perp_symbols
-from analyst.data.ws_kline import BINANCE_FUTURES_INTERVALS
 from analyst.monitor.hub import get_monitor_hub
 
 router = APIRouter(tags=["monitor"])
 
 # 训练/分析快照只含这些周期
 ANALYSIS_TIMEFRAMES = ("30m", "1h", "4h", "1d")
+# 盯盘实时图默认允许周期（可被 MONITOR_CHART_TIMEFRAMES 覆盖）
+DEFAULT_CHART_TIMEFRAMES = ("15m", "1h", "4h")
 
 
 class MonitorAnalyzeRequest(BaseModel):
@@ -24,13 +25,26 @@ class MonitorAnalyzeRequest(BaseModel):
     market: str = Field(default="futures")
 
 
+def _chart_timeframes() -> list[str]:
+    return list(get_settings().chart_timeframes_list) or list(DEFAULT_CHART_TIMEFRAMES)
+
+
+def _normalize_chart_tf(tf: str | None) -> str:
+    """非法/过短周期一律回退到 15m。"""
+    t = (tf or "15m").strip().lower()
+    allowed = set(_chart_timeframes())
+    if t in allowed:
+        return t
+    return "15m" if "15m" in allowed else next(iter(allowed))
+
+
 def _map_analysis_timeframe(tf: str) -> str:
     """把图表周期映射到分析快照可用周期。"""
     t = (tf or "4h").strip().lower()
     if t in ANALYSIS_TIMEFRAMES:
         return t
     if t in ("1m", "3m", "5m", "15m"):
-        return "30m"
+        return "1h"
     if t in ("2h",):
         return "1h"
     if t in ("6h", "8h", "12h"):
@@ -57,16 +71,18 @@ def monitor_page():
 @router.get("/api/monitor/config")
 def monitor_config():
     s = get_settings()
+    chart_tfs = _chart_timeframes()
+    default_tf = (s.monitor_timeframe or "15m").strip().lower()
+    if default_tf not in chart_tfs:
+        default_tf = chart_tfs[0]
     return {
         "symbols": s.symbols_list,
-        "timeframes": BINANCE_FUTURES_INTERVALS,
+        "timeframes": chart_tfs,
         "analysis_timeframes": list(ANALYSIS_TIMEFRAMES),
         "markets": ["futures"],
         "defaults": {
             "symbol": "BTC/USDT",
-            "timeframe": s.monitor_timeframe
-            if s.monitor_timeframe in BINANCE_FUTURES_INTERVALS
-            else "15m",
+            "timeframe": default_tf,
             "market": "futures",
             "chart_mode": "native",
             "analysis_timeframe": "4h",
@@ -111,11 +127,12 @@ def monitor_history(
     limit: int = Query(300, ge=10, le=1000),
 ):
     hub = get_monitor_hub()
+    tf = _normalize_chart_tf(timeframe)
     return {
         "symbol": symbol,
-        "timeframe": timeframe,
+        "timeframe": tf,
         "market": "futures",
-        "candles": hub.history(symbol, timeframe, market="futures", limit=limit),
+        "candles": hub.history(symbol, tf, market="futures", limit=limit),
     }
 
 
@@ -506,11 +523,12 @@ async def monitor_ws(
 ):
     hub = get_monitor_hub()
     watch_symbols = [x.strip() for x in watch.split(",") if x.strip()]
+    tf = _normalize_chart_tf(timeframe)
     # 监控页只做 U 本位合约多空
     await hub.connect_client(
         websocket,
         symbol,
-        timeframe,
+        tf,
         market="futures",
         watch_symbols=watch_symbols,
     )

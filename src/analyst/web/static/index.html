@@ -1128,6 +1128,114 @@
       .paper-hero-main { grid-column: 1 / -1; }
       .paper-pos-grid { grid-template-columns: repeat(2, 1fr); }
     }
+    /* ── 市场日程页 ── */
+    .sched-page-inner { max-width: 960px; margin: 0 auto; }
+    .sched-clocks {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .sched-clock {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0f141b;
+      padding: 12px 14px;
+      text-align: center;
+    }
+    .sched-clock.local { border-color: #3a424d; background: #141a22; }
+    .sched-clock .label { font-size: 11px; color: var(--muted); }
+    .sched-clock .time {
+      font-size: 22px;
+      font-weight: 700;
+      font-family: ui-monospace, monospace;
+      margin-top: 4px;
+      letter-spacing: 0.02em;
+    }
+    .sched-clock .meta { font-size: 10px; color: var(--muted); margin-top: 4px; }
+    .sched-hero {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .sched-hero-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #12161c;
+      padding: 14px 16px;
+    }
+    .sched-hero-card .k { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+    .sched-hero-card .v {
+      font-size: 16px;
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+      color: var(--text);
+    }
+    .sched-hero-card .sub { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+    .sched-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .sched-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .sched-section {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #12161c;
+      padding: 12px 14px;
+    }
+    .sched-section h2 {
+      font-size: 13px;
+      font-weight: 600;
+      margin: 0 0 10px;
+      color: var(--text);
+    }
+    .sched-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
+      font-size: 12px;
+    }
+    .sched-row:first-child { border-top: 0; padding-top: 0; }
+    .sched-row .title { font-weight: 600; color: var(--text); }
+    .sched-row .meta { color: var(--muted); font-size: 11px; margin-top: 3px; font-family: ui-monospace, monospace; }
+    .sched-row .eta {
+      font-family: ui-monospace, monospace;
+      font-weight: 600;
+      align-self: center;
+      white-space: nowrap;
+    }
+    .sched-row.active .title { color: var(--yellow); }
+    .sched-badge {
+      display: inline-block;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      background: rgba(240,185,11,.15);
+      color: var(--yellow);
+    }
+    .sched-notes {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    @media (max-width: 800px) {
+      .sched-clocks { grid-template-columns: 1fr 1fr; }
+      .sched-hero { grid-template-columns: 1fr; }
+      .sched-grid { grid-template-columns: 1fr; }
+    }
     .cycle-phase-bar {
       height: 10px;
       border-radius: 5px;
@@ -1326,6 +1434,7 @@
     <div class="app-nav-links">
       <button type="button" class="app-nav-link active" data-app="monitor">盯盘</button>
       <button type="button" class="app-nav-link" data-app="cycle">周期</button>
+      <button type="button" class="app-nav-link" data-app="schedule">日程</button>
       <button type="button" class="app-nav-link" data-app="strategies">策略库</button>
       <button type="button" class="app-nav-link" data-app="backtest">回测</button>
       <button type="button" class="app-nav-link" data-app="frameworks">开源框架</button>
@@ -1451,7 +1560,6 @@
         <div class="flex items-center gap-2 mt-2">
           <span id="aiSymbolLabel" class="text-xs font-mono shrink-0" style="color:var(--text)">—</span>
           <select id="analyzeTf" class="sel grow min-w-0" title="分析主周期">
-            <option value="30m">30分</option>
             <option value="1h">1小时</option>
             <option value="4h" selected>4小时</option>
             <option value="1d">日线</option>
@@ -1507,6 +1615,58 @@
         <svg id="cycleSvg" class="cycle-timeline-svg" viewBox="0 0 1000 110" preserveAspectRatio="none"></svg>
         <canvas id="cyclePriceCanvas" height="240"></canvas>
         <div id="cycleAlerts" class="mt-4"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewSchedule" class="app-view hidden">
+    <div class="app-page">
+      <div class="sched-page-inner">
+        <div class="app-page-head">
+          <h1>市场日程</h1>
+          <p>交易时段 · 多时区 · 资金费 · 宏观高影响事件。时间按<strong>浏览器本地时区</strong>显示（迪拜会自动用 Asia/Dubai）。</p>
+        </div>
+        <div class="sched-clocks" id="schedClocks"></div>
+        <div class="sched-hero" id="schedHero">
+          <div class="sched-hero-card">
+            <div class="k">下一窗口</div>
+            <div class="v" id="schedNextSession">—</div>
+            <div class="sub" id="schedNextSessionSub">—</div>
+          </div>
+          <div class="sched-hero-card">
+            <div class="k">资金费倒计时</div>
+            <div class="v" id="schedFunding">—</div>
+            <div class="sub" id="schedFundingSub">—</div>
+          </div>
+          <div class="sched-hero-card">
+            <div class="k">下一宏观事件</div>
+            <div class="v" id="schedNextMacro">—</div>
+            <div class="sub" id="schedNextMacroSub">—</div>
+          </div>
+        </div>
+        <div class="sched-toolbar">
+          <button type="button" class="btn-analyze" id="schedRefreshBtn">刷新</button>
+          <span class="muted" style="font-size:11px;" id="schedMeta">—</span>
+        </div>
+        <div class="sched-grid">
+          <section class="sched-section">
+            <h2>交易时段</h2>
+            <div id="schedSessions" class="muted" style="font-size:12px;">加载中…</div>
+          </section>
+          <section class="sched-section">
+            <h2>宏观日历 <span class="muted" style="font-weight:400;font-size:11px;">USD · High</span></h2>
+            <div id="schedMacro" class="muted" style="font-size:12px;">加载中…</div>
+          </section>
+        </div>
+        <div class="sched-section" style="margin-top:14px;">
+          <h2>提醒说明</h2>
+          <ul class="sched-notes" id="schedNotes">
+            <li>亚盘活跃 ≈ 迪拜 04:00–07:00（北京 08:00–11:00）· 欧盘开盘 ≈ 迪拜 11:00–13:00 · 美盘开盘 ≈ 迪拜 17:00–19:00</li>
+            <li>时段 / 资金费 / 宏观事件会在提前期推 Telegram（需配置 Bot）</li>
+            <li>宏观数据来自 Forex Factory 本周公开日历，仅过滤高影响美元事件</li>
+            <li>顶部「本地」时钟跟系统时区；可与北京 / 迪拜 / 伦敦 / 纽约对照</li>
+          </ul>
+        </div>
       </div>
     </div>
   </div>
@@ -2148,6 +2308,191 @@
     // 离开自动交易页不停止全局轮询（顶栏/仓位 dock 仍要实时）
   }
 
+  let scheduleRefreshTimer = null;
+
+  function fmtCountdown(sec) {
+    if (sec == null || !Number.isFinite(sec)) return '—';
+    const s = Math.max(0, Math.floor(sec));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${r}s`;
+    return `${r}s`;
+  }
+
+  function browserLocalTz() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Dubai';
+    } catch (_) {
+      return 'Asia/Dubai';
+    }
+  }
+
+  function renderSchedulePage(data) {
+    const clocks = data.clocks || [];
+    if ($('schedClocks')) {
+      $('schedClocks').innerHTML = clocks.map((c) => `
+        <div class="sched-clock${c.is_local ? ' local' : ''}">
+          <div class="label">${escapeHtml(c.label)}${c.is_local ? ' · 你这里' : ''}</div>
+          <div class="time">${escapeHtml(c.time || '—')}</div>
+          <div class="meta">周${escapeHtml(c.weekday || '')} · ${escapeHtml(c.offset || '')}</div>
+        </div>
+      `).join('');
+    }
+
+    const sess = data.sessions || {};
+    const up = sess.upcoming;
+    const active = (sess.active || [])[0];
+    if ($('schedNextSession')) {
+      if (active) {
+        $('schedNextSession').textContent = `${active.name} · 进行中`;
+        $('schedNextSession').style.color = 'var(--yellow)';
+        if ($('schedNextSessionSub')) {
+          $('schedNextSessionSub').textContent =
+            `${active.hint || ''} · 还剩 ${fmtCountdown(active.ends_in_sec)}`;
+        }
+      } else if (up) {
+        $('schedNextSession').textContent = up.name;
+        $('schedNextSession').style.color = 'var(--text)';
+        if ($('schedNextSessionSub')) {
+          $('schedNextSessionSub').textContent =
+            `${up.hint || ''} · ${fmtCountdown(up.starts_in_sec)} 后开始`;
+        }
+      } else {
+        $('schedNextSession').textContent = '—';
+        if ($('schedNextSessionSub')) $('schedNextSessionSub').textContent = '暂无窗口';
+      }
+    }
+
+    const fund = data.funding;
+    if ($('schedFunding')) {
+      if (fund) {
+        $('schedFunding').textContent = fmtCountdown(fund.seconds_to_funding);
+        const rate = fund.funding_rate_pct == null
+          ? '—'
+          : `${fund.funding_rate_pct >= 0 ? '+' : ''}${fund.funding_rate_pct}%/8h`;
+        if ($('schedFundingSub')) {
+          $('schedFundingSub').textContent =
+            `${fund.symbol || ''} · ${rate} · 本地 ${fund.local_time || fund.beijing || '—'}`;
+        }
+      } else {
+        $('schedFunding').textContent = '—';
+        if ($('schedFundingSub')) $('schedFundingSub').textContent = '暂无资金费数据';
+      }
+    }
+
+    const macro = data.macro || {};
+    const nextM = macro.next;
+    if ($('schedNextMacro')) {
+      if (nextM) {
+        $('schedNextMacro').textContent = nextM.title;
+        if ($('schedNextMacroSub')) {
+          $('schedNextMacroSub').textContent =
+            `${nextM.country} · ${nextM.impact} · 本地 ${nextM.local_time || nextM.beijing} · ${fmtCountdown(nextM.starts_in_sec)}`;
+        }
+      } else {
+        $('schedNextMacro').textContent = '本周暂无';
+        if ($('schedNextMacroSub')) $('schedNextMacroSub').textContent = 'USD High 事件已过或未排期';
+      }
+    }
+
+    const sessEl = $('schedSessions');
+    if (sessEl) {
+      const rows = sess.windows || [];
+      if (!rows.length) {
+        sessEl.innerHTML = '<span class="muted">暂无时段</span>';
+      } else {
+        sessEl.innerHTML = rows.slice(0, 8).map((w) => {
+          const eta = w.active
+            ? `剩余 ${fmtCountdown(w.ends_in_sec)}`
+            : fmtCountdown(w.starts_in_sec);
+          return `<div class="sched-row${w.active ? ' active' : ''}">
+            <div>
+              <div class="title">${escapeHtml(w.name)}${w.active ? '<span class="sched-badge">进行中</span>' : ''}</div>
+              <div class="meta">${escapeHtml(w.hint || '')}</div>
+            </div>
+            <div class="eta">${escapeHtml(eta)}</div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    const macroEl = $('schedMacro');
+    if (macroEl) {
+      const upcoming = macro.upcoming || [];
+      const recent = macro.recent || [];
+      const rows = upcoming.length ? upcoming : recent;
+      if (!rows.length) {
+        macroEl.innerHTML = '<span class="muted">本周暂无匹配的高影响事件。</span>';
+      } else {
+        const head = upcoming.length
+          ? ''
+          : '<div class="muted" style="margin-bottom:8px;font-size:11px;">本周后续暂无 USD High，以下为近期已公布：</div>';
+        macroEl.innerHTML = head + rows.slice(0, 12).map((e) => {
+          const eta = upcoming.length
+            ? fmtCountdown(e.starts_in_sec)
+            : '已过';
+          const when = e.local_time || e.beijing || '';
+          const extra = [e.forecast && `预期 ${e.forecast}`, e.previous && `前值 ${e.previous}`, e.actual && `公布 ${e.actual}`]
+            .filter(Boolean).join(' · ');
+          return `<div class="sched-row">
+            <div>
+              <div class="title">${escapeHtml(e.country)} · ${escapeHtml(e.title)}</div>
+              <div class="meta">${escapeHtml(when)}${extra ? ' · ' + escapeHtml(extra) : ''}</div>
+            </div>
+            <div class="eta">${escapeHtml(eta)}</div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    if ($('schedMeta')) {
+      const st = data.settings || {};
+      const parts = [
+        `本地 ${data.now_local || data.now_beijing || '—'}`,
+        data.local_tz || browserLocalTz(),
+        st.tg ? 'TG 提醒开' : 'TG 提醒关',
+        `时段提前 ${st.session_leads || '—'}m`,
+        `资金费提前 ${st.funding_leads || '—'}m`,
+      ];
+      if (macro.updated_at) parts.push(`日历 ${String(macro.updated_at).slice(11, 19)} UTC`);
+      $('schedMeta').textContent = parts.join(' · ');
+    }
+  }
+
+  async function loadSchedulePage(opts = {}) {
+    try {
+      const q = new URLSearchParams();
+      q.set('symbol', activeSymbol || 'BTC/USDT');
+      q.set('tz', browserLocalTz());
+      if (opts.refresh) q.set('refresh', '1');
+      const data = await fetch('/api/schedule?' + q.toString()).then((r) => {
+        if (!r.ok) throw new Error('schedule ' + r.status);
+        return r.json();
+      });
+      renderSchedulePage(data);
+    } catch (e) {
+      console.warn('loadSchedulePage', e);
+      if ($('schedMeta')) $('schedMeta').textContent = '加载失败：' + e;
+    }
+  }
+
+  function startSchedulePageRefresh() {
+    loadSchedulePage();
+    stopSchedulePageRefresh();
+    scheduleRefreshTimer = setInterval(() => {
+      if (activeAppView === 'schedule') loadSchedulePage();
+    }, 15000);
+  }
+
+  function stopSchedulePageRefresh() {
+    if (scheduleRefreshTimer) {
+      clearInterval(scheduleRefreshTimer);
+      scheduleRefreshTimer = null;
+    }
+  }
+
   function startCyclePageRefresh() {
     loadCycleTimeline();
     stopCyclePageRefresh();
@@ -2165,6 +2510,7 @@
       strategies: 'viewStrategies',
       backtest: 'viewBacktest',
       cycle: 'viewCycle',
+      schedule: 'viewSchedule',
       frameworks: 'viewFrameworks',
       web3: 'viewWeb3',
       devtools: 'viewDevtools',
@@ -2173,6 +2519,7 @@
     if (!views[name]) return;
     if (name !== 'cycle') stopCyclePageRefresh();
     if (name !== 'auto') stopPaperPageRefresh();
+    if (name !== 'schedule') stopSchedulePageRefresh();
     activeAppView = name;
     try { localStorage.setItem('monitor.appView', name); } catch (_) {}
     Object.entries(views).forEach(([k, id]) => {
@@ -2183,6 +2530,7 @@
     });
     if (name === 'strategies') loadStrategiesPage();
     if (name === 'cycle') startCyclePageRefresh();
+    if (name === 'schedule') startSchedulePageRefresh();
     if (name === 'frameworks') renderFrameworksPage();
     if (name === 'web3') initWeb3Tools();
     if (name === 'devtools') initDevTools();
@@ -4112,7 +4460,7 @@
       renderChatLog(data.chat_log || []);
       if (data.timeframe && $('analyzeTf')) {
         const tf = data.timeframe;
-        if (['30m', '1h', '4h', '1d'].includes(tf)) $('analyzeTf').value = tf;
+        if (['1h', '4h', '1d'].includes(tf)) $('analyzeTf').value = tf;
       }
 
       // 直连图才能标时点；尽量切到分析同周期
@@ -4159,8 +4507,8 @@
 
   function mapChartTfToAnalyze(tf) {
     const t = tf || '4h';
-    if (['30m', '1h', '4h', '1d'].includes(t)) return t;
-    if (['1m', '3m', '5m', '15m'].includes(t)) return '30m';
+    if (['1h', '4h', '1d'].includes(t)) return t;
+    if (t === '15m' || ['1m', '3m', '5m', '30m'].includes(t)) return '1h';
     if (t === '2h') return '1h';
     if (['6h', '8h', '12h'].includes(t)) return '4h';
     return '1d';
@@ -4695,7 +5043,7 @@
     if (chartMode !== 'tv') chartMode = 'native';
     setChartMode(chartMode, { remount: false });
 
-    (cfg.timeframes || ['15m']).forEach(t => {
+    (cfg.timeframes || ['15m', '1h', '4h']).forEach(t => {
       const o = document.createElement('option');
       o.value = t;
       o.textContent = TF_LABELS[t] || t;
@@ -4717,7 +5065,13 @@
 
     activeSymbol = normalizeSymbol(savedSym || cfg.defaults?.symbol || 'BTC/USDT');
     $('symbolSearch').value = activeSymbol;
-    if (savedTf) $('timeframe').value = savedTf;
+    const allowedTfs = [...$('timeframe').options].map((o) => o.value);
+    if (savedTf && allowedTfs.includes(savedTf)) {
+      $('timeframe').value = savedTf;
+    } else {
+      $('timeframe').value = cfg.defaults?.timeframe || '15m';
+      try { localStorage.setItem('monitor.timeframe', $('timeframe').value); } catch (_) {}
+    }
     if (savedWatch !== null) $('watchAll').checked = savedWatch === '1';
     renderChips(activeSymbol);
 
@@ -4794,6 +5148,7 @@
     });
     $('btnRunBacktest')?.addEventListener('click', () => runWebBacktest());
     $('paperRefreshBtn')?.addEventListener('click', () => loadPaperPage());
+    $('schedRefreshBtn')?.addEventListener('click', () => loadSchedulePage({ refresh: true }));
     $('paperResetBtn')?.addEventListener('click', async () => {
       if (!confirm('确认重置纸面账户为初始资金？持仓与成交记录将清空。')) return;
       try {

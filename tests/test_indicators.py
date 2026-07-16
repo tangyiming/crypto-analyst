@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 
 from analyst.compute.indicators import (
+    compute_adx,
     compute_boll,
     compute_ema,
     compute_macd,
@@ -111,3 +112,13 @@ def test_boll_volatile_market():
     result = compute_boll(series)
     assert result.upper > result.middle > result.lower
     assert result.width > 0
+
+
+def test_adx_insufficient_and_trend():
+    assert compute_adx([1] * 10, [1] * 10, [1] * 10, 14) == 0.0
+    # 单调上涨：ADX 应明显 > 0
+    highs = [100 + i * 1.5 for i in range(80)]
+    lows = [100 + i * 1.5 - 0.5 for i in range(80)]
+    closes = [100 + i * 1.5 - 0.1 for i in range(80)]
+    adx_v = compute_adx(highs, lows, closes, 14)
+    assert adx_v > 20.0

@@ -126,6 +126,62 @@ def compute_ema(series: CandleSeries) -> EMAResult:
     )
 
 
+def _wilder_smooth(values: list[float], period: int) -> list[float]:
+    """Wilder RMA：首值=SMA，其后 prev - prev/period + x。"""
+    if len(values) < period:
+        return []
+    out: list[float] = []
+    seed = sum(values[:period]) / period
+    out.append(seed)
+    prev = seed
+    for x in values[period:]:
+        prev = prev - (prev / period) + x
+        out.append(prev)
+    return out
+
+
+def compute_adx(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = 14,
+) -> float:
+    """返回最新 ADX（0–100）。数据不足返回 0。"""
+    n = min(len(highs), len(lows), len(closes))
+    if period < 1 or n < period * 2 + 1:
+        return 0.0
+    trs: list[float] = []
+    plus_dm: list[float] = []
+    minus_dm: list[float] = []
+    for i in range(1, n):
+        h, l, pc = highs[i], lows[i], closes[i - 1]
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        up = h - highs[i - 1]
+        down = lows[i - 1] - l
+        trs.append(tr)
+        plus_dm.append(up if up > down and up > 0 else 0.0)
+        minus_dm.append(down if down > up and down > 0 else 0.0)
+
+    atr_s = _wilder_smooth(trs, period)
+    p_s = _wilder_smooth(plus_dm, period)
+    m_s = _wilder_smooth(minus_dm, period)
+    if not atr_s or len(atr_s) != len(p_s) or len(atr_s) != len(m_s):
+        return 0.0
+
+    dx_vals: list[float] = []
+    for atr_v, pv, mv in zip(atr_s, p_s, m_s, strict=True):
+        if atr_v <= 0:
+            dx_vals.append(0.0)
+            continue
+        pdi = 100.0 * pv / atr_v
+        mdi = 100.0 * mv / atr_v
+        denom = pdi + mdi
+        dx_vals.append(0.0 if denom <= 0 else 100.0 * abs(pdi - mdi) / denom)
+
+    adx_s = _wilder_smooth(dx_vals, period)
+    return float(adx_s[-1]) if adx_s else 0.0
+
+
 def compute_boll(
     series: CandleSeries,
     period: int = 20,

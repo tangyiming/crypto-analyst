@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from analyst.storage.db import init_db
 from analyst.web.routes import router
 from analyst.web.monitor_routes import router as monitor_router
+from analyst.web.schedule_routes import router as schedule_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
     init_db()
     hub = get_monitor_hub()
     heartbeat_task: asyncio.Task | None = None
+    schedule_task: asyncio.Task | None = None
     try:
         info = await hub.start_always_on_workers()
         if info.get("enabled"):
@@ -82,15 +84,36 @@ async def lifespan(app: FastAPI):
                     logger.exception("monitor heartbeat failed")
 
         heartbeat_task = asyncio.create_task(_heartbeat_loop(), name="monitor-heartbeat")
+
+        from analyst.monitor.schedule_reminders import run_schedule_reminder_loop
+        from analyst.monitor.hub import _fetch_premium_index
+
+        async def _notify(text: str) -> None:
+            await hub._notify_telegram_text(text)
+
+        def _premium() -> dict | None:
+            for w in hub._workers.values():
+                if w.key.symbol.upper() == "BTC/USDT" and w.last_premium:
+                    return w.last_premium
+            for w in hub._workers.values():
+                if w.last_premium and w.last_premium.get("next_funding_time"):
+                    return w.last_premium
+            return _fetch_premium_index("BTC/USDT")
+
+        schedule_task = asyncio.create_task(
+            run_schedule_reminder_loop(notify=_notify, get_premium=_premium),
+            name="schedule-reminders",
+        )
     except Exception:
         logger.exception("start always-on workers failed")
     yield
-    if heartbeat_task:
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:
-            pass
+    for task in (schedule_task, heartbeat_task):
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 def create_app() -> FastAPI:
@@ -104,6 +127,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
     app.include_router(monitor_router)
+    app.include_router(schedule_router)
 
     @app.get("/")
     def index():

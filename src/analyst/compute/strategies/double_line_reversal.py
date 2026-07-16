@@ -12,14 +12,14 @@ https://www.youtube.com/watch?v=fqK-3LK_kF0
 定位：15m 实时盯盘策略（monitor / hub），震荡市期望偏低；
       与 cycle_switch（4h 周期组合）互补，不互相替代。
 
-仅提醒不下单。
+纸面跟单默认仅 15m/1h；过滤器默认开量能 + ADX≥20。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from analyst.compute.indicators import ema
+from analyst.compute.indicators import compute_adx, ema
 from analyst.compute.kelly import KellySize, suggest_position
 from analyst.compute.plan import TradePlan, calculate_rr, _wait_plan
 from analyst.compute.volume import analyze_volume
@@ -50,8 +50,11 @@ class DoubleLineConfig:
     require_ema_slope: bool = False
     ema_slope_lookback: int = 8        # 斜率取样根数
 
-    # 可选过滤器（她人工盯盘时会看）
-    require_volume: bool = False
+    # 过滤器：量能默认开；ADX 过滤震荡假突破（Freqtrade / FMZ 常见）
+    require_volume: bool = True
+    require_adx: bool = True
+    adx_period: int = 14
+    adx_min: float = 20.0
     require_fib_zone: bool = False     # 兼容旧 CLI；默认关，形态自带入场位
 
     assumed_win_rate: float = 0.47     # 视频含趋势过滤后回测约 47%
@@ -362,6 +365,30 @@ def evaluate_double_line(
                 )
         passed.append("ema200")
         reasons.append(f"EMA{cfg.ema_trend_period} 顺势")
+
+    if cfg.require_adx:
+        adx_v = compute_adx(
+            [c.high for c in candles],
+            [c.low for c in candles],
+            [c.close for c in candles],
+            cfg.adx_period,
+        )
+        if adx_v < cfg.adx_min:
+            failed.append("adx")
+            return DoubleLineSignal(
+                direction="wait",
+                strength=0.4,
+                price=price,
+                pattern=name,
+                break_level=pattern.break_level,
+                reasons=reasons
+                + [f"ADX={adx_v:.1f} < {cfg.adx_min:g}（趋势偏弱，疑似震荡）"],
+                filters_passed=passed,
+                filters_failed=failed,
+                bar_ts=bar_ts,
+            )
+        passed.append("adx")
+        reasons.append(f"ADX={adx_v:.1f}≥{cfg.adx_min:g}")
 
     if cfg.require_volume:
         vol = analyze_volume(series)

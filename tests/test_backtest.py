@@ -111,6 +111,8 @@ def test_run_backtest_end_to_end_synthetic():
         min_overlap_ratio=0.4,
         min_sudden_atr_mult=0.5,
         require_ema200=False,
+        require_volume=False,
+        require_adx=False,
     )
     report = run_backtest(
         "TEST/USDT",

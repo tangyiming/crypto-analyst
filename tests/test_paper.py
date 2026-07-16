@@ -13,6 +13,9 @@ def _reset_broker(tmp_path, monkeypatch, **extra_env):
     monkeypatch.setenv("MONITOR_PAPER_RISK_PCT", "0.01")
     monkeypatch.setenv("MONITOR_PAPER_FEE_BPS", "0")
     monkeypatch.setenv("MONITOR_PAPER_MAX_POSITIONS", "12")
+    monkeypatch.setenv("MONITOR_PAPER_DOUBLE_LINE_TFS", "15m,1h,4h")
+    monkeypatch.setenv("MONITOR_PAPER_MAX_MARGIN_PCT", "0.15")
+    monkeypatch.setenv("MONITOR_PAPER_SL_COOLDOWN_MINUTES", "120")
     monkeypatch.setenv(
         "MONITOR_PAPER_SOURCES", "ai_plan,double_line,cycle_switch"
     )
@@ -157,6 +160,72 @@ def test_paper_multi_strategy_same_symbol(tmp_path, monkeypatch):
     assert by["ai_plan"]["open"] == 1
     assert by["double_line"]["open"] == 1
     assert by["ai_plan"]["unrealized_pnl"] > 0
+
+
+    assert by["ai_plan"]["unrealized_pnl"] > 0
+
+
+def test_paper_rejects_double_line_1m(tmp_path, monkeypatch):
+    broker = _reset_broker(tmp_path, monkeypatch)
+    plan = {"stop_loss": 99, "take_profit_1": 102}
+    assert (
+        broker.try_open_from_plan(
+            symbol="BTC/USDT",
+            timeframe="1m",
+            direction="long",
+            price=100,
+            plan=plan,
+            strategy="double_line",
+        )
+        is None
+    )
+
+
+def test_paper_double_line_margin_cap(tmp_path, monkeypatch):
+    broker = _reset_broker(tmp_path, monkeypatch, MONITOR_PAPER_EQUITY="100")
+    broker.reset(100.0)
+    # 止损极窄 → 风险仓位名义巨大，应被保证金封顶
+    plan = {"stop_loss": 99.9, "take_profit_1": 100.2}
+    opened = broker.try_open_from_plan(
+        symbol="BNB/USDT",
+        timeframe="15m",
+        direction="long",
+        price=100.0,
+        plan=plan,
+        strategy="double_line",
+    )
+    assert opened is not None
+    pos = broker.state.positions[0]
+    assert pos.margin is not None
+    assert pos.margin <= 100.0 * 0.15 + 1e-6
+
+
+def test_paper_sl_cooldown(tmp_path, monkeypatch):
+    broker = _reset_broker(
+        tmp_path, monkeypatch, MONITOR_PAPER_SL_COOLDOWN_MINUTES="60"
+    )
+    plan = {"stop_loss": 99, "take_profit_1": 102}
+    assert broker.try_open_from_plan(
+        symbol="SOL/USDT",
+        timeframe="15m",
+        direction="long",
+        price=100,
+        plan=plan,
+        strategy="double_line",
+    )
+    assert broker.on_mark("SOL/USDT", 99.0)
+    # 止损后同向冷却
+    assert (
+        broker.try_open_from_plan(
+            symbol="SOL/USDT",
+            timeframe="15m",
+            direction="long",
+            price=100,
+            plan=plan,
+            strategy="double_line",
+        )
+        is None
+    )
 
 
 def test_paper_cycle_switch_sync(tmp_path, monkeypatch):

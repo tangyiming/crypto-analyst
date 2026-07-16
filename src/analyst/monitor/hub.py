@@ -714,6 +714,9 @@ class MonitorHub:
             trail_to_8r=s.monitor_trail_to_8r,
             require_fib_zone=s.monitor_require_fib_zone,
             require_volume=s.monitor_require_volume,
+            require_adx=s.monitor_require_adx,
+            adx_period=s.monitor_adx_period,
+            adx_min=s.monitor_adx_min,
         )
 
     async def _ensure_worker(self, key: StreamKey) -> StreamWorker:

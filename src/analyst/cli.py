@@ -671,6 +671,9 @@ def monitor_once(
             trail_to_8r=settings.monitor_trail_to_8r,
             require_fib_zone=fib_zone or settings.monitor_require_fib_zone,
             require_volume=volume or settings.monitor_require_volume,
+            require_adx=settings.monitor_require_adx,
+            adx_period=settings.monitor_adx_period,
+            adx_min=settings.monitor_adx_min,
         ),
     )
     engine = MonitorEngine(cfg, notifier=build_default_notifier(
@@ -742,6 +745,9 @@ def monitor_start(
             trail_to_8r=settings.monitor_trail_to_8r,
             require_fib_zone=fib_zone or settings.monitor_require_fib_zone,
             require_volume=volume or settings.monitor_require_volume,
+            require_adx=settings.monitor_require_adx,
+            adx_period=settings.monitor_adx_period,
+            adx_min=settings.monitor_adx_min,
         ),
     )
     notifier = build_default_notifier(
@@ -783,6 +789,10 @@ def backtest(
         ema_trend_period=settings.monitor_ema_trend_period,
         require_ema200=settings.monitor_require_ema200,
         require_ema_slope=settings.monitor_require_ema_slope,
+        require_volume=settings.monitor_require_volume,
+        require_adx=settings.monitor_require_adx,
+        adx_period=settings.monitor_adx_period,
+        adx_min=settings.monitor_adx_min,
     )
 
     with console.status(f"[bold cyan]回放 {sym} {timeframe} × {bars} 根..."):

@@ -108,7 +108,12 @@ class Settings(BaseSettings):
     monitor_require_ema_slope: bool = Field(default=False)  # EMA200 需同向倾斜（可选）
     monitor_trail_to_8r: bool = Field(default=False)
     monitor_require_fib_zone: bool = Field(default=False)
-    monitor_require_volume: bool = Field(default=False)
+    # 量能冲突过滤；默认开，减少震荡假突破
+    monitor_require_volume: bool = Field(default=True)
+    # ADX 趋势强度过滤（常见阈值 20–25）
+    monitor_require_adx: bool = Field(default=True)
+    monitor_adx_period: int = Field(default=14)
+    monitor_adx_min: float = Field(default=20.0)
     # 规则引擎（无 AI 实时提醒，默认全开）
     monitor_rules_enabled: bool = Field(default=True)
     monitor_rule_macd: bool = Field(default=True)
@@ -150,6 +155,12 @@ class Settings(BaseSettings):
     monitor_paper_sources: str = Field(
         default="double_line,cycle_switch"
     )
+    # 双线纸面允许的周期（防 1m 噪声仓）；空=不限制
+    monitor_paper_double_line_tfs: str = Field(default="15m,1h,4h")
+    # 单笔保证金上限占权益比例（止损极窄时防止名义仓爆炸）
+    monitor_paper_max_margin_pct: float = Field(default=0.15)
+    # 双线止损后同品种同向冷却（分钟）；0=关闭
+    monitor_paper_sl_cooldown_minutes: int = Field(default=120)
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
     # 默认：AI 点评 + 异动类规则（金叉死叉/放量/突破等）；cycle 仓位变化仍不直推
     monitor_tg_trade_rules: str = Field(
@@ -161,6 +172,16 @@ class Settings(BaseSettings):
     monitor_daemon_symbols: str = Field(default="")
     # 常驻多级别周期（逗号分隔）；空则仅 MONITOR_TIMEFRAME
     monitor_daemon_timeframes: str = Field(default="15m,1h,4h")
+    # 盯盘图表可选周期（实时 K / WS）；默认不含 1m 等短周期
+    monitor_chart_timeframes: str = Field(default="15m,1h,4h")
+    # 市场日程：时段 / 资金费 / 宏观日历提醒
+    monitor_schedule_enabled: bool = Field(default=True)
+    monitor_schedule_tg: bool = Field(default=True)
+    monitor_schedule_session_leads: str = Field(default="30,15")
+    monitor_schedule_funding_leads: str = Field(default="30")
+    monitor_schedule_macro_leads: str = Field(default="60,30,15")
+    monitor_schedule_macro_currencies: str = Field(default="USD")
+    monitor_schedule_macro_impacts: str = Field(default="High")
     telegram_bot_token: str = Field(default="")
     telegram_chat_id: str = Field(default="")
 
@@ -217,6 +238,23 @@ class Settings(BaseSettings):
                 return out
         tf = (self.monitor_timeframe or "15m").strip().lower()
         return [tf] if tf else ["15m"]
+
+    @property
+    def chart_timeframes_list(self) -> list[str]:
+        """盯盘图表/WS 允许的周期。"""
+        raw = (self.monitor_chart_timeframes or "").strip()
+        allowed = {"15m", "1h", "4h"}
+        if raw:
+            tfs = [t.strip().lower() for t in raw.split(",") if t.strip()]
+            seen: set[str] = set()
+            out: list[str] = []
+            for t in tfs:
+                if t in allowed and t not in seen:
+                    seen.add(t)
+                    out.append(t)
+            if out:
+                return out
+        return ["15m", "1h", "4h"]
 
     @property
     def tg_trade_rules_set(self) -> set[str] | None:
