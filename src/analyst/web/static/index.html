@@ -984,6 +984,150 @@
     }
     .cycle-stat .k { font-size: 10px; color: var(--muted); display: block; }
     .cycle-stat .v { font-size: 15px; font-weight: 600; margin-top: 4px; }
+    /* ── 纸面交易页 ── */
+    .paper-page-inner { max-width: 960px; margin: 0 auto; }
+    .paper-hero {
+      display: grid;
+      grid-template-columns: 1.4fr repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .paper-hero-main {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0f141b;
+      padding: 16px 18px;
+    }
+    .paper-hero-main .label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .paper-hero-main .equity {
+      font-size: 28px;
+      font-weight: 700;
+      font-family: ui-monospace, monospace;
+      color: var(--text);
+      line-height: 1.1;
+    }
+    .paper-hero-main .sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .paper-hero-stat {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #12161c;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .paper-hero-stat .k { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+    .paper-hero-stat .v {
+      font-size: 16px;
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+    }
+    .paper-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .paper-section {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #12161c;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .paper-section h2 {
+      font-size: 13px;
+      font-weight: 600;
+      margin: 0 0 10px;
+      color: var(--text);
+    }
+    .paper-strategy-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .paper-strategy-chip {
+      flex: 1 1 200px;
+      min-width: 0;
+      border: 1px solid #232a33;
+      border-radius: 8px;
+      background: #0b0e11;
+      padding: 10px 12px;
+      font-size: 11px;
+    }
+    .paper-strategy-chip .name {
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+    .paper-strategy-chip .line {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      margin-top: 3px;
+      font-family: ui-monospace, monospace;
+    }
+    .paper-pos-card {
+      border: 1px solid #232a33;
+      border-radius: 8px;
+      background: #0b0e11;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      cursor: pointer;
+    }
+    .paper-pos-card:hover { border-color: #3a424d; }
+    .paper-pos-card:last-child { margin-bottom: 0; }
+    .paper-pos-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .paper-pos-head .sym {
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+    }
+    .paper-pos-head .dir {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .paper-pos-head .dir.long { background: rgba(14,203,129,.15); color: var(--green); }
+    .paper-pos-head .dir.short { background: rgba(246,70,93,.15); color: var(--red); }
+    .paper-pos-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px 12px;
+      font-size: 11px;
+    }
+    .paper-pos-grid .k { color: var(--muted); display: block; margin-bottom: 2px; }
+    .paper-pos-grid .v { font-family: ui-monospace, monospace; color: var(--text); }
+    .paper-trade-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 4px 12px;
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
+      font-size: 11px;
+    }
+    .paper-trade-row:first-child { border-top: 0; padding-top: 0; }
+    .paper-trade-row .title { font-weight: 600; color: var(--text); }
+    .paper-trade-row .meta { color: var(--muted); font-family: ui-monospace, monospace; }
+    .paper-trade-row .pnl {
+      text-align: right;
+      font-family: ui-monospace, monospace;
+      font-weight: 600;
+      align-self: center;
+    }
+    @media (max-width: 720px) {
+      .paper-hero { grid-template-columns: 1fr 1fr; }
+      .paper-hero-main { grid-column: 1 / -1; }
+      .paper-pos-grid { grid-template-columns: repeat(2, 1fr); }
+    }
     .cycle-phase-bar {
       height: 10px;
       border-radius: 5px;
@@ -1648,38 +1792,48 @@
 
   <div id="viewAuto" class="app-view hidden">
     <div class="app-page">
-      <div class="app-page-head">
-        <h1>纸面模拟炒币</h1>
-        <p>跟单 <strong>double_line / cycle_switch</strong>（策略信号）；有止盈止损的仓按标记价平，周期仓按信号平。<strong>AI 只点评不开仓。非真金、不调交易所 API</strong>。顶栏与盯盘底部「纸面仓位」约 2 秒刷新浮盈。</p>
+      <div class="paper-page-inner">
+        <div class="app-page-head">
+          <h1>纸面模拟炒币</h1>
+          <p>跟单 <strong>double_line / cycle_switch</strong>；非真金、不调交易所 API。顶栏与盯盘底部约 2 秒刷新浮盈。</p>
+        </div>
+        <div class="paper-hero" id="paperHero">
+          <div class="paper-hero-main">
+            <div class="label">账户权益</div>
+            <div class="equity" id="paperEquity">—</div>
+            <div class="sub" id="paperHeroSub">—</div>
+          </div>
+          <div class="paper-hero-stat">
+            <span class="k">账户收益</span>
+            <span class="v" id="paperReturn">—</span>
+          </div>
+          <div class="paper-hero-stat">
+            <span class="k">浮动盈亏</span>
+            <span class="v" id="paperUpnl">—</span>
+          </div>
+          <div class="paper-hero-stat">
+            <span class="k">已实现</span>
+            <span class="v" id="paperPnl">—</span>
+          </div>
+        </div>
+        <div class="paper-toolbar">
+          <button type="button" class="btn-analyze" id="paperRefreshBtn">刷新</button>
+          <button type="button" class="btn-analyze" id="paperResetBtn" style="background:rgba(246,70,93,.14);color:var(--red);">重置为 100U</button>
+          <span class="muted" style="font-size:11px;" id="paperMeta">—</span>
+        </div>
+        <div class="paper-section">
+          <h2>按策略</h2>
+          <div id="paperByStrategy" class="muted" style="font-size:12px;">加载中…</div>
+        </div>
+        <div class="paper-section">
+          <h2>当前持仓 <span id="paperPosCount" class="muted" style="font-weight:400;font-size:11px;"></span></h2>
+          <div id="paperPositions" class="muted" style="font-size:12px;">加载中…</div>
+        </div>
+        <div class="paper-section">
+          <h2>最近成交</h2>
+          <div id="paperTrades" class="muted" style="font-size:12px;">加载中…</div>
+        </div>
       </div>
-      <div class="cycle-stats" id="paperStats" style="margin-bottom:16px;">
-        <div class="cycle-stat"><span class="k">权益</span><span class="v" id="paperEquity">—</span></div>
-        <div class="cycle-stat"><span class="k">账户收益</span><span class="v" id="paperReturn">—</span></div>
-        <div class="cycle-stat"><span class="k">已用保证金</span><span class="v" id="paperUsedMargin">—</span></div>
-        <div class="cycle-stat"><span class="k">账户杠杆</span><span class="v" id="paperAcctLev">—</span></div>
-        <div class="cycle-stat"><span class="k">已实现</span><span class="v" id="paperPnl">—</span></div>
-        <div class="cycle-stat"><span class="k">浮动盈亏</span><span class="v" id="paperUpnl">—</span></div>
-        <div class="cycle-stat"><span class="k">胜率</span><span class="v" id="paperWinRate">—</span></div>
-        <div class="cycle-stat"><span class="k">持仓/成交</span><span class="v" id="paperCounts">—</span></div>
-        <div class="cycle-stat"><span class="k">开关</span><span class="v" id="paperEnabled">—</span></div>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">
-        <button type="button" class="btn-analyze" id="paperRefreshBtn">刷新</button>
-        <button type="button" class="btn-analyze" id="paperResetBtn" style="background:rgba(246,70,93,.14);color:var(--red);">重置为 100U</button>
-        <span class="muted" style="font-size:11px;" id="paperUpdated">—</span>
-        <span class="muted" style="font-size:11px;" id="paperSources">—</span>
-      </div>
-      <h2 style="font-size:14px;margin:0 0 8px;">按策略盈亏</h2>
-      <div id="paperByStrategy" class="muted" style="font-size:12px;margin-bottom:18px;">加载中…</div>
-      <h2 style="font-size:14px;margin:0 0 8px;">当前持仓</h2>
-      <div id="paperPositions" class="muted" style="font-size:12px;margin-bottom:18px;">加载中…</div>
-      <h2 style="font-size:14px;margin:0 0 8px;">最近成交</h2>
-      <div id="paperTrades" class="muted" style="font-size:12px;margin-bottom:18px;">加载中…</div>
-      <ul class="roadmap">
-        <li>✅ 多策略纸面账本（double_line · cycle_switch · 100U 起；AI 不开仓）</li>
-        <li class="muted">⏳ Freqtrade / Jesse dry-run 信号对接（见「开源框架」）</li>
-        <li class="muted">⏳ 交易所 API 真下单（需独立风控）</li>
-      </ul>
     </div>
   </div>
 </div>
@@ -2147,74 +2301,71 @@
 
   function renderPaperFullPage(st) {
     const en = !!st.enabled;
-    if ($('paperEnabled')) $('paperEnabled').textContent = en ? '开启' : '关闭';
-    if ($('paperEquity')) $('paperEquity').textContent = Number(st.equity).toFixed(4) + ' U';
+    const eq = Number(st.equity || 0);
+    const used = Number(st.used_margin || 0);
+    const free = Number(st.free_margin || 0);
+    const levCfg = Number(st.leverage || 5);
+    const acct = Number(st.account_leverage || 0);
+    const pct = st.return_pct;
+    const rp = Number(st.realized_pnl || 0);
+    const up = Number(st.unrealized_pnl || 0);
+    const src = (st.sources || []).join(' · ') || '—';
+    const wr = st.win_rate == null
+      ? '—'
+      : `${(st.win_rate * 100).toFixed(0)}% (${st.wins}/${st.wins + st.losses})`;
+
+    if ($('paperEquity')) {
+      $('paperEquity').textContent = eq.toFixed(4) + ' U';
+      $('paperEquity').style.color = 'var(--text)';
+    }
+    if ($('paperHeroSub')) {
+      $('paperHeroSub').textContent =
+        `保证金 ${used.toFixed(2)} / 闲${free.toFixed(2)} · 杠杆 ${acct.toFixed(2)}x · 设定${levCfg}x · ${en ? '跟单开启' : '跟单关闭'}`;
+    }
     if ($('paperReturn')) {
-      const pct = st.return_pct;
       $('paperReturn').textContent = (pct >= 0 ? '+' : '') + pct + '%';
       $('paperReturn').style.color = pct >= 0 ? 'var(--green)' : 'var(--red)';
     }
-    if ($('paperUsedMargin')) {
-      const used = Number(st.used_margin || 0);
-      const free = Number(st.free_margin || 0);
-      $('paperUsedMargin').textContent = `${used.toFixed(2)} / 闲${free.toFixed(2)}`;
-    }
-    if ($('paperAcctLev')) {
-      const cfg = Number(st.leverage || 5);
-      const acct = Number(st.account_leverage || 0);
-      $('paperAcctLev').textContent = `${acct.toFixed(2)}x · 设定${cfg}x`;
-    }
     if ($('paperPnl')) {
-      const p = Number(st.realized_pnl || 0);
-      $('paperPnl').textContent = fmtPnl(p);
-      $('paperPnl').style.color = p >= 0 ? 'var(--green)' : 'var(--red)';
+      $('paperPnl').textContent = fmtPnl(rp);
+      $('paperPnl').style.color = rp >= 0 ? 'var(--green)' : 'var(--red)';
     }
     if ($('paperUpnl')) {
-      const u = Number(st.unrealized_pnl || 0);
-      $('paperUpnl').textContent = fmtPnl(u);
-      $('paperUpnl').style.color = u >= 0 ? 'var(--green)' : 'var(--red)';
+      $('paperUpnl').textContent = fmtPnl(up);
+      $('paperUpnl').style.color = up >= 0 ? 'var(--green)' : 'var(--red)';
     }
-    if ($('paperWinRate')) {
-      $('paperWinRate').textContent = st.win_rate == null
-        ? '—'
-        : `${(st.win_rate * 100).toFixed(0)}% (${st.wins}/${st.wins + st.losses})`;
+    if ($('paperMeta')) {
+      const parts = [
+        `胜率 ${wr}`,
+        `持仓 ${st.open_positions} · 成交 ${st.closed_trades}`,
+        `来源 ${src}`,
+      ];
+      if (st.updated_at) parts.push(`更新 ${st.updated_at}`);
+      $('paperMeta').textContent = parts.join(' · ');
     }
-    if ($('paperCounts')) {
-      $('paperCounts').textContent = `${st.open_positions} / ${st.closed_trades}`;
-    }
-    if ($('paperUpdated')) {
-      $('paperUpdated').textContent = st.updated_at
-        ? `更新 ${st.updated_at}`
-        : '';
-    }
-    if ($('paperSources')) {
-      const src = (st.sources || []).join(' · ') || '—';
-      $('paperSources').textContent = `来源 ${src}`;
+    if ($('paperPosCount')) {
+      const n = Number(st.open_positions || 0);
+      $('paperPosCount').textContent = n > 0 ? `(${n})` : '';
     }
 
     const byEl = $('paperByStrategy');
     if (byEl) {
       const rows = st.by_strategy || [];
       if (!rows.length) {
-        byEl.innerHTML = '<span class="muted">尚无按策略统计。策略信号开仓后会在此汇总已实现 / 浮动盈亏。</span>';
+        byEl.innerHTML = '<span class="muted">尚无按策略统计。</span>';
       } else {
-        byEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
-          <thead><tr style="color:var(--muted);text-align:left;">
-            <th style="padding:4px 6px;">策略</th><th>持仓</th><th>已实现</th><th>浮动</th><th>成交</th><th>胜率</th>
-          </tr></thead>
-          <tbody>${rows.map((b) => {
-            const rp = Number(b.realized_pnl || 0);
-            const up = Number(b.unrealized_pnl || 0);
-            const wr = b.win_rate == null ? '—' : `${(b.win_rate * 100).toFixed(0)}%`;
-            return `<tr style="border-top:1px solid var(--line);">
-              <td style="padding:6px;">${escapeHtml(b.strategy)}</td>
-              <td>${b.open}</td>
-              <td style="color:${rp >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(rp)}</td>
-              <td style="color:${up >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(up)}</td>
-              <td>${b.trades}</td>
-              <td>${wr}</td>
-            </tr>`;
-          }).join('')}</tbody></table>`;
+        byEl.innerHTML = `<div class="paper-strategy-chips">${rows.map((b) => {
+          const brp = Number(b.realized_pnl || 0);
+          const bup = Number(b.unrealized_pnl || 0);
+          const bwr = b.win_rate == null ? '—' : `${(b.win_rate * 100).toFixed(0)}%`;
+          return `<div class="paper-strategy-chip">
+            <div class="name">${escapeHtml(b.strategy)}</div>
+            <div class="line"><span>持仓</span><span>${b.open}</span></div>
+            <div class="line"><span>已实现</span><span style="color:${brp >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(brp)}</span></div>
+            <div class="line"><span>浮动</span><span style="color:${bup >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(bup)}</span></div>
+            <div class="line"><span>成交 / 胜率</span><span>${b.trades} · ${bwr}</span></div>
+          </div>`;
+        }).join('')}</div>`;
       }
     }
 
@@ -2222,66 +2373,73 @@
     if (posEl) {
       const rows = st.positions || [];
       if (!rows.length) {
-        posEl.innerHTML = '<span class="muted">暂无持仓。双线 / cycle_switch 信号会自动开纸面仓（AI 不开仓）。</span>';
+        posEl.innerHTML = '<span class="muted">暂无持仓。双线 / cycle_switch 信号会自动开纸面仓。</span>';
       } else {
-        posEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
-          <thead><tr style="color:var(--muted);text-align:left;">
-            <th style="padding:4px 6px;">策略</th><th>品种</th><th>方向</th><th>入场</th><th>标记</th>
-            <th>名义</th><th>保证金</th><th>杠杆</th><th>保证金收益</th><th>盈亏比</th><th>浮盈</th>
-          </tr></thead>
-          <tbody>${rows.map((p) => {
-            const up = Number(p.unrealized_pnl || 0);
-            const rr = p.rr_ratio == null ? '—' : `1:${Number(p.rr_ratio).toFixed(2)}`;
-            const ur = p.unrealized_r == null ? '' : ` (${Number(p.unrealized_r) >= 0 ? '+' : ''}${Number(p.unrealized_r).toFixed(2)}R)`;
-            const noto = p.notional == null ? '—' : Number(p.notional).toFixed(2);
-            const mgn = p.margin == null ? '—' : Number(p.margin).toFixed(2);
-            const lev = p.leverage == null ? '—' : `${Number(p.leverage).toFixed(0)}x`;
-            const roi = p.margin_roi_pct;
-            const roiTxt = roi == null ? '—' : fmtPct(roi, 1);
-            const roiColor = roi == null ? 'var(--muted)' : (roi >= 0 ? 'var(--green)' : 'var(--red)');
-            return `<tr style="border-top:1px solid var(--line);">
-              <td style="padding:6px;">${escapeHtml(p.strategy || '')}</td>
-              <td>${escapeHtml(p.symbol)} <span class="muted">${escapeHtml(p.timeframe || '')}</span></td>
-              <td style="color:${p.direction === 'long' ? 'var(--green)' : 'var(--red)'}">${p.direction}</td>
-              <td>${Number(p.entry).toPrecision(6)}</td>
-              <td>${Number(p.mark ?? p.entry).toPrecision(6)}</td>
-              <td>${escapeHtml(noto)}</td>
-              <td>${escapeHtml(mgn)}</td>
-              <td>${escapeHtml(lev)}</td>
-              <td style="color:${roiColor}">${escapeHtml(roiTxt)}</td>
-              <td title="计划 R:R；括号为当前浮盈相对 1R">${escapeHtml(rr)}${escapeHtml(ur)}</td>
-              <td style="color:${up >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(up)}</td>
-            </tr>`;
-          }).join('')}</tbody></table>`;
+        posEl.innerHTML = rows.map((p) => {
+          const upnl = Number(p.unrealized_pnl || 0);
+          const dirCls = p.direction === 'long' ? 'long' : 'short';
+          const dirZh = p.direction === 'long' ? '多' : '空';
+          const mark = Number(p.mark ?? p.entry);
+          const entry = Number(p.entry);
+          const lev = p.leverage == null ? '—' : `${Number(p.leverage).toFixed(0)}x`;
+          const mgn = p.margin == null ? '—' : Number(p.margin).toFixed(2);
+          const noto = p.notional == null ? '—' : Number(p.notional).toFixed(2);
+          const roi = p.margin_roi_pct;
+          const roiTxt = roi == null ? '—' : fmtPct(roi, 1);
+          const roiColor = roi == null ? 'var(--muted)' : (roi >= 0 ? 'var(--green)' : 'var(--red)');
+          const rr = p.rr_ratio == null ? '—' : `1:${Number(p.rr_ratio).toFixed(2)}`;
+          const ur = p.unrealized_r == null ? '' : ` · ${Number(p.unrealized_r) >= 0 ? '+' : ''}${Number(p.unrealized_r).toFixed(2)}R`;
+          return `<div class="paper-pos-card" data-sym="${escapeHtml(p.symbol)}" data-tf="${escapeHtml(p.timeframe || '')}">
+            <div class="paper-pos-head">
+              <span class="sym">${escapeHtml((p.symbol || '').replace('/USDT', ''))} <span class="muted">${escapeHtml(p.timeframe || '')}</span></span>
+              <span class="dir ${dirCls}">${dirZh} · ${escapeHtml(p.strategy || '')}</span>
+            </div>
+            <div class="paper-pos-grid">
+              <div><span class="k">入场 → 标记</span><span class="v">${entry.toPrecision(5)} → ${mark.toPrecision(5)}</span></div>
+              <div><span class="k">浮盈</span><span class="v" style="color:${upnl >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtPnl(upnl)}</span></div>
+              <div><span class="k">保证金收益</span><span class="v" style="color:${roiColor}">${roiTxt}</span></div>
+              <div><span class="k">名义 / 保证金</span><span class="v">${noto} / ${mgn}U</span></div>
+              <div><span class="k">杠杆</span><span class="v">${lev}</span></div>
+              <div><span class="k">盈亏比</span><span class="v">${rr}${ur}</span></div>
+            </div>
+          </div>`;
+        }).join('');
+        posEl.querySelectorAll('.paper-pos-card[data-sym]').forEach((card) => {
+          card.addEventListener('click', () => {
+            const sym = card.dataset.sym;
+            const tf = card.dataset.tf;
+            if (sym) {
+              activeSymbol = sym;
+              if (tf && $('timeframe')) $('timeframe').value = tf;
+              switchAppView('monitor');
+              connect({ silent: true });
+            }
+          });
+        });
       }
     }
+
     const trEl = $('paperTrades');
     if (trEl) {
       const rows = st.recent_trades || [];
       if (!rows.length) {
         trEl.innerHTML = '<span class="muted">暂无成交记录。</span>';
       } else {
-        trEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:ui-monospace,monospace;">
-          <thead><tr style="color:var(--muted);text-align:left;">
-            <th style="padding:4px 6px;">策略</th><th>品种</th><th>方向</th><th>结果</th><th>入场→出场</th><th>杠杆·保证金</th><th>保证金收益</th><th>盈亏</th>
-          </tr></thead>
-          <tbody>${rows.map((t) => {
-            const lev = t.leverage == null ? '—' : `${Number(t.leverage).toFixed(0)}x`;
-            const mgn = t.margin == null ? '—' : Number(t.margin).toFixed(2);
-            const roi = t.margin_roi_pct;
-            const roiTxt = roi == null ? '—' : fmtPct(roi, 1);
-            const roiColor = roi == null ? 'var(--muted)' : (roi >= 0 ? 'var(--green)' : 'var(--red)');
-            return `<tr style="border-top:1px solid var(--line);">
-              <td style="padding:6px;">${escapeHtml(t.strategy || '')}</td>
-              <td>${escapeHtml(t.symbol)}</td>
-              <td>${escapeHtml(t.direction)}</td>
-              <td>${escapeHtml(t.outcome)}</td>
-              <td>${Number(t.entry).toPrecision(5)}→${Number(t.exit).toPrecision(5)}</td>
-              <td>${escapeHtml(lev)} · ${escapeHtml(mgn)}U</td>
-              <td style="color:${roiColor}">${escapeHtml(roiTxt)}</td>
-              <td style="color:${t.pnl_usd >= 0 ? 'var(--green)' : 'var(--red)'}">${Number(t.pnl_usd).toFixed(4)}</td>
-            </tr>`;
-          }).join('')}</tbody></table>`;
+        trEl.innerHTML = rows.map((t) => {
+          const lev = t.leverage == null ? '—' : `${Number(t.leverage).toFixed(0)}x`;
+          const mgn = t.margin == null ? '—' : Number(t.margin).toFixed(2);
+          const roi = t.margin_roi_pct;
+          const roiTxt = roi == null ? '' : ` · ${fmtPct(roi, 1)}`;
+          const pnl = Number(t.pnl_usd);
+          const dirZh = t.direction === 'long' ? '多' : '空';
+          return `<div class="paper-trade-row">
+            <div>
+              <div class="title">${escapeHtml(t.strategy || '')} · ${escapeHtml((t.symbol || '').replace('/USDT', ''))} · ${dirZh}</div>
+              <div class="meta">${escapeHtml(t.outcome || '')} · ${Number(t.entry).toPrecision(5)} → ${Number(t.exit).toPrecision(5)} · ${lev} · ${mgn}U${roiTxt}</div>
+            </div>
+            <div class="pnl" style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${pnl.toFixed(4)}</div>
+          </div>`;
+        }).join('');
       }
     }
   }
