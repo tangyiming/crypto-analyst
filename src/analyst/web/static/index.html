@@ -31,9 +31,11 @@
     }
     .desk {
       height: 100vh;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       background: var(--bg);
+      overflow: hidden;
     }
     /* ── 顶栏应用导航 ── */
     .app-nav {
@@ -150,13 +152,15 @@
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
       min-height: 0;
+      overflow: auto;
     }
     /* 左：图表+底部告警；右：AI 通栏占满 */
     .monitor-body {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(260px, calc(40vw - 200px));
+      grid-template-columns: minmax(0, 1fr) 320px minmax(260px, calc(40vw - 200px));
+      min-width: 1540px;
       min-height: 0;
-      overflow: hidden;
+      overflow: visible;
     }
     .monitor-left {
       display: grid;
@@ -174,15 +178,22 @@
     @media (max-width: 960px) {
       .monitor-body {
         grid-template-columns: 1fr;
-        grid-template-rows: minmax(240px, 50vh) minmax(0, 1fr);
+        grid-template-rows: minmax(240px, 50vh) auto minmax(0, 1fr);
       }
       .monitor-left { border-right: 0; border-bottom: 1px solid var(--line); }
     }
     @media (min-width: 1400px) {
-      .monitor-body { grid-template-columns: minmax(0, 1fr) minmax(320px, calc(42vw - 200px)); }
+      .monitor-body { grid-template-columns: minmax(0, 1fr) 340px minmax(320px, calc(42vw - 200px)); }
     }
     @media (min-width: 1800px) {
-      .monitor-body { grid-template-columns: minmax(0, 1fr) minmax(360px, calc(44vw - 200px)); }
+      .monitor-body { grid-template-columns: minmax(0, 1fr) 360px minmax(360px, calc(44vw - 200px)); }
+    }
+    .level-rail {
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+      border-right: 1px solid var(--line);
+      background: #0d1117;
     }
     .app-page {
       flex: 1;
@@ -531,10 +542,18 @@
       transform: translateY(0);
     }
     .ai-panel-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
       flex: 1;
       min-height: 0;
       overflow: auto;
       padding: 10px 12px 12px;
+    }
+    #aiResult {
+      min-height: 0;
+      overflow: auto;
+      flex-shrink: 0;
     }
     .ai-chat {
       flex-shrink: 0;
@@ -754,38 +773,35 @@
     .btn-analyze:hover { background: rgba(240,185,11,.22); }
     .btn-analyze:disabled { opacity: 0.5; cursor: wait; }
     .level-board {
-      border-top: 1px solid var(--line);
-      background: rgba(12, 14, 18, 0.65);
-      padding: 6px 10px 8px;
-      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0f141b;
+      padding: 10px 12px 12px;
+      margin-bottom: 10px;
       flex-shrink: 0;
     }
     .level-board-head {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
       font-size: 11px;
       color: var(--muted);
     }
     .level-board-grid {
-      display: flex;
-      gap: 8px;
-      min-width: min-content;
+      display: block;
     }
     .level-card {
-      flex: 0 0 auto;
-      min-width: 220px;
-      max-width: 280px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 8px 10px;
-      background: var(--panel);
+      width: 100%;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      background: transparent;
       font-size: 11px;
     }
     .level-card.active {
-      border-color: rgba(240, 185, 11, 0.45);
-      box-shadow: 0 0 0 1px rgba(240, 185, 11, 0.12);
+      box-shadow: none;
     }
     .level-card-head {
       display: flex;
@@ -803,6 +819,76 @@
       font-family: ui-monospace, monospace;
       color: var(--yellow);
     }
+    .level-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 10px;
+      margin: 8px 0 10px;
+    }
+    .level-summary-item {
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .level-summary-item .k {
+      display: block;
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+    .level-summary-item .v {
+      display: block;
+      font-family: ui-monospace, monospace;
+      color: var(--text);
+    }
+    .level-decision {
+      padding: 0 0 8px;
+      border-bottom: 1px solid #232a33;
+      margin-bottom: 8px;
+    }
+    .level-decision .title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .level-decision .desc {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .level-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      margin: 6px 0 10px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .level-chip {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    .level-plan {
+      display: grid;
+      gap: 5px;
+      margin-bottom: 10px;
+      padding: 0 0 8px;
+      border-bottom: 1px solid #232a33;
+      background: transparent;
+    }
+    .level-plan-row {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 8px;
+      font-size: 11px;
+      font-family: ui-monospace, monospace;
+    }
+    .level-plan-row .k { color: var(--muted); }
+    .level-plan-row .v { color: var(--text); }
     .level-zone {
       display: inline-block;
       padding: 1px 6px;
@@ -815,6 +901,13 @@
     .level-zone.short { background: rgba(246, 70, 93, 0.15); color: var(--red); }
     .level-zone.wait { background: rgba(132, 142, 156, 0.12); color: var(--muted); }
     .level-zone.mix { background: rgba(240, 185, 11, 0.12); color: var(--yellow); }
+    .level-sect-title {
+      font-size: 10px;
+      color: var(--muted);
+      margin: 10px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
     .level-rows { display: grid; gap: 3px; }
     .level-row {
       display: grid;
@@ -1159,13 +1252,6 @@
       <button type="button" id="btnAddWatch" class="chip chip-add shrink-0">+</button>
       <div id="symbolChips" class="flex flex-wrap gap-1 min-w-0"></div>
     </div>
-    <div id="levelBoard" class="level-board hidden" aria-label="关键位实时">
-      <div class="level-board-head">
-        <span>关键位 · 实时</span>
-        <span id="levelBoardHint" class="muted">支撑/阻力距离 · 回调区</span>
-      </div>
-      <div id="levelBoardGrid" class="level-board-grid"></div>
-    </div>
   </header>
 
   <div class="monitor-body">
@@ -1198,6 +1284,16 @@
         <div class="dock-pane hidden" id="paneHistory"></div>
       </footer>
     </div>
+
+    <aside class="level-rail" aria-label="关键位分析">
+      <div id="levelBoard" class="level-board hidden" aria-label="关键位实时">
+        <div class="level-board-head">
+          <span>关键位 · 实时</span>
+          <span id="levelBoardHint" class="muted">当前币</span>
+        </div>
+        <div id="levelBoardGrid" class="level-board-grid"></div>
+      </div>
+    </aside>
 
     <aside class="ai-panel" aria-label="AI 行情分析">
       <div class="ai-panel-head">
@@ -1609,6 +1705,8 @@
   let dockFilterCurrent = true;
   let levelStore = {};
   let levelPollTimer = null;
+  let signalStore = {};
+  let cycleStore = {};
   let pendingAlert = null; // 切币后等 snapshot 再画点
   let historyOverlay = null; // 历史分析在图上的锚点 {symbol,time,plan,direction}
   let chartMode = 'native'; // tv | native（告警箭头只能画在直连图）
@@ -3026,24 +3124,60 @@
     renderLevelBoard();
   }
 
+  function decisionText(ctx) {
+    const z = ctx?.zone || {};
+    if (z.dip_buy && z.try_short) return '震荡分向，等确认';
+    if (z.dip_buy) return '靠近低吸区，可等企稳低多';
+    if (z.try_short) return '靠近试空区，可等转弱试空';
+    if (ctx?.trend === 'up') return '趋势偏多，等回踩再接';
+    if (ctx?.trend === 'down') return '趋势偏空，不追空等反弹';
+    return '暂无优势位置，先观望';
+  }
+
+  function riskText(ctx) {
+    const z = ctx?.zone || {};
+    const s1 = (ctx?.supports || [])[0];
+    const r1 = (ctx?.resistances || [])[0];
+    if (z.dip_buy && r1) return `上方先看阻力 ${fmtNum(r1.price)}，别在区内追多。`;
+    if (z.try_short && s1) return `下方先看支撑 ${fmtNum(s1.price)}，别贴着支撑追空。`;
+    if (ctx?.trend === 'up' && r1) return `已离理想低吸区，等回踩或突破 ${fmtNum(r1.price)} 后再看。`;
+    if (ctx?.trend === 'down' && r1) return `当前更适合等反弹靠近 ${fmtNum(r1.price)} 再决策。`;
+    return '结构不清晰，仓位宜轻。';
+  }
+
   function renderLevelBoard() {
     const board = $('levelBoard');
     const grid = $('levelBoardGrid');
+    const hint = $('levelBoardHint');
     if (!board || !grid) return;
-    const syms = watchSymbols.length ? watchSymbols.map(normalizeSymbol) : [normalizeSymbol(activeSymbol)];
-    const rows = syms.map((s) => levelStore[s]).filter(Boolean);
+    const active = normalizeSymbol(activeSymbol);
+    const rows = [levelStore[active]].filter(Boolean);
     if (!rows.length) {
       board.classList.add('hidden');
       grid.innerHTML = '';
+      if (hint) hint.textContent = '支撑/阻力距离 · 回调区';
       return;
     }
     board.classList.remove('hidden');
+    if (hint) hint.textContent = `${active.split('/')[0]} · 当前选中币`;
     grid.innerHTML = rows.map((ctx) => {
       const sym = normalizeSymbol(ctx.symbol);
-      const active = sym === normalizeSymbol(activeSymbol);
+      const isActive = sym === normalizeSymbol(activeSymbol);
       const z = ctx.zone || {};
+      const fib = ctx.fib_zones || {};
+      const longZone = fib.long || {};
+      const shortZone = fib.short || {};
+      const sig = signalStore[sym] || {};
+      const cyc = cycleStore[sym] || {};
+      const recentAlert = alertStore.slice().reverse().find((a) => normalizeSymbol(a.symbol) === sym);
       const zCls = zoneClass(ctx);
       const reason = (z.reasons || []).slice(0, 2).join(' · ');
+      const chips = [
+        sig.direction && sig.direction !== 'wait' ? `双线 ${dirLabel(sig.direction)}` : '双线 WAIT',
+        cyc.target_position > 0 ? `周期 多 ${Math.round(Math.abs(cyc.target_position) * 100)}%` :
+          cyc.target_position < 0 ? `周期 空 ${Math.round(Math.abs(cyc.target_position) * 100)}%` : '周期 空仓',
+        recentAlert?.title ? `最近: ${recentAlert.title}` : '',
+      ].filter(Boolean);
       const levelRows = (label, items, tone) => (items || []).map((row, i) => {
         const d = Number(row.dist_pct);
         const dCls = row.near ? 'near' : (d >= 0 ? 'pos' : 'neg');
@@ -3053,28 +3187,52 @@
           <span class="d ${dCls}">${fmtDistPct(d)}</span>
         </div>`;
       }).join('');
-      return `<div class="level-card${active ? ' active' : ''}" data-sym="${escapeHtml(sym)}">
+      return `<div class="level-card${isActive ? ' active' : ''}" data-sym="${escapeHtml(sym)}">
         <div class="level-card-head">
           <span class="sym">${escapeHtml(sym.split('/')[0])}</span>
           <span class="px">${fmtNum(ctx.price)}</span>
         </div>
         <div class="level-zone ${zCls}">${escapeHtml(z.label || '观望')}</div>
-        <div class="muted" style="font-size:10px;margin-bottom:4px;">
-          ${escapeHtml(trendZh(ctx.trend))} · ${escapeHtml(ctx.timeframe || '—')} · 枢轴 ${fmtNum(ctx.key_pivot)}
+        <div class="level-decision">
+          <div class="title">${escapeHtml(decisionText(ctx))}</div>
+          <div class="desc">${escapeHtml(riskText(ctx))}</div>
         </div>
-        ${reason ? `<div class="muted" style="font-size:10px;margin-bottom:4px;">${escapeHtml(reason)}</div>` : ''}
+        <div class="level-plan">
+          <div class="level-plan-row"><span class="k">计划</span><span class="v">${escapeHtml(z.label || '观望')}</span></div>
+          <div class="level-plan-row"><span class="k">低吸</span><span class="v">${fmtNum(longZone.low)} - ${fmtNum(longZone.high)}</span></div>
+          <div class="level-plan-row"><span class="k">试空</span><span class="v">${fmtNum(shortZone.low)} - ${fmtNum(shortZone.high)}</span></div>
+          <div class="level-plan-row"><span class="k">枢轴</span><span class="v">${fmtNum(ctx.key_pivot)}</span></div>
+        </div>
+        <div class="level-chips">${chips.map((x) => `<span class="level-chip">${escapeHtml(x)}</span>`).join('')}</div>
+        <div class="level-summary">
+          <div class="level-summary-item">
+            <span class="k">趋势 / 周期</span>
+            <span class="v">${escapeHtml(trendZh(ctx.trend))} · ${escapeHtml(ctx.timeframe || '—')}</span>
+          </div>
+          <div class="level-summary-item">
+            <span class="k">枢轴</span>
+            <span class="v">${fmtNum(ctx.key_pivot)}</span>
+          </div>
+          <div class="level-summary-item">
+            <span class="k">Fib 低吸区</span>
+            <span class="v">${fmtNum(longZone.low)} - ${fmtNum(longZone.high)}${longZone.inside ? ' · 区内' : ''}</span>
+          </div>
+          <div class="level-summary-item">
+            <span class="k">Fib 试空区</span>
+            <span class="v">${fmtNum(shortZone.low)} - ${fmtNum(shortZone.high)}${shortZone.inside ? ' · 区内' : ''}</span>
+          </div>
+        </div>
+        ${reason ? `<div class="muted" style="font-size:10px;margin:2px 0 8px;">${escapeHtml(reason)}</div>` : ''}
+        <div class="level-sect-title">Supports</div>
         <div class="level-rows">
           ${levelRows('支', ctx.supports, 'var(--green)')}
+        </div>
+        <div class="level-sect-title">Resistances</div>
+        <div class="level-rows">
           ${levelRows('阻', ctx.resistances, 'var(--red)')}
         </div>
       </div>`;
     }).join('');
-    grid.querySelectorAll('.level-card').forEach((card) => {
-      card.addEventListener('click', () => {
-        const sym = card.getAttribute('data-sym');
-        if (sym) setSelectedSymbol(sym);
-      });
-    });
   }
 
   async function pollLevelBoard() {
@@ -4280,13 +4438,16 @@
         updatePremium(msg);
       } else if (msg.type === 'level_context') {
         ingestLevelContext(msg);
+      } else if (msg.type === 'signal') {
+        signalStore[normalizeSymbol(msg.symbol)] = msg;
+        renderLevelBoard();
+      } else if (msg.type === 'cycle_switch') {
+        cycleStore[normalizeSymbol(msg.symbol)] = msg;
+        renderLevelBoard();
       } else if (msg.type === 'kline' && msg.candle) {
         if (normalizeSymbol(msg.symbol) !== normalizeSymbol(activeSymbol)) return;
         upsertCandle(msg.candle);
         updateTicker(msg.candle.close, 'live');
-      } else if (msg.type === 'signal') {
-        if (normalizeSymbol(msg.symbol) !== normalizeSymbol(activeSymbol)) return;
-        // 实时状态已下沉到 Telegram / 图上角标；页面不再展示面板
       } else if (msg.type === 'alert') {
         if (rememberAlert(msg)) pushAlertCard(msg);
         if (sameSymTf(msg) && candleBuf.length) {
