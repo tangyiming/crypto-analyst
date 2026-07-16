@@ -39,6 +39,12 @@ from analyst.monitor.rules import (
     evaluate_premium_rules,
     rule_event_to_alert,
 )
+from analyst.compute.level_context import (
+    LevelSnapshot,
+    compute_level_context,
+    snapshot_from_series,
+    tf_priority,
+)
 from analyst.monitor.serialize import candle_to_dict, signal_to_alert_dict
 
 logger = logging.getLogger("uvicorn.error")
@@ -161,6 +167,10 @@ class MonitorHub:
         self._last_outlook_key: str | None = None
         # AI 候选确认冷却：key = "SYMBOL|ai_tf" → unix ts
         self._ai_confirm_at: dict[str, float] = {}
+        # 关键位快照（按品种；优先高周期 worker）
+        self._level_snapshots: dict[str, LevelSnapshot] = {}
+        self._level_tf_rank: dict[str, int] = {}
+        self._level_last_broadcast: dict[str, float] = {}
 
     def _daemon_state_path(self) -> Any:
         from pathlib import Path
@@ -214,6 +224,107 @@ class MonitorHub:
             )
         except Exception as e:
             logger.warning("save daemon state failed: %s", e)
+
+    def _maybe_update_level_snapshot(self, worker: StreamWorker) -> None:
+        snap = snapshot_from_series(worker.series)
+        if not snap:
+            return
+        sym = worker.key.symbol
+        rank = tf_priority(worker.key.timeframe)
+        prev = self._level_tf_rank.get(sym, -1)
+        if rank < prev:
+            return
+        self._level_snapshots[sym] = snap
+        self._level_tf_rank[sym] = rank
+
+    def _find_level_snapshot(self, symbol: str) -> LevelSnapshot | None:
+        sym = _norm_symbol(symbol)
+        best: LevelSnapshot | None = None
+        best_rank = -1
+        for w in self._workers.values():
+            if w.key.symbol != sym or len(w.series.candles) < 30:
+                continue
+            rank = tf_priority(w.key.timeframe)
+            if rank <= best_rank:
+                continue
+            snap = snapshot_from_series(w.series)
+            if snap:
+                best = snap
+                best_rank = rank
+        if best is not None:
+            self._level_snapshots[sym] = best
+            self._level_tf_rank[sym] = best_rank
+        return best
+
+    def level_context_for(
+        self, symbol: str, price: float | None = None
+    ) -> dict[str, Any] | None:
+        sym = _norm_symbol(symbol)
+        snap = self._level_snapshots.get(sym) or self._find_level_snapshot(sym)
+        if not snap:
+            return None
+        px = price
+        if px is None:
+            for w in self._workers.values():
+                if w.key.symbol != sym:
+                    continue
+                prem = w.last_premium or {}
+                mark = prem.get("mark_price")
+                if mark is not None:
+                    px = float(mark)
+                    break
+        if px is None and self._workers:
+            for w in self._workers.values():
+                if w.key.symbol == sym and w.series.candles:
+                    px = float(w.series.candles[-1].close)
+                    break
+        if px is None:
+            return None
+        ctx = compute_level_context(float(px), snap)
+        ctx["symbol"] = sym
+        return ctx
+
+    def levels_for_symbols(self, symbols: list[str]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for raw in symbols:
+            sym = _norm_symbol(raw)
+            ctx = self.level_context_for(sym)
+            if ctx:
+                out[sym] = ctx
+        return out
+
+    async def _broadcast_symbol(self, symbol: str, payload: dict[str, Any]) -> None:
+        dead: list[WebSocket] = []
+        for w in self._workers.values():
+            if w.key.symbol != symbol:
+                continue
+            targets = set(w.clients) | set(w.alert_clients)
+            for ws in list(targets):
+                try:
+                    if ws.client_state != WebSocketState.CONNECTED:
+                        dead.append(ws)
+                        continue
+                    await ws.send_json(payload)
+                except Exception:
+                    dead.append(ws)
+        for w in self._workers.values():
+            for ws in dead:
+                w.clients.discard(ws)
+                w.alert_clients.discard(ws)
+
+    async def _push_level_context(
+        self, symbol: str, price: float, *, force: bool = False
+    ) -> None:
+        sym = _norm_symbol(symbol)
+        now = time.monotonic()
+        last = self._level_last_broadcast.get(sym, 0.0)
+        if not force and now - last < 2.0:
+            return
+        ctx = self.level_context_for(sym, price)
+        if not ctx:
+            return
+        self._level_last_broadcast[sym] = now
+        await self._broadcast_symbol(sym, {"type": "level_context", **ctx})
 
     def is_daemon_key(self, key: StreamKey) -> bool:
         s = get_settings()
@@ -274,7 +385,22 @@ class MonitorHub:
                 f"周期={','.join(tfs)}\n"
                 "TG：各币策略点位照推；周期位置日更每天 1 条"
             )
+        await self._bootstrap_cycle_paper_sync()
         return info
+
+    async def _bootstrap_cycle_paper_sync(self) -> None:
+        """常驻盯盘启动后立刻对齐 cycle 纸面仓（不必等下一根 4h 收盘）。"""
+        settings = get_settings()
+        if not settings.monitor_cycle_switch_enabled or not settings.monitor_paper_enabled:
+            return
+        tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
+        for w in self._workers.values():
+            if not self.is_daemon_key(w.key) or w.key.timeframe.lower() != tf:
+                continue
+            try:
+                await self._evaluate_cycle_switch(w)
+            except Exception:
+                logger.exception("cycle bootstrap failed %s", w.key)
 
     def worker_health(self) -> list[dict[str, Any]]:
         """供 /api/monitor/daemon 诊断：每个 worker 是否存活、最近收盘评估。"""
@@ -411,6 +537,7 @@ class MonitorHub:
                     "market": market,
                     "candles": [candle_to_dict(c) for c in worker.series.candles],
                     "premium": worker.last_premium,
+                    "level_context": self.level_context_for(symbol),
                     "telegram_ready": self._telegram_ready(),
                     "watching": [symbol],
                 }
@@ -492,6 +619,10 @@ class MonitorHub:
                         "message": f"后台观察已接入 {len(attached)} 个交易对",
                     }
                 )
+                for wsym in attached:
+                    ctx = self.level_context_for(wsym)
+                    if ctx:
+                        await websocket.send_json({"type": "level_context", **ctx})
             except Exception:
                 pass
 
@@ -755,6 +886,10 @@ class MonitorHub:
                         await self._paper_on_mark(worker, float(mark))
                     except Exception:
                         logger.exception("paper mark check failed %s", key.symbol)
+                    try:
+                        await self._push_level_context(key.symbol, float(mark))
+                    except Exception:
+                        logger.exception("level context push failed %s", key.symbol)
                 settings = get_settings()
                 if settings.monitor_rules_enabled:
                     # funding/溢价与 K 线周期无关：只由挂 mark 的那条 worker 告警
@@ -964,6 +1099,17 @@ class MonitorHub:
             },
         )
 
+        # 纸面每根 4h 都对齐目标仓（幂等）；避免「已持仓但本根未变仓」时永远不开仓
+        try:
+            await self._paper_sync_cycle(
+                worker,
+                target_position=signal.target_position,
+                price=float(signal.price),
+                regime=signal.market_regime,
+            )
+        except Exception:
+            logger.exception("paper cycle sync failed %s", worker.key)
+
         if not signal.changed:
             return False
 
@@ -1012,15 +1158,6 @@ class MonitorHub:
             signal.target_position,
             signal.market_regime,
         )
-        try:
-            await self._paper_sync_cycle(
-                worker,
-                target_position=signal.target_position,
-                price=float(signal.price),
-                regime=signal.market_regime,
-            )
-        except Exception:
-            logger.exception("paper cycle sync failed %s", worker.key)
         return True
 
     async def _evaluate_cycle_outlook(self, worker: StreamWorker) -> None:
@@ -1558,6 +1695,13 @@ class MonitorHub:
             )
         except Exception:
             logger.exception("ai confirm failed %s", worker.key)
+
+        try:
+            self._maybe_update_level_snapshot(worker)
+            close_px = float(worker.series.candles[-1].close)
+            await self._push_level_context(worker.key.symbol, close_px, force=True)
+        except Exception:
+            logger.exception("level snapshot failed %s", worker.key)
 
     async def inject_demo_alert(
         self,

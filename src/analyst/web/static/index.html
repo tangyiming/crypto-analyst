@@ -753,6 +753,82 @@
     }
     .btn-analyze:hover { background: rgba(240,185,11,.22); }
     .btn-analyze:disabled { opacity: 0.5; cursor: wait; }
+    .level-board {
+      border-top: 1px solid var(--line);
+      background: rgba(12, 14, 18, 0.65);
+      padding: 6px 10px 8px;
+      overflow-x: auto;
+      flex-shrink: 0;
+    }
+    .level-board-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .level-board-grid {
+      display: flex;
+      gap: 8px;
+      min-width: min-content;
+    }
+    .level-card {
+      flex: 0 0 auto;
+      min-width: 220px;
+      max-width: 280px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: var(--panel);
+      font-size: 11px;
+    }
+    .level-card.active {
+      border-color: rgba(240, 185, 11, 0.45);
+      box-shadow: 0 0 0 1px rgba(240, 185, 11, 0.12);
+    }
+    .level-card-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .level-card-head .sym {
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+      color: var(--text);
+    }
+    .level-card-head .px {
+      font-family: ui-monospace, monospace;
+      color: var(--yellow);
+    }
+    .level-zone {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .level-zone.dip { background: rgba(14, 203, 129, 0.15); color: var(--green); }
+    .level-zone.short { background: rgba(246, 70, 93, 0.15); color: var(--red); }
+    .level-zone.wait { background: rgba(132, 142, 156, 0.12); color: var(--muted); }
+    .level-zone.mix { background: rgba(240, 185, 11, 0.12); color: var(--yellow); }
+    .level-rows { display: grid; gap: 3px; }
+    .level-row {
+      display: grid;
+      grid-template-columns: 42px 1fr auto;
+      gap: 6px;
+      font-family: ui-monospace, monospace;
+      color: var(--muted);
+    }
+    .level-row .k { color: var(--muted); }
+    .level-row .v { color: var(--text); }
+    .level-row .d { text-align: right; }
+    .level-row .d.pos { color: var(--green); }
+    .level-row .d.neg { color: var(--red); }
+    .level-row .d.near { font-weight: 600; }
     .dock {
       display: flex;
       flex-direction: column;
@@ -1082,6 +1158,13 @@
       </label>
       <button type="button" id="btnAddWatch" class="chip chip-add shrink-0">+</button>
       <div id="symbolChips" class="flex flex-wrap gap-1 min-w-0"></div>
+    </div>
+    <div id="levelBoard" class="level-board hidden" aria-label="关键位实时">
+      <div class="level-board-head">
+        <span>关键位 · 实时</span>
+        <span id="levelBoardHint" class="muted">支撑/阻力距离 · 回调区</span>
+      </div>
+      <div id="levelBoardGrid" class="level-board-grid"></div>
     </div>
   </header>
 
@@ -1524,6 +1607,8 @@
   let alertStore = [];
   let sessionStore = [];
   let dockFilterCurrent = true;
+  let levelStore = {};
+  let levelPollTimer = null;
   let pendingAlert = null; // 切币后等 snapshot 再画点
   let historyOverlay = null; // 历史分析在图上的锚点 {symbol,time,plan,direction}
   let chartMode = 'native'; // tv | native（告警箭头只能画在直连图）
@@ -2690,6 +2775,7 @@
     saveWatchlist();
     renderChips(activeSymbol);
     updateStrategyMetaWatch();
+    pollLevelBoard();
     toast('已加入观察', s, 'long');
     if ($('watchAll').checked) connect({ silent: true });
   }
@@ -2697,9 +2783,11 @@
   function removeFromWatch(sym) {
     const s = normalizeSymbol(sym);
     watchSymbols = watchSymbols.filter((x) => normalizeSymbol(x) !== s);
+    delete levelStore[s];
     saveWatchlist();
     renderChips(activeSymbol);
     updateStrategyMetaWatch();
+    pollLevelBoard();
     toast('已移除观察', s, 'short');
     if ($('watchAll').checked) connect({ silent: true });
   }
@@ -2909,6 +2997,101 @@
       const dt = new Date(Number(p.next_funding_time));
       $('mFundingAt').textContent = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
+  }
+
+  function trendZh(t) {
+    if (t === 'up') return '偏多';
+    if (t === 'down') return '偏空';
+    return '震荡';
+  }
+
+  function zoneClass(ctx) {
+    const z = ctx?.zone || {};
+    if (z.dip_buy && z.try_short) return 'mix';
+    if (z.dip_buy) return 'dip';
+    if (z.try_short) return 'short';
+    return 'wait';
+  }
+
+  function fmtDistPct(v) {
+    if (v == null || !Number.isFinite(Number(v))) return '—';
+    const n = Number(v);
+    return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+  }
+
+  function ingestLevelContext(msg) {
+    if (!msg || !msg.symbol) return;
+    const sym = normalizeSymbol(msg.symbol);
+    levelStore[sym] = msg;
+    renderLevelBoard();
+  }
+
+  function renderLevelBoard() {
+    const board = $('levelBoard');
+    const grid = $('levelBoardGrid');
+    if (!board || !grid) return;
+    const syms = watchSymbols.length ? watchSymbols.map(normalizeSymbol) : [normalizeSymbol(activeSymbol)];
+    const rows = syms.map((s) => levelStore[s]).filter(Boolean);
+    if (!rows.length) {
+      board.classList.add('hidden');
+      grid.innerHTML = '';
+      return;
+    }
+    board.classList.remove('hidden');
+    grid.innerHTML = rows.map((ctx) => {
+      const sym = normalizeSymbol(ctx.symbol);
+      const active = sym === normalizeSymbol(activeSymbol);
+      const z = ctx.zone || {};
+      const zCls = zoneClass(ctx);
+      const reason = (z.reasons || []).slice(0, 2).join(' · ');
+      const levelRows = (label, items, tone) => (items || []).map((row, i) => {
+        const d = Number(row.dist_pct);
+        const dCls = row.near ? 'near' : (d >= 0 ? 'pos' : 'neg');
+        return `<div class="level-row">
+          <span class="k">${label}${i + 1}</span>
+          <span class="v" style="color:${tone}">${fmtNum(row.price)}</span>
+          <span class="d ${dCls}">${fmtDistPct(d)}</span>
+        </div>`;
+      }).join('');
+      return `<div class="level-card${active ? ' active' : ''}" data-sym="${escapeHtml(sym)}">
+        <div class="level-card-head">
+          <span class="sym">${escapeHtml(sym.split('/')[0])}</span>
+          <span class="px">${fmtNum(ctx.price)}</span>
+        </div>
+        <div class="level-zone ${zCls}">${escapeHtml(z.label || '观望')}</div>
+        <div class="muted" style="font-size:10px;margin-bottom:4px;">
+          ${escapeHtml(trendZh(ctx.trend))} · ${escapeHtml(ctx.timeframe || '—')} · 枢轴 ${fmtNum(ctx.key_pivot)}
+        </div>
+        ${reason ? `<div class="muted" style="font-size:10px;margin-bottom:4px;">${escapeHtml(reason)}</div>` : ''}
+        <div class="level-rows">
+          ${levelRows('支', ctx.supports, 'var(--green)')}
+          ${levelRows('阻', ctx.resistances, 'var(--red)')}
+        </div>
+      </div>`;
+    }).join('');
+    grid.querySelectorAll('.level-card').forEach((card) => {
+      card.addEventListener('click', () => {
+        const sym = card.getAttribute('data-sym');
+        if (sym) setSelectedSymbol(sym);
+      });
+    });
+  }
+
+  async function pollLevelBoard() {
+    const syms = watchSymbols.length ? watchSymbols : [activeSymbol];
+    if (!syms.length) return;
+    try {
+      const qs = new URLSearchParams({ symbols: syms.join(',') });
+      const data = await fetch(`/api/monitor/levels?${qs}`).then((r) => r.json());
+      const levels = data.levels || {};
+      Object.values(levels).forEach((ctx) => ingestLevelContext(ctx));
+    } catch (_) {}
+  }
+
+  function startLevelPolling() {
+    if (levelPollTimer) clearInterval(levelPollTimer);
+    pollLevelBoard();
+    levelPollTimer = setInterval(pollLevelBoard, 5000);
   }
 
   function ensureChart() {
@@ -3393,6 +3576,7 @@
       wrap.appendChild(del);
       box.appendChild(wrap);
     });
+    renderLevelBoard();
   }
 
   function setConn(text, ok) {
@@ -4078,6 +4262,7 @@
       if (msg.type === 'snapshot') {
         setChartData(msg.candles || []);
         if (msg.premium) updatePremium(msg.premium);
+        if (msg.level_context) ingestLevelContext(msg.level_context);
         if (msg.candles?.length) {
           const last = msg.candles[msg.candles.length - 1];
           updateTicker(last.close, `K ${msg.candles.length}根`);
@@ -4093,6 +4278,8 @@
       } else if (msg.type === 'premium') {
         if (normalizeSymbol(msg.symbol) !== normalizeSymbol(activeSymbol)) return;
         updatePremium(msg);
+      } else if (msg.type === 'level_context') {
+        ingestLevelContext(msg);
       } else if (msg.type === 'kline' && msg.candle) {
         if (normalizeSymbol(msg.symbol) !== normalizeSymbol(activeSymbol)) return;
         upsertCandle(msg.candle);
@@ -4310,6 +4497,7 @@
     });
 
     startPaperLivePoll();
+    startLevelPolling();
 
     let savedApp = null;
     try { savedApp = localStorage.getItem('monitor.appView'); } catch (_) {}

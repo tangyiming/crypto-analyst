@@ -173,6 +173,17 @@ def monitor_alerts(limit: int = Query(50, ge=1, le=200)):
     return {"alerts": get_monitor_hub().recent_alerts(limit)}
 
 
+@router.get("/api/monitor/levels")
+def monitor_levels(symbols: str = Query("", description="逗号分隔品种，空=配置观察列表")):
+    """各品种实时关键位：支撑/阻力距离、回调区判定。"""
+    hub = get_monitor_hub()
+    s = get_settings()
+    syms = [_norm_symbol(x) for x in symbols.split(",") if x.strip()]
+    if not syms:
+        syms = list(s.symbols_list)
+    return {"levels": hub.levels_for_symbols(syms)}
+
+
 class DemoAlertRequest(BaseModel):
     symbol: str = "BTC/USDT"
     timeframe: str = "15m"
