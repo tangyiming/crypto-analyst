@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     monitor_require_adx: bool = Field(default=True)
     monitor_adx_period: int = Field(default=14)
     monitor_adx_min: float = Field(default=20.0)
+    # 条件胜率：按时段/ADX/形态质量更新先验并缩放仓位
+    monitor_use_conditional_edge: bool = Field(default=True)
+    monitor_min_conditional_win_rate: float = Field(default=0.42)
     # 规则引擎（无 AI 实时提醒，默认全开）
     monitor_rules_enabled: bool = Field(default=True)
     monitor_rule_macd: bool = Field(default=True)
@@ -161,6 +164,15 @@ class Settings(BaseSettings):
     monitor_paper_max_margin_pct: float = Field(default=0.15)
     # 双线止损后同品种同向冷却（分钟）；0=关闭
     monitor_paper_sl_cooldown_minutes: int = Field(default=120)
+    # ── 风控熔断 ──
+    # 单日亏损熔断：当日权益回撤 ≥ 该百分比 → 停开新仓（次日 UTC 自动复位）；0=关
+    paper_daily_loss_limit_pct: float = Field(default=5.0)
+    # 熔断时是否顺带全平现有仓位（默认只停新仓）
+    paper_flatten_on_daily_fuse: bool = Field(default=False)
+    # 单策略累计已实现亏损回撤 ≥ 初始权益该百分比 → 停用该策略开仓；0=关
+    paper_strategy_dd_disable_pct: float = Field(default=20.0)
+    # 组合总名义敞口 / 权益 上限（相关资产敞口叠加保护）；0=关
+    paper_max_gross_exposure: float = Field(default=2.0)
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
     # 默认：AI 点评 + 异动类规则（金叉死叉/放量/突破等）；cycle 仓位变化仍不直推
     monitor_tg_trade_rules: str = Field(

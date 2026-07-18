@@ -368,6 +368,43 @@ def cycle_timeline(days: int = Query(800, ge=200, le=2000)):
     payload = outlook_to_api_dict(outlook, timeline)
     # 日线收盘价（轻量折线背景）
     payload["candles"] = [candle_to_dict(c) for c in series.candles[-400:]]
+
+    # 双确认相位（cycle_switch 实际执行口径）：减半日历 × 200日EMA（±3% 防抖带）
+    from analyst.compute.indicators import ema
+    from analyst.compute.strategies.cycle_switch import halving_phase
+
+    closes = [c.close for c in series.candles]
+    e200 = ema(closes, 200)
+    band = 0.03
+    ma_state = "bull"
+    for i, c in enumerate(series.candles):
+        if c.close > e200[i] * (1 + band):
+            ma_state = "bull"
+        elif c.close < e200[i] * (1 - band):
+            ma_state = "bear"
+    cal = halving_phase(series.candles[-1].timestamp)
+    if ma_state == "bear" and cal == "bear":
+        regime = "bear"
+    elif ma_state == "bull":
+        regime = "bull"
+    else:
+        regime = "accum"
+    price = closes[-1]
+    legs = {
+        "bear": "熊市腿：清多、只空半仓（z>1.5 反弹空 + 唐奇安破位空）",
+        "bull": "牛市腿：唐奇安 40/20 只多",
+        "accum": "筑底：唐奇安只多（允许多、不做空）",
+    }
+    payload["regime"] = {
+        "regime": regime,
+        "calendar_phase": cal,
+        "ma_state": ma_state,
+        "price": round(price, 2),
+        "ema200d": round(e200[-1], 2),
+        "deviation_pct": round((price / e200[-1] - 1) * 100, 2) if e200[-1] else 0.0,
+        "band_pct": band * 100,
+        "active_leg": legs[regime],
+    }
     return payload
 
 
@@ -426,6 +463,8 @@ class ClassicBacktestRequest(BaseModel):
     fee_pct: float = 0.05
     slippage_pct: float = 0.02
     oos_days: int = Field(365, ge=0, le=730)
+    include_funding: bool = True
+    vol_target: float = Field(0.0, ge=0.0, le=1.0)
 
 
 @router.post("/api/backtest/classic")
@@ -434,10 +473,12 @@ async def backtest_classic_api(req: ClassicBacktestRequest):
     from analyst.backtest.classic import (
         STRATEGIES,
         CostModel,
+        apply_vol_target,
         build_cycle_regime,
         label_regimes,
         simulate,
     )
+    from analyst.data.derivatives import fetch_funding_history
     from analyst.data.fetcher import fetch_candles_history
 
     if req.strategy not in STRATEGIES:
@@ -472,6 +513,15 @@ async def backtest_classic_api(req: ClassicBacktestRequest):
         kwargs["symbol"] = sym
 
     positions = fn(candles, **kwargs) if kwargs else fn(candles)
+    if req.vol_target > 0:
+        positions = apply_vol_target(
+            candles, positions, timeframe=tf, target_annual_vol=req.vol_target
+        )
+    funding = None
+    if req.include_funding:
+        funding = await asyncio.to_thread(
+            fetch_funding_history, sym, days=req.days
+        ) or None
     labels = label_regimes(candles)
     rep = simulate(
         candles,
@@ -481,6 +531,7 @@ async def backtest_classic_api(req: ClassicBacktestRequest):
         timeframe=tf,
         cost=cost,
         regime_labels=labels,
+        funding=funding,
     )
 
     oos = None
@@ -498,11 +549,33 @@ async def backtest_classic_api(req: ClassicBacktestRequest):
                 symbol=sym,
                 timeframe=tf,
                 cost=cost,
+                funding=funding,
             )
             oos = oos_rep.to_row()
 
+    # 权益曲线（降采样 ≤400 点，带市况标签做底色）
+    n = len(rep.equity_curve)
+    step = max(1, n // 400)
+    curve = [
+        {
+            "t": candles[i].timestamp.isoformat(),
+            "v": round(rep.equity_curve[i], 6),
+            "r": labels[i],
+        }
+        for i in range(0, n, step)
+    ]
+    if n and (n - 1) % step != 0:
+        curve.append(
+            {
+                "t": candles[n - 1].timestamp.isoformat(),
+                "v": round(rep.equity_curve[n - 1], 6),
+                "r": labels[n - 1],
+            }
+        )
+
     return {
         "report": rep.to_row(),
+        "equity_curve": curve,
         "oos": oos,
         "range": {
             "start": candles[0].timestamp.isoformat(),

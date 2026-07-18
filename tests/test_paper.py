@@ -272,3 +272,91 @@ def test_paper_cycle_switch_sync(tmp_path, monkeypatch):
     by = {b["strategy"]: b for b in st["by_strategy"]}
     assert by["cycle_switch"]["trades"] == 1
     assert by["cycle_switch"]["realized_pnl"] > 0
+
+
+# ── 风控熔断 ─────────────────────────────────────────────────
+def _plan(direction="long", entry=100.0, stop=99.0, tp=102.0):
+    return {
+        "direction": direction,
+        "entry_low": entry,
+        "entry_high": entry,
+        "stop_loss": stop,
+        "take_profit_1": tp,
+        "rr_ratio": 2,
+        "rationale": "test",
+    }
+
+
+def _open(broker, symbol="BTC/USDT", strategy="ai_plan", **kw):
+    return broker.try_open_from_plan(
+        symbol=symbol,
+        timeframe="15m",
+        direction="long",
+        price=100.0,
+        plan=_plan(),
+        strategy=strategy,
+        **kw,
+    )
+
+
+def test_daily_loss_fuse_blocks_new_opens(tmp_path, monkeypatch):
+    broker = _reset_broker(tmp_path, monkeypatch, PAPER_DAILY_LOSS_LIMIT_PCT="5")
+    assert _open(broker, "BTC/USDT") is not None
+    # 打到止损：亏 risk 0.1U ≈ 1% —— 未触发熔断
+    broker.on_mark("BTC/USDT", 99.0)
+    assert _open(broker, "ETH/USDT") is not None
+    # 人为制造 >5% 当日回撤
+    broker.state.cash -= 1.0
+    broker._revalue()
+    assert broker._daily_fuse_active() is True
+    assert _open(broker, "SOL/USDT") is None  # 新仓被拒
+    st = broker.status()
+    assert st["risk_fuse"]["daily_fuse_active"] is True
+
+
+def test_daily_fuse_resets_next_day(tmp_path, monkeypatch):
+    broker = _reset_broker(tmp_path, monkeypatch, PAPER_DAILY_LOSS_LIMIT_PCT="5")
+    broker.state.cash -= 1.0
+    broker._revalue()
+    assert broker._daily_fuse_active() is True
+    # 模拟跨日：改锚到昨天 → 复位
+    broker.state.day_anchor = "2000-01-01"
+    broker.state.daily_fuse_date = "2000-01-01"
+    assert broker._daily_fuse_active() is False
+    assert _open(broker, "SOL/USDT") is not None
+
+
+def test_strategy_dd_fuse_disables_and_clears(tmp_path, monkeypatch):
+    broker = _reset_broker(
+        tmp_path, monkeypatch, PAPER_STRATEGY_DD_DISABLE_PCT="10",
+        PAPER_DAILY_LOSS_LIMIT_PCT="0",
+    )
+    # 直接记录已实现回撤：峰值 0 → 累计 -1.5（= 初始 10 的 15% > 10% 限额）
+    broker._record_strategy_pnl("double_line", -1.5)
+    assert "double_line" in broker.state.disabled_strategies
+    opened = broker.try_open_from_plan(
+        symbol="BTC/USDT", timeframe="15m", direction="long",
+        price=100.0, plan=_plan(), strategy="double_line",
+    )
+    assert opened is None
+    # 其他策略不受影响
+    assert _open(broker, "ETH/USDT", strategy="ai_plan") is not None
+    # 手动恢复
+    cleared = broker.clear_strategy_fuse("double_line")
+    assert cleared == ["double_line"]
+    assert broker.state.disabled_strategies == []
+    # 恢复后峰值重置到当前累计，不会立刻再触发
+    broker._record_strategy_pnl("double_line", 0.01)
+    assert "double_line" not in broker.state.disabled_strategies
+
+
+def test_gross_exposure_cap_blocks(tmp_path, monkeypatch):
+    broker = _reset_broker(
+        tmp_path, monkeypatch, PAPER_MAX_GROSS_EXPOSURE="1.5",
+        PAPER_DAILY_LOSS_LIMIT_PCT="0",
+    )
+    # 每仓 notional = 10（equity 10 × risk1% / dist1% ×100）→ 第二仓总敞口 20 > 15
+    assert _open(broker, "BTC/USDT") is not None
+    assert _open(broker, "ETH/USDT") is None
+    st = broker.status()
+    assert st["risk_fuse"]["max_gross_exposure"] == 1.5

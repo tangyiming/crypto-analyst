@@ -282,6 +282,33 @@
       background: #12161c;
       overflow: hidden;
     }
+    .bt-curve {
+      width: 100%;
+      max-width: 1080px;
+      height: 220px;
+      margin-top: 16px;
+      background: #0b0e11;
+      border: 1px solid #2b3139;
+      border-radius: 8px;
+      display: block;
+    }
+    .bt-curve-legend {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text);
+      margin: 6px 0 2px;
+      flex-wrap: wrap;
+    }
+    .bt-curve-legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      margin-right: 4px;
+      vertical-align: -1px;
+    }
     .bt-result table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .bt-result th, .bt-result td {
       padding: 10px 14px;
@@ -966,6 +993,23 @@
     }
     .dock-pane.hidden { display: none; }
     /* ── 四年周期页面 ── */
+    .cycle-regime {
+      border: 1px solid #2b3139;
+      border-left: 3px solid var(--muted);
+      border-radius: 8px;
+      background: #12161c;
+      padding: 12px 14px;
+      margin: 4px 0 16px;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    .cycle-regime.bull { border-left-color: var(--green); }
+    .cycle-regime.bear { border-left-color: var(--red); }
+    .cycle-regime.accum { border-left-color: #f0b90b; }
+    .cycle-regime .cr-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+    .cycle-regime .cr-check { color: var(--muted); }
+    .cycle-regime .cr-check b { color: var(--text); font-weight: 500; }
+    .cycle-regime .cr-leg { margin-top: 4px; }
     .cycle-page-inner {
       max-width: 1100px;
       margin: 0 auto;
@@ -1608,6 +1652,7 @@
           <p id="cycleSummaryLine" style="color:var(--muted);margin:0">加载中…</p>
         </div>
         <div id="cycleStats" class="cycle-stats"></div>
+        <div id="cycleRegime" class="cycle-regime hidden"></div>
         <div class="text-[11px]" style="color:var(--muted)">本相位进度</div>
         <div class="cycle-phase-bar"><div id="cyclePhaseFill" class="cycle-phase-fill bull" style="width:0%"></div></div>
         <div id="cyclePhaseLabel" class="text-[11px] font-mono mb-3" style="color:var(--text)"></div>
@@ -1689,6 +1734,9 @@
             <option value="ema_cross">EMA 双均线</option>
             <option value="boll_mr">布林均值回归</option>
             <option value="cycle_switch">牛熊周期切换</option>
+            <option value="bull_trend">牛市腿 · 唐奇安只多</option>
+            <option value="bear_defense">熊市腿 · 只空半仓</option>
+            <option value="chop_range">震荡腿 · 布林回归</option>
             <option value="buy_hold">买入持有</option>
           </select>
         </div>
@@ -1720,6 +1768,13 @@
           <span id="btStatus" class="text-[11px]" style="color:var(--muted)">首次约 10–30 秒（拉取历史 K 线）</span>
         </div>
       </form>
+      <canvas id="btCurve" class="bt-curve hidden" height="220"></canvas>
+      <div id="btCurveLegend" class="bt-curve-legend hidden">
+        <span><i style="background:rgba(14,203,129,0.35)"></i>牛市段</span>
+        <span><i style="background:rgba(246,70,93,0.35)"></i>熊市段</span>
+        <span><i style="background:rgba(132,142,156,0.25)"></i>震荡段</span>
+        <span style="color:var(--muted)">白线=权益（起点 1.0，虚线基准）· 涨跌超 10 倍自动对数轴</span>
+      </div>
       <div id="btResult" class="bt-result hidden"></div>
     </div>
   </div>
@@ -1981,6 +2036,7 @@
           <button type="button" class="btn-analyze" id="paperResetBtn" style="background:rgba(246,70,93,.14);color:var(--red);">重置为 100U</button>
           <span class="muted" style="font-size:11px;" id="paperMeta">—</span>
         </div>
+        <div id="paperFuse" class="hidden" style="border:1px solid #2b3139;border-left:3px solid var(--red);border-radius:8px;background:#12161c;padding:10px 14px;margin-bottom:14px;font-size:12px;line-height:1.7;"></div>
         <div class="paper-section">
           <h2>按策略</h2>
           <div id="paperByStrategy" class="muted" style="font-size:12px;">加载中…</div>
@@ -2106,6 +2162,32 @@
     if ($('cycleSummaryLine')) {
       $('cycleSummaryLine').textContent = data.summary || '';
     }
+    renderCycleRegime(data.regime);
+  }
+
+  function renderCycleRegime(rg) {
+    const box = $('cycleRegime');
+    if (!box) return;
+    if (!rg) { box.classList.add('hidden'); return; }
+    const zh = { bull: '牛市', bear: '熊市', accum: '筑底/过渡' };
+    const color = { bull: 'var(--green)', bear: 'var(--red)', accum: '#f0b90b' };
+    const calOk = rg.calendar_phase === 'bear' ? '✓' : '✗';
+    const maZh = rg.ma_state === 'bear' ? '下方' : '上方';
+    const dev = Number(rg.deviation_pct) || 0;
+    box.className = `cycle-regime ${rg.regime}`;
+    box.classList.remove('hidden');
+    box.innerHTML = `
+      <div class="cr-title">双确认相位（cycle_switch 实际执行口径）：
+        <span style="color:${color[rg.regime]}">${zh[rg.regime] || rg.regime}</span></div>
+      <div class="cr-check">
+        日历相位 <b>${zh[rg.calendar_phase] || rg.calendar_phase}</b>
+        · BTC <b>${Number(rg.price).toLocaleString()}</b> 在 200日EMA
+        <b>${Number(rg.ema200d).toLocaleString()}</b> ${maZh}
+        <b style="color:${dev >= 0 ? 'var(--green)' : 'var(--red)'}">${dev >= 0 ? '+' : ''}${dev.toFixed(1)}%</b>
+        （防抖带 ±${rg.band_pct}%）
+        ${rg.regime === 'bear' ? `· 判熊双确认 日历${calOk} 均线✓` : ''}
+      </div>
+      <div class="cr-leg">→ 当前激活：<b>${escapeHtml(rg.active_leg || '')}</b></div>`;
   }
 
   function renderCycleSvg(data) {
@@ -2696,6 +2778,28 @@
       $('paperPosCount').textContent = n > 0 ? `(${n})` : '';
     }
 
+    const fuseEl = $('paperFuse');
+    if (fuseEl) {
+      const fuse = st.risk_fuse || {};
+      const dis = fuse.disabled_strategies || [];
+      const active = !!fuse.daily_fuse_active;
+      if (!active && !dis.length) {
+        fuseEl.classList.add('hidden');
+      } else {
+        fuseEl.classList.remove('hidden');
+        let html = '<b>🧯 风控熔断</b> · ';
+        if (active) {
+          html += `<span style="color:var(--red)">单日亏损超 ${fuse.daily_loss_limit_pct}%，今日停开新仓（次日 UTC 自动复位）</span>`;
+        }
+        if (dis.length) {
+          if (active) html += ' · ';
+          html += `回撤停用策略：<span style="color:var(--red)">${dis.map(escapeHtml).join(', ')}</span>`
+            + `<span class="muted">（恢复：analyst paper-fuse clear）</span>`;
+        }
+        fuseEl.innerHTML = html;
+      }
+    }
+
     const byEl = $('paperByStrategy');
     if (byEl) {
       const rows = st.by_strategy || [];
@@ -3251,6 +3355,85 @@
     return `<span class="${cls}">${n >= 0 ? '+' : ''}${n.toFixed(1)}%</span>`;
   }
 
+  function renderBtCurve(points) {
+    const canvas = $('btCurve');
+    const legend = $('btCurveLegend');
+    if (!canvas) return;
+    if (!Array.isArray(points) || points.length < 2) {
+      canvas.classList.add('hidden');
+      legend?.classList.add('hidden');
+      return;
+    }
+    canvas.classList.remove('hidden');
+    legend?.classList.remove('hidden');
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || 900;
+    const h = canvas.clientHeight || 220;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#0b0e11';
+    ctx.fillRect(0, 0, w, h);
+
+    const vals = points.map((p) => Math.max(Number(p.v) || 1e-9, 1e-9));
+    const maxV = Math.max(...vals);
+    const minV = Math.min(...vals);
+    const useLog = maxV / minV > 10;
+    const tr = (v) => (useLog ? Math.log(v) : v);
+    const lo = tr(minV);
+    const hi = tr(maxV);
+    const span = Math.max(hi - lo, 1e-9);
+    const xOf = (i) => (i / (points.length - 1)) * (w - 2) + 1;
+    const yOf = (v) => h - 14 - ((tr(v) - lo) / span) * (h - 28);
+
+    // 市况底色（连续同标签合并成段）
+    const tint = {
+      bull: 'rgba(14,203,129,0.10)',
+      bear: 'rgba(246,70,93,0.10)',
+      chop: 'rgba(132,142,156,0.07)',
+    };
+    let segStart = 0;
+    for (let i = 1; i <= points.length; i += 1) {
+      if (i === points.length || points[i].r !== points[segStart].r) {
+        ctx.fillStyle = tint[points[segStart].r] || tint.chop;
+        ctx.fillRect(xOf(segStart), 0, xOf(Math.min(i, points.length - 1)) - xOf(segStart), h);
+        segStart = i;
+      }
+    }
+
+    // 1.0 基准虚线
+    ctx.strokeStyle = '#474d57';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, yOf(1.0));
+    ctx.lineTo(w, yOf(1.0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 权益线
+    ctx.beginPath();
+    ctx.strokeStyle = '#eaecef';
+    ctx.lineWidth = 1.4;
+    points.forEach((p, i) => {
+      const x = xOf(i);
+      const y = yOf(Math.max(Number(p.v) || 1e-9, 1e-9));
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // 首尾时间与终值
+    ctx.fillStyle = '#848e9c';
+    ctx.font = '10px "SF Mono", Menlo, monospace';
+    ctx.fillText((points[0].t || '').slice(0, 10), 6, h - 4);
+    const endLabel = (points[points.length - 1].t || '').slice(0, 10);
+    const endVal = vals[vals.length - 1];
+    const endText = `${endLabel} · ${endVal.toFixed(2)}x`;
+    ctx.fillStyle = endVal >= 1 ? '#0ecb81' : '#f6465d';
+    ctx.fillText(endText, w - ctx.measureText(endText).width - 6, h - 4);
+  }
+
   async function runWebBacktest() {
     const btn = $('btnRunBacktest');
     const status = $('btStatus');
@@ -3294,6 +3477,7 @@
       html += '</tbody></table>';
       box.innerHTML = html;
       box.classList.remove('hidden');
+      renderBtCurve(data.equity_curve);
       if (status) status.textContent = '完成';
     } catch (e) {
       if (status) status.textContent = `失败：${e.message}`;

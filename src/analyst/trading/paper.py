@@ -201,6 +201,13 @@ class PaperState:
     equity_curve: list[dict[str, Any]] = field(default_factory=list)
     # strategy|symbol|direction -> ISO 冷却截止时间
     sl_cooldown_until: dict[str, str] = field(default_factory=dict)
+    # ── 风控熔断状态 ──
+    day_anchor: str = ""                 # 当日锚（UTC 日期）
+    day_start_equity: float = 0.0        # 当日起始权益
+    daily_fuse_date: str = ""            # 触发过单日熔断的日期（当日内停开新仓）
+    strategy_pnl: dict[str, float] = field(default_factory=dict)       # 累计已实现
+    strategy_pnl_peak: dict[str, float] = field(default_factory=dict)  # 已实现峰值
+    disabled_strategies: list[str] = field(default_factory=list)       # 回撤停用
     updated_at: str = field(default_factory=_utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -214,6 +221,12 @@ class PaperState:
             "trades": [asdict(t) for t in self.trades],
             "equity_curve": list(self.equity_curve[-500:]),
             "sl_cooldown_until": dict(self.sl_cooldown_until),
+            "day_anchor": self.day_anchor,
+            "day_start_equity": self.day_start_equity,
+            "daily_fuse_date": self.daily_fuse_date,
+            "strategy_pnl": dict(self.strategy_pnl),
+            "strategy_pnl_peak": dict(self.strategy_pnl_peak),
+            "disabled_strategies": list(self.disabled_strategies),
             "updated_at": self.updated_at,
         }
 
@@ -275,6 +288,20 @@ class PaperState:
             trades=trades,
             equity_curve=list(data.get("equity_curve") or []),
             sl_cooldown_until=cool,
+            day_anchor=str(data.get("day_anchor") or ""),
+            day_start_equity=float(data.get("day_start_equity") or 0.0),
+            daily_fuse_date=str(data.get("daily_fuse_date") or ""),
+            strategy_pnl={
+                str(k): float(v)
+                for k, v in (data.get("strategy_pnl") or {}).items()
+            },
+            strategy_pnl_peak={
+                str(k): float(v)
+                for k, v in (data.get("strategy_pnl_peak") or {}).items()
+            },
+            disabled_strategies=[
+                str(s) for s in (data.get("disabled_strategies") or [])
+            ],
             updated_at=str(data.get("updated_at") or _utc_now_iso()),
         )
 
@@ -339,7 +366,101 @@ class PaperBroker:
                 px = p.entry
             upnl += p.unrealized_pnl(px)
         self.state.equity = self.state.cash + upnl
+        if not self.state.day_anchor:
+            self._roll_day_anchor()
         self._mark_equity_point()
+
+    # ── 风控熔断 ─────────────────────────────────────────
+    def _roll_day_anchor(self) -> None:
+        """跨 UTC 日则重置当日锚（单日亏损熔断随之自动复位）。"""
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self.state.day_anchor != day:
+            self.state.day_anchor = day
+            self.state.day_start_equity = self.state.equity
+
+    def _daily_fuse_active(self) -> bool:
+        """单日亏损熔断：当日权益回撤超限 → 当日停开新仓。"""
+        settings = get_settings()
+        limit = float(getattr(settings, "paper_daily_loss_limit_pct", 0.0) or 0.0)
+        if limit <= 0:
+            return False
+        self._roll_day_anchor()
+        day = self.state.day_anchor
+        if self.state.daily_fuse_date == day:
+            return True
+        base = self.state.day_start_equity
+        if base > 0 and self.state.equity <= base * (1.0 - limit / 100.0):
+            self.state.daily_fuse_date = day
+            logger.warning(
+                "🔴 纸面熔断：当日权益 %.2f → %.2f（-%.1f%% ≥ 限额 %.1f%%），今日停开新仓",
+                base, self.state.equity,
+                (1 - self.state.equity / base) * 100, limit,
+            )
+            return True
+        return False
+
+    def _flatten_all_locked(self, reason: str) -> list[dict[str, Any]]:
+        """按最新标记价全平（熔断可选动作）。"""
+        events: list[dict[str, Any]] = []
+        for pos in list(self.state.positions):
+            px = self._marks.get(pos.symbol) or pos.entry
+            events.append(self._close_locked(pos, px, reason))
+        self.state.positions = []
+        self._revalue()
+        return events
+
+    def _record_strategy_pnl(self, strategy: str, pnl: float) -> None:
+        """更新策略累计已实现盈亏与峰值；回撤超限则停用该策略。"""
+        settings = get_settings()
+        s = (strategy or "unknown").lower()
+        cum = self.state.strategy_pnl.get(s, 0.0) + pnl
+        self.state.strategy_pnl[s] = cum
+        peak = max(self.state.strategy_pnl_peak.get(s, 0.0), cum)
+        self.state.strategy_pnl_peak[s] = peak
+        dd_limit = float(
+            getattr(settings, "paper_strategy_dd_disable_pct", 0.0) or 0.0
+        )
+        if dd_limit <= 0 or s in self.state.disabled_strategies:
+            return
+        start = self.state.starting_equity or 100.0
+        dd_pct = (peak - cum) / start * 100.0
+        if dd_pct >= dd_limit:
+            self.state.disabled_strategies.append(s)
+            logger.warning(
+                "🔴 纸面熔断：策略 %s 已实现回撤 %.1f%%（峰值 %+.2f → %+.2f，"
+                "≥ 限额 %.1f%%），停用其开仓；恢复：analyst paper-fuse clear %s",
+                s, dd_pct, peak, cum, dd_limit, s,
+            )
+
+    def clear_strategy_fuse(self, strategy: str | None = None) -> list[str]:
+        """手动恢复被停用的策略（None=全部）。返回恢复列表。"""
+        with _lock:
+            if strategy is None:
+                cleared = list(self.state.disabled_strategies)
+                self.state.disabled_strategies = []
+            else:
+                s = strategy.lower()
+                cleared = [x for x in self.state.disabled_strategies if x == s]
+                self.state.disabled_strategies = [
+                    x for x in self.state.disabled_strategies if x != s
+                ]
+            for s in cleared:
+                # 回撤基准重置到当前累计，避免恢复后立刻再次触发
+                self.state.strategy_pnl_peak[s] = self.state.strategy_pnl.get(s, 0.0)
+            self._save()
+            return cleared
+
+    def _gross_exposure_blocked(self, new_notional: float) -> bool:
+        """组合总名义敞口上限（相关资产敞口叠加保护）。"""
+        settings = get_settings()
+        cap = float(getattr(settings, "paper_max_gross_exposure", 0.0) or 0.0)
+        if cap <= 0 or self.state.equity <= 0:
+            return False
+        gross = sum(
+            (p.notional if p.notional else p.qty * p.entry)
+            for p in self.state.positions
+        )
+        return (gross + max(new_notional, 0.0)) > cap * self.state.equity
 
     def reset(self, starting_equity: float | None = None) -> PaperState:
         with _lock:
@@ -350,6 +471,7 @@ class PaperBroker:
                 else (getattr(settings, "monitor_paper_equity", 100.0) or 100.0)
             )
             self.state = PaperState(starting_equity=start, cash=start, equity=start)
+            self._roll_day_anchor()
             self._marks.clear()
             self._save()
             return self.state
@@ -503,6 +625,19 @@ class PaperBroker:
                 "equity_curve": list(self.state.equity_curve[-90:]),
                 "updated_at": self.state.updated_at,
                 "marks": dict(self._marks),
+                "risk_fuse": {
+                    "daily_fuse_active": self._daily_fuse_active(),
+                    "daily_loss_limit_pct": float(
+                        getattr(get_settings(), "paper_daily_loss_limit_pct", 0.0)
+                        or 0.0
+                    ),
+                    "day_start_equity": round(self.state.day_start_equity, 6),
+                    "disabled_strategies": list(self.state.disabled_strategies),
+                    "max_gross_exposure": float(
+                        getattr(get_settings(), "paper_max_gross_exposure", 0.0)
+                        or 0.0
+                    ),
+                },
             }
 
     def try_open_from_plan(
@@ -516,6 +651,7 @@ class PaperBroker:
         strategy: str = "ai_plan",
         session_id: int | None = None,
         model_id: str | None = None,
+        risk_scale: float = 1.0,
     ) -> dict[str, Any] | None:
         """按计划开纸面仓（ai_plan / double_line）。成功返回事件 dict。"""
         settings = get_settings()
@@ -579,6 +715,14 @@ class PaperBroker:
         if rr is None or rr <= 0:
             rr = _calc_rr(direction, entry, stop, take)
 
+        try:
+            rs = float(risk_scale)
+        except (TypeError, ValueError):
+            rs = 1.0
+        if rs <= 0:
+            logger.info("纸面跳过：risk_scale<=0 %s/%s", strategy, sym)
+            return None
+
         with _lock:
             return self._open_locked(
                 symbol=sym,
@@ -591,7 +735,7 @@ class PaperBroker:
                 session_id=session_id,
                 model_id=model_id,
                 rationale=str(plan.get("rationale") or "")[:200],
-                risk_scale=1.0,
+                risk_scale=rs,
                 rr_ratio=rr,
             )
 
@@ -698,6 +842,12 @@ class PaperBroker:
         if len(self.state.positions) >= max_open:
             logger.info("纸面跳过：已达最大持仓数 %d", max_open)
             return None
+        if self._daily_fuse_active():
+            logger.info("纸面跳过：单日亏损熔断生效中（今日停开新仓）")
+            return None
+        if (strategy or "").lower() in self.state.disabled_strategies:
+            logger.info("纸面跳过：策略 %s 因回撤熔断已停用", strategy)
+            return None
 
         if strategy == "double_line":
             cool_min = int(
@@ -758,6 +908,15 @@ class PaperBroker:
                 )
         if qty <= 0 or notional < 0.01:
             logger.info("纸面跳过：缩仓后过小")
+            return None
+
+        if self._gross_exposure_blocked(notional):
+            logger.info(
+                "纸面跳过：组合名义敞口将超上限（equity×%.1f），%s/%s 不开",
+                float(getattr(settings, "paper_max_gross_exposure", 0.0) or 0.0),
+                strategy,
+                symbol,
+            )
             return None
 
         fee_bps = float(getattr(settings, "monitor_paper_fee_bps", 4.0) or 0.0)
@@ -856,6 +1015,11 @@ class PaperBroker:
                 events.append(ev)
             self.state.positions = still
             self._revalue()
+            # 单日亏损熔断：可选全平（默认只停开新仓，见 _open_locked）
+            if self._daily_fuse_active() and getattr(
+                settings, "paper_flatten_on_daily_fuse", False
+            ) and self.state.positions:
+                events.extend(self._flatten_all_locked("fuse"))
             if events:
                 for ev in events:
                     ev["equity"] = round(self.state.equity, 6)
@@ -914,6 +1078,7 @@ class PaperBroker:
         self.state.trades.append(trade)
         if len(self.state.trades) > 500:
             self.state.trades = self.state.trades[-500:]
+        self._record_strategy_pnl(pos.strategy, pnl)
 
         if outcome == "sl" and (pos.strategy or "").lower() == "double_line":
             cool_min = int(

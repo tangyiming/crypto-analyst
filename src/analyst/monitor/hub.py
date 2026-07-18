@@ -717,6 +717,8 @@ class MonitorHub:
             require_adx=s.monitor_require_adx,
             adx_period=s.monitor_adx_period,
             adx_min=s.monitor_adx_min,
+            use_conditional_edge=s.monitor_use_conditional_edge,
+            min_conditional_win_rate=s.monitor_min_conditional_win_rate,
         )
 
     async def _ensure_worker(self, key: StreamKey) -> StreamWorker:
@@ -1030,6 +1032,44 @@ class MonitorHub:
             use_cache=True,
         )
         return series.candles
+
+    async def _evaluate_oi_rules(self, worker: StreamWorker) -> None:
+        """收盘后查 OI 背离（价跌OI增/价涨OI降）。REST 快照带 60s 缓存。"""
+        import asyncio as _asyncio
+
+        from analyst.data.derivatives import fetch_derivatives
+        from analyst.monitor.rules import evaluate_oi_rules
+
+        candles = worker.series.candles
+        if len(candles) < 3:
+            return
+        # 最近 4h 价格变化（按周期折算根数）
+        span = max(
+            1, int(4 * 3600 // max((candles[-1].timestamp - candles[-2].timestamp).total_seconds(), 1))
+        )
+        if len(candles) <= span:
+            return
+        base = candles[-1 - span].close
+        if base <= 0:
+            return
+        price_chg = (candles[-1].close / base - 1.0) * 100
+        snap = await _asyncio.to_thread(fetch_derivatives, worker.key.symbol)
+        if snap is None:
+            return
+        events, st = evaluate_oi_rules(
+            price=candles[-1].close,
+            price_chg_pct_4h=price_chg,
+            oi_chg_pct_4h=snap.oi_change_pct_4h,
+            long_short_ratio=snap.long_short_ratio,
+            state=worker.rule_state,
+            cfg=self._rule_config(),
+        )
+        worker.rule_state = st
+        from analyst.monitor.rules import rule_event_to_alert
+
+        for ev in events:
+            ra = rule_event_to_alert(worker.key.symbol, worker.key.timeframe, ev)
+            await self._emit_rule_alert(worker, ra)
 
     async def _evaluate_cycle_switch(self, worker: StreamWorker) -> bool:
         """配置周期收盘评估 cycle_switch（每个盯盘币对各自跑）。
@@ -1424,6 +1464,10 @@ class MonitorHub:
         if price is None:
             return
         broker = get_paper_broker()
+        try:
+            risk_scale = float(alert.get("risk_scale") or 1.0)
+        except (TypeError, ValueError):
+            risk_scale = 1.0
         event = await asyncio.to_thread(
             broker.try_open_from_plan,
             symbol=alert["symbol"],
@@ -1434,6 +1478,7 @@ class MonitorHub:
             strategy=strategy,
             session_id=alert.get("session_id"),
             model_id=alert.get("model_id"),
+            risk_scale=risk_scale,
         )
         if not event:
             return
@@ -1675,6 +1720,13 @@ class MonitorHub:
                     await self._emit_rule_alert(worker, ra)
             except Exception:
                 logger.exception("rule evaluate failed %s", worker.key)
+
+            # OI 背离：需 REST 衍生品快照（60s 缓存），只在 1h 及以上收盘时查
+            try:
+                if worker.key.timeframe in ("1h", "2h", "4h"):
+                    await self._evaluate_oi_rules(worker)
+            except Exception:
+                logger.exception("oi rules failed %s", worker.key)
 
         try:
             cycle_candidate = await self._evaluate_cycle_switch(worker)

@@ -53,6 +53,16 @@ class RuleConfig:
     funding_extreme_pct: float = 0.05  # |funding|*100 >= 该值（%/8h）
     premium_extreme_pct: float = 0.30  # |mark-index|%
 
+    # CVD（累计主动买卖差）背离：价创新高/低但真实资金流不跟
+    enable_cvd: bool = True
+    cvd_lookback: int = 48             # 新高/新低判定窗口（根）
+    cvd_cooldown_bars: int = 12
+
+    # OI 背离：价跌 OI 升=新空入场；价涨 OI 降=空头回补（涨势虚）
+    enable_oi: bool = True
+    oi_change_min_pct: float = 3.0     # |OI 4h 变化| 门槛 %
+    oi_price_min_pct: float = 0.8      # 同窗口价格变化门槛 %
+
 
 @dataclass
 class RuleEvent:
@@ -73,6 +83,16 @@ def _bar_unix(series: CandleSeries) -> int:
     if ts.tzinfo is None:
         return int(ts.replace(tzinfo=timezone.utc).timestamp())
     return int(ts.astimezone(timezone.utc).timestamp())
+
+
+def _bar_span_sec(series: CandleSeries) -> int:
+    """单根 K 线秒数（由最近两根时间差推断，兜底 900s）。"""
+    cs = series.candles
+    if len(cs) >= 2:
+        d = int((cs[-1].timestamp - cs[-2].timestamp).total_seconds())
+        if d > 0:
+            return d
+    return 900
 
 
 def _ema_stack(ema7: float, ema30: float, ema52: float) -> str:
@@ -236,6 +256,47 @@ def evaluate_closed_bar_rules(
                     )
                 )
                 state["volume_tag"] = tag
+
+    # ── CVD 背离：价格创窗口新高/低，累计主动买卖差不确认 ──
+    # CVD_i = Σ(2×taker_buy - volume)：正=主动买主导。价新高而 CVD 不新高
+    # = 拉盘无真实买盘跟随（诱多）；价新低而 CVD 不新低 = 砸盘无真实卖压（诱空）。
+    if cfg.enable_cvd and len(series.candles) > cfg.cvd_lookback + 2:
+        window = series.candles[-(cfg.cvd_lookback + 1):]
+        has_taker = any(c.taker_buy_volume > 0 for c in window)
+        if has_taker:
+            cvd: list[float] = []
+            acc = 0.0
+            for c in window:
+                acc += 2.0 * c.taker_buy_volume - c.volume
+                cvd.append(acc)
+            closes_w = [c.close for c in window]
+            cur_close, cur_cvd = closes_w[-1], cvd[-1]
+            prior_hi, prior_lo = max(closes_w[:-1]), min(closes_w[:-1])
+            cvd_hi, cvd_lo = max(cvd[:-1]), min(cvd[:-1])
+            last_bar = state.get("cvd_bar", 0)
+            cooled = t - last_bar >= cfg.cvd_cooldown_bars * _bar_span_sec(series)
+            diverge: tuple[str, str] | None = None
+            if cur_close > prior_hi and cur_cvd < cvd_hi:
+                diverge = ("short", "价创新高但 CVD 未新高：主动买盘未跟随（顶背离）")
+            elif cur_close < prior_lo and cur_cvd > cvd_lo:
+                diverge = ("long", "价创新低但 CVD 未新低：主动卖压未跟随（底背离）")
+            if diverge and cooled:
+                direction, why = diverge
+                events.append(
+                    RuleEvent(
+                        rule="cvd_divergence",
+                        title="CVD 背离",
+                        direction=direction,
+                        strength=0.7,
+                        price=price,
+                        reasons=[
+                            why,
+                            f"窗口={cfg.cvd_lookback} 根 · CVD={cur_cvd:,.0f}",
+                        ],
+                        marker_time=t,
+                    )
+                )
+                state["cvd_bar"] = t
 
     # ── 结构趋势翻转 ──
     if cfg.enable_structure_flip:
@@ -458,6 +519,67 @@ def evaluate_premium_rules(
                 )
                 state["premium_key"] = key
 
+    return events, state
+
+
+def evaluate_oi_rules(
+    *,
+    price: float,
+    price_chg_pct_4h: float,
+    oi_chg_pct_4h: float,
+    long_short_ratio: float = 0.0,
+    state: dict[str, Any],
+    cfg: RuleConfig | None = None,
+) -> tuple[list[RuleEvent], dict[str, Any]]:
+    """OI（未平仓量）背离：仓位流向与价格方向组合解读。
+
+    · 价跌 + OI 升：新空主动进场，下跌有燃料（偏空延续）
+    · 价涨 + OI 降：空头回补推动的上涨，缺新多（涨势存疑，偏防追多）
+    · 价涨 + OI 升 / 价跌 + OI 降：健康同向，不告警（避免噪音）
+    """
+    cfg = cfg or RuleConfig()
+    state = dict(state or {})
+    events: list[RuleEvent] = []
+    if not cfg.enable_oi:
+        return events, state
+    now = int(datetime.now(timezone.utc).timestamp())
+    bucket = now // (4 * 3600)  # 同一形态每 4h 最多一次
+
+    strong_oi = abs(oi_chg_pct_4h) >= cfg.oi_change_min_pct
+    strong_px = abs(price_chg_pct_4h) >= cfg.oi_price_min_pct
+    if not (strong_oi and strong_px):
+        return events, state
+
+    kind: tuple[str, str, str] | None = None
+    if price_chg_pct_4h < 0 and oi_chg_pct_4h > 0:
+        kind = ("short", "价跌 + OI 增", "新空主动进场，下跌有燃料（偏空延续）")
+    elif price_chg_pct_4h > 0 and oi_chg_pct_4h < 0:
+        kind = ("short", "价涨 + OI 降", "空头回补推涨、缺新多接力（防追多）")
+    if kind is None:
+        return events, state
+
+    direction, label, why = kind
+    key = f"oi:{bucket}:{label}"
+    if state.get("oi_key") == key:
+        return events, state
+    reasons = [
+        f"{label}：4h 价 {price_chg_pct_4h:+.2f}% · OI {oi_chg_pct_4h:+.2f}%",
+        why,
+    ]
+    if long_short_ratio:
+        reasons.append(f"大户多空比 {long_short_ratio:.2f}")
+    events.append(
+        RuleEvent(
+            rule="oi_divergence",
+            title=f"OI 背离（{label}）",
+            direction=direction,
+            strength=0.65,
+            price=price,
+            reasons=reasons,
+            marker_time=now,
+        )
+    )
+    state["oi_key"] = key
     return events, state
 
 
