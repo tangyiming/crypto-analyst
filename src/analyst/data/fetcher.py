@@ -29,6 +29,8 @@ class Candle:
     low: float
     close: float
     volume: float
+    # 主动买量（taker buy base volume）：CVD 用；旧缓存/不支持的来源为 0
+    taker_buy_volume: float = 0.0
 
 
 @dataclass
@@ -101,6 +103,51 @@ def _ccxt_symbol(symbol: str, market: str) -> str:
     return s
 
 
+def _fetch_klines_page(
+    exchange,
+    ccxt_sym: str,
+    timeframe: str,
+    *,
+    since: int | None = None,
+    limit: int = 1500,
+) -> list[list]:
+    """拉一页 K 线，优先币安原始端点（12 列，含 taker buy volume）。
+
+    统一接口 fetch_ohlcv 只有 6 列，拿不到主动买量；
+    原始端点不可用（非币安/方法缺失）时回退统一接口。
+    """
+    raw = getattr(exchange, "fapiPublicGetKlines", None) or getattr(
+        exchange, "publicGetKlines", None
+    )
+    if raw is not None:
+        try:
+            # 'BTC/USDT:USDT' → 'BTCUSDT'（币安 id 转换是确定性的，免 load_markets）
+            raw_sym = ccxt_sym.split(":")[0].replace("/", "")
+            params: dict = {
+                "symbol": raw_sym,
+                "interval": timeframe,
+                "limit": min(limit, 1500),
+            }
+            if since is not None:
+                params["startTime"] = int(since)
+            return raw(params)
+        except Exception:
+            pass  # 回退统一接口
+    return exchange.fetch_ohlcv(ccxt_sym, timeframe=timeframe, since=since, limit=limit)
+
+
+def _row_to_candle(row: list) -> Candle:
+    return Candle(
+        timestamp=datetime.utcfromtimestamp(int(row[0]) / 1000),
+        open=float(row[1]),
+        high=float(row[2]),
+        low=float(row[3]),
+        close=float(row[4]),
+        volume=float(row[5]),
+        taker_buy_volume=float(row[9]) if len(row) > 9 else 0.0,
+    )
+
+
 def fetch_candles(
     symbol: str,
     timeframe: str = "4h",
@@ -135,7 +182,7 @@ def fetch_candles(
     ohlcv: list | None = None
     for attempt in range(3):
         try:
-            ohlcv = exchange.fetch_ohlcv(ccxt_sym, timeframe=timeframe, limit=limit)
+            ohlcv = _fetch_klines_page(exchange, ccxt_sym, timeframe, limit=limit)
             break
         except Exception as e:
             last_err = e
@@ -144,17 +191,7 @@ def fetch_candles(
     if ohlcv is None:
         raise RuntimeError(f"Failed to fetch {ccxt_sym} {timeframe} ({market}): {last_err}")
 
-    candles = [
-        Candle(
-            timestamp=datetime.utcfromtimestamp(row[0] / 1000),
-            open=float(row[1]),
-            high=float(row[2]),
-            low=float(row[3]),
-            close=float(row[4]),
-            volume=float(row[5]),
-        )
-        for row in ohlcv
-    ]
+    candles = [_row_to_candle(row) for row in ohlcv]
     series = CandleSeries(symbol=display_sym, timeframe=timeframe, candles=candles)
 
     if use_cache:
@@ -204,8 +241,8 @@ def fetch_candles_history(
         last_err: Exception | None = None
         for attempt in range(3):
             try:
-                page = exchange.fetch_ohlcv(
-                    ccxt_sym, timeframe=timeframe, since=since, limit=1500
+                page = _fetch_klines_page(
+                    exchange, ccxt_sym, timeframe, since=since, limit=1500
                 )
                 break
             except Exception as e:
@@ -229,17 +266,7 @@ def fetch_candles_history(
     ordered = [rows_by_ts[k] for k in sorted(rows_by_ts)]
     if ordered:
         ordered = ordered[:-1]  # 最后一根可能未收盘
-    candles = [
-        Candle(
-            timestamp=datetime.utcfromtimestamp(row[0] / 1000),
-            open=float(row[1]),
-            high=float(row[2]),
-            low=float(row[3]),
-            close=float(row[4]),
-            volume=float(row[5]),
-        )
-        for row in ordered
-    ]
+    candles = [_row_to_candle(row) for row in ordered]
     series = CandleSeries(symbol=display_sym, timeframe=timeframe, candles=candles)
     if use_cache and candles:
         cache.set(cache_key, _serialize_series(series), expire=24 * 3600)
@@ -310,6 +337,7 @@ def _serialize_series(series: CandleSeries) -> dict:
                 "low": c.low,
                 "close": c.close,
                 "volume": c.volume,
+                "tbv": c.taker_buy_volume,
             }
             for c in series.candles
         ],
@@ -325,6 +353,7 @@ def _restore_series(data: dict) -> CandleSeries:
             low=c["low"],
             close=c["close"],
             volume=c["volume"],
+            taker_buy_volume=c.get("tbv", 0.0),
         )
         for c in data["candles"]
     ]

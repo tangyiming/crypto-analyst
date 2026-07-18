@@ -172,3 +172,58 @@ def fetch_derivatives(symbol: str, ttl_seconds: int = 60) -> DerivativesSnapshot
     except Exception as e:
         log.warning(f"fetch_derivatives({fsym}) 失败：{e}")
         return None
+
+
+def fetch_funding_history(
+    symbol: str,
+    *,
+    days: int = 1095,
+    use_cache: bool = True,
+) -> list[tuple[int, float]]:
+    """历史资金费率（8h 一档），返回 [(fundingTime_ms, rate), ...] 升序。
+
+    GET /fapi/v1/fundingRate 单页上限 1000 条（≈333 天），按 startTime 翻页。
+    已结算历史不可变 → 缓存 24h（key 含当天日期）。
+    """
+    import time as _time
+    from datetime import datetime as _dt
+
+    fsym = symbol.replace("/", "").upper()
+    if not fsym.endswith("USDT"):
+        fsym = f"{fsym}USDT"
+    today = _dt.utcnow().strftime("%Y%m%d")
+    cache_key = f"funding_hist:{fsym}:{days}:{today}"
+    cache = _cache()
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    now_ms = int(_time.time() * 1000)
+    since = now_ms - days * 86_400_000
+    out: dict[int, float] = {}
+    while since < now_ms:
+        try:
+            rows = _get_json(
+                f"{BINANCE_FAPI}/fapi/v1/fundingRate",
+                {"symbol": fsym, "startTime": since, "limit": 1000},
+                timeout=10,
+            )
+        except Exception as e:
+            log.warning(f"fetch_funding_history({fsym}) 失败：{e}")
+            break
+        if not rows:
+            break
+        for r in rows:
+            out[int(r["fundingTime"])] = float(r["fundingRate"])
+        last = int(rows[-1]["fundingTime"])
+        if last + 1 <= since:
+            break
+        since = last + 1
+        if len(rows) < 1000:
+            break
+
+    result = sorted(out.items())
+    if use_cache and result:
+        cache.set(cache_key, result, expire=24 * 3600)
+    return result

@@ -171,6 +171,84 @@ def test_cycle_switch_positions():
     assert pos3[60] == -0.5 and pos3[61] == 0.0
 
 
+def _trend_down(n: int, start: float = 500.0, step: float = 2.0) -> list[Candle]:
+    out = []
+    px = start
+    for i in range(n):
+        out.append(_c(i, px, px + step * 0.25, px - step * 1.25, px - step))
+        px -= step
+    return out
+
+
+def test_cycle_switch_bear_trend_short_leg():
+    from analyst.backtest.classic import positions_cycle_switch
+
+    # 熊市 + 持续阴跌（z 常年为负，反弹空腿永不触发）→ 破位空腿接管
+    candles = _trend_down(120)
+    bear = {c.timestamp: "bear" for c in candles}
+    pos = positions_cycle_switch(candles, bear, entry_n=20, exit_n=10)
+    assert pos[-1] == -0.5
+    assert all(p <= 0 for p in pos)
+    # 关掉破位空腿 = 旧行为：全程空仓
+    pos_off = positions_cycle_switch(
+        candles, bear, entry_n=20, exit_n=10, bear_trend_short=False
+    )
+    assert all(p == 0.0 for p in pos_off)
+
+
+def test_bull_trend_long_only():
+    from analyst.backtest.classic import positions_bull_trend
+
+    pos = positions_bull_trend(_trend_up(120), entry_n=20, exit_n=10)
+    assert pos[-1] == 1.0
+    pos_down = positions_bull_trend(_trend_down(120), entry_n=20, exit_n=10)
+    assert all(p == 0.0 for p in pos_down)
+
+
+def test_bear_defense_shorts_and_never_longs():
+    from analyst.backtest.classic import positions_bear_defense
+
+    # 阴跌 → 破位空
+    pos = positions_bear_defense(_trend_down(120), entry_n=20, exit_n=10)
+    assert pos[-1] == -0.5
+    assert all(p <= 0 for p in pos)
+    # 震荡冲高（z > 1.5）→ 反弹空
+    flat = _flat(60)
+    flat.append(_c(60, 100, 109, 100, 108))
+    pos2 = positions_bear_defense(flat, entry_n=20, exit_n=10)
+    assert pos2[-1] == -0.5
+    assert all(p <= 0 for p in pos2)
+
+
+def test_chop_range_half_size_both_sides():
+    from analyst.backtest.classic import positions_chop_range
+
+    dip = _flat(60)
+    dip.append(_c(60, 100, 100, 92, 93))     # z < -2 深坑 → 接多半仓
+    assert positions_chop_range(dip, period=20)[-1] == 0.5
+    spike = _flat(60)
+    spike.append(_c(60, 100, 108, 100, 107))  # z > +2 冲高 → 做空半仓
+    assert positions_chop_range(spike, period=20)[-1] == -0.5
+
+
+def test_chop_range_atr_stop_cuts_tail():
+    """震荡中突发单边暴跌：ATR 止损把逆势多仓砍掉，而非扛到底。"""
+    from analyst.backtest.classic import positions_chop_range
+
+    candles = _flat(60)
+    candles.append(_c(60, 100, 100, 92, 93))          # 深坑 → 接多 0.5
+    px = 93.0
+    for i in range(61, 75):                            # 持续崩盘，远超 3×ATR
+        candles.append(_c(i, px, px + 0.5, px - 5.5, px - 5))
+        px -= 5
+    pos_stop = positions_chop_range(candles, period=20, stop_atr=3.0)
+    assert pos_stop[60] == 0.5
+    assert pos_stop[-1] == 0.0                         # 已被止损
+    # 无止损版：z 一直为负，多仓扛满全程
+    pos_naked = positions_chop_range(candles, period=20, stop_atr=0.0)
+    assert pos_naked[-1] == 0.5
+
+
 def test_evaluate_cycle_switch_no_false_change_on_restart():
     """持有中重启（prev_position 参数=0）不应误报仓位变化。"""
     from analyst.compute.strategies.cycle_switch import evaluate_cycle_switch

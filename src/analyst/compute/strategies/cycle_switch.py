@@ -11,8 +11,11 @@
   各相位执行
   ─────────────────────────────────────
   · bull / accum → 唐奇安 40/20 只多（突破 40 根高点进，跌破 20 根低点出）
-  · bear         → 清多；等反弹 z-score > 1.5 才做空（默认半仓），z 回 0 平仓
-                   卖强不卖弱——追跌做空在加密市场已被回测证伪
+  · bear         → 清多；两条空腿（均默认半仓）：
+                   ① 反弹 z-score > 1.5 做空，z 回 0 平仓（卖强不卖弱）
+                   ② 唐奇安破位空：跌破 40 根低点进，收回 20 根高点出
+                     （bear_trend_short，5 年回测 BTC/ETH/SOL 熊市段收益
+                      由 ≈0 提升至 +37%~+47%，可配置关闭）
   · 保险丝       → 相位翻出 bear 即强平空单（防「周期不重演」）
 
   回测与监控
@@ -56,6 +59,7 @@ class CycleSwitchConfig:
     fade_z: float = 1.5
     mr_period: int = 20
     short_size: float = 0.5
+    bear_trend_short: bool = True  # 熊市加唐奇安破位空腿
     bull_days: int = 550
     bear_days: int = 400
     ma_period: int = 1200  # 4h × 1200 ≈ 200 日
@@ -135,6 +139,7 @@ def positions_cycle_switch(
     fade_z: float = 1.5,
     mr_period: int = 20,
     short_size: float = 0.5,
+    bear_trend_short: bool = True,
     **_ignored,
 ) -> list[float]:
     """生成每根收盘后的目标仓位序列。
@@ -145,6 +150,7 @@ def positions_cycle_switch(
     highs = [c.high for c in candles]
     lows = [c.low for c in candles]
     pos = 0.0
+    mode: str | None = None  # 持仓归属：fade（z 反弹空）/ tshort（唐奇安空）/ None
     out: list[float] = []
     for i in range(len(candles)):
         if i < max(entry_n, mr_period):
@@ -154,25 +160,32 @@ def positions_cycle_switch(
         c = closes[i]
         if reg == "bear":
             if pos > 0:
-                pos = 0.0
+                pos, mode = 0.0, None
+            if bear_trend_short:
+                ll = min(lows[i - entry_n : i])
+                hx = max(highs[max(0, i - exit_n) : i])
+                if pos == 0.0 and c < ll:
+                    pos, mode = -short_size, "tshort"
+                elif pos < 0 and mode == "tshort" and c > hx:
+                    pos, mode = 0.0, None
             window = closes[i - mr_period + 1 : i + 1]
             mean = sum(window) / mr_period
             var = sum((v - mean) ** 2 for v in window) / mr_period
             std = var ** 0.5
             z = (c - mean) / std if std > 0 else 0.0
             if pos == 0.0 and z > fade_z:
-                pos = -short_size
-            elif pos < 0 and z <= 0:
-                pos = 0.0
+                pos, mode = -short_size, "fade"
+            elif pos < 0 and mode == "fade" and z <= 0:
+                pos, mode = 0.0, None
         else:
             if pos < 0:
-                pos = 0.0
+                pos, mode = 0.0, None
             hh = max(highs[i - entry_n : i])
             lx = min(lows[max(0, i - exit_n) : i])
             if pos == 0.0 and c > hh:
-                pos = 1.0
+                pos, mode = 1.0, "trend"
             elif pos > 0 and c < lx:
-                pos = 0.0
+                pos, mode = 0.0, None
         out.append(pos)
     return out
 
@@ -214,6 +227,7 @@ def evaluate_cycle_switch(
         fade_z=cfg.fade_z,
         mr_period=cfg.mr_period,
         short_size=cfg.short_size,
+        bear_trend_short=cfg.bear_trend_short,
     )
     target = positions[-1]
     # 用上一根收盘仓位判断变化，避免进程重启时 prev=0 误报「空仓→持仓」
@@ -242,14 +256,29 @@ def evaluate_cycle_switch(
         f"目标仓位={_position_label(target)}",
     ]
     if reg == "bear":
+        ll = min(lows[i - cfg.entry_n : i]) if i >= cfg.entry_n else None
+        hx2 = max(highs[max(0, i - cfg.exit_n) : i]) if i >= 1 else None
+        broke_down = (
+            cfg.bear_trend_short and ll is not None and closes[-1] < ll
+        )
+        if cfg.bear_trend_short and ll is not None:
+            reasons.append(f"熊市唐奇安：破位空={ll:.6g} / 回补={hx2:.6g}")
         if target < 0 and prev_bar >= 0:
-            reasons.append(f"新开空：z-score={z:+.2f} > {cfg.fade_z}")
+            cause = (
+                f"唐奇安破位（收盘 < {ll:.6g}）"
+                if broke_down
+                else f"z-score={z:+.2f} > {cfg.fade_z}"
+            )
+            reasons.append(f"新开空：{cause}")
         elif target < 0:
-            reasons.append(f"持有空仓：z-score={z:+.2f}（平仓需 ≤0）")
+            reasons.append(f"持有空仓：z-score={z:+.2f}")
         elif target == 0 and prev_bar < 0:
-            reasons.append(f"平空：z-score={z:+.2f} ≤ 0")
+            reasons.append(f"平空：z-score={z:+.2f} ≤ 0 或收回 {cfg.exit_n} 根高点")
         else:
-            reasons.append(f"观望未开空：z-score={z:+.2f}（需 >{cfg.fade_z}）")
+            cond = f"需 z>{cfg.fade_z}"
+            if cfg.bear_trend_short and ll is not None:
+                cond += f" 或收盘破 {ll:.6g}"
+            reasons.append(f"观望未开空：z-score={z:+.2f}（{cond}）")
     else:
         if hh is not None:
             reasons.append(f"唐奇安入场={hh:.6g} / 离场={lx:.6g}")

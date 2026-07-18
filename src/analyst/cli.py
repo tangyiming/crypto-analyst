@@ -674,6 +674,8 @@ def monitor_once(
             require_adx=settings.monitor_require_adx,
             adx_period=settings.monitor_adx_period,
             adx_min=settings.monitor_adx_min,
+            use_conditional_edge=settings.monitor_use_conditional_edge,
+            min_conditional_win_rate=settings.monitor_min_conditional_win_rate,
         ),
     )
     engine = MonitorEngine(cfg, notifier=build_default_notifier(
@@ -748,6 +750,8 @@ def monitor_start(
             require_adx=settings.monitor_require_adx,
             adx_period=settings.monitor_adx_period,
             adx_min=settings.monitor_adx_min,
+            use_conditional_edge=settings.monitor_use_conditional_edge,
+            min_conditional_win_rate=settings.monitor_min_conditional_win_rate,
         ),
     )
     notifier = build_default_notifier(
@@ -793,6 +797,8 @@ def backtest(
         require_adx=settings.monitor_require_adx,
         adx_period=settings.monitor_adx_period,
         adx_min=settings.monitor_adx_min,
+        use_conditional_edge=settings.monitor_use_conditional_edge,
+        min_conditional_win_rate=settings.monitor_min_conditional_win_rate,
     )
 
     with console.status(f"[bold cyan]回放 {sym} {timeframe} × {bars} 根..."):
@@ -829,6 +835,7 @@ def backtest(
         t.add_row("已结算", str(len(closed)))
         t.add_row("胜率(TP/SL)", f"{report.win_rate:.0%}")
         t.add_row("累计 R", f"{report.total_r:+.2f}")
+        t.add_row("加权累计 R", f"{report.total_weighted_r:+.2f}")
         t.add_row("平均 R/笔", f"{report.avg_r:+.2f}")
         pf = report.profit_factor
         t.add_row("盈亏比 PF", "∞" if pf == float("inf") else f"{pf:.2f}")
@@ -932,7 +939,8 @@ def backtest_classic(
     days: int = typer.Option(1095, "--days", help="回测历史天数（自动分页拉取）"),
     strategy: str = typer.Option(
         "donchian", "--strategy", "-s",
-        help="donchian / ema_cross / boll_mr / cycle_switch / buy_hold",
+        help="donchian / ema_cross / boll_mr / cycle_switch / buy_hold "
+             "/ bull_trend / bear_defense / chop_range（分相位手选腿）",
     ),
     long_only: bool = typer.Option(
         True, "--long-only/--long-short",
@@ -941,15 +949,30 @@ def backtest_classic(
     fee_pct: float = typer.Option(0.05, "--fee", help="单边手续费 %"),
     slippage_pct: float = typer.Option(0.02, "--slippage", help="单边滑点 %"),
     oos_days: int = typer.Option(365, "--oos-days", help="样本外天数（0=不分割）"),
+    include_funding: bool = typer.Option(
+        True, "--funding/--no-funding",
+        help="计入历史资金费（多头付正费率、空头收）",
+    ),
+    vol_target: float = typer.Option(
+        0.0, "--vol-target",
+        help="波动率目标化：目标年化波动（如 0.3）；0=关。降回撤、也降收益",
+    ),
+    window_days: int = typer.Option(
+        0, "--windows",
+        help="滚动窗口稳健性检查：每段天数（如 180）；0=关",
+    ),
 ):
-    """📈 经典组合策略回测：复利收益口径、含成本、牛熊震荡分段 + 样本外。"""
+    """📈 经典组合策略回测：复利收益口径、含成本+资金费、牛熊震荡分段 + 样本外。"""
     from analyst.backtest.classic import (
         STRATEGIES,
         CostModel,
+        apply_vol_target,
         build_cycle_regime,
         label_regimes,
+        rolling_window_report,
         simulate,
     )
+    from analyst.data.derivatives import fetch_funding_history
     from analyst.data.fetcher import fetch_candles_history
 
     if strategy not in STRATEGIES:
@@ -978,14 +1001,27 @@ def backtest_classic(
         kwargs["regime"] = build_cycle_regime(btc.candles)
         kwargs["symbol"] = sym
     positions = fn(candles, **kwargs) if kwargs else fn(candles)
+    if vol_target > 0:
+        positions = apply_vol_target(
+            candles, positions, timeframe=timeframe, target_annual_vol=vol_target
+        )
+    funding = None
+    if include_funding:
+        funding = fetch_funding_history(sym, days=days) or None
     labels = label_regimes(candles)
     rep = simulate(
         candles, positions, strategy=strategy, symbol=sym,
-        timeframe=timeframe, cost=cost, regime_labels=labels,
+        timeframe=timeframe, cost=cost, regime_labels=labels, funding=funding,
     )
 
     if strategy == "cycle_switch":
-        mode = "（牛市多/熊市反弹空）"
+        mode = "（牛市多/熊市反弹空+破位空）"
+    elif strategy == "bull_trend":
+        mode = "（牛市腿·只多）"
+    elif strategy == "bear_defense":
+        mode = "（熊市腿·只空半仓）"
+    elif strategy == "chop_range":
+        mode = "（震荡腿·双向半仓）"
     elif strategy == "buy_hold":
         mode = ""
     else:
@@ -1002,6 +1038,10 @@ def backtest_classic(
     t.add_row("调仓次数", str(rep.trades))
     t.add_row("持仓时间占比", f"{rep.exposure:.0%}")
     t.add_row("成本假设", f"单边 {cost.one_way * 100:.3f}%")
+    if funding is not None:
+        t.add_row("资金费净损益", f"{rep.funding_pnl_pct:+.2f}%")
+    if vol_target > 0:
+        t.add_row("波动率目标", f"年化 {vol_target:.0%}")
     for k, zh in (("bull", "牛市段"), ("bear", "熊市段"), ("chop", "震荡段")):
         t.add_row(
             f"{zh}贡献（{rep.regime_bars.get(k, 0)} 根）",
@@ -1019,16 +1059,221 @@ def backtest_classic(
         if idx and idx > 60:
             oos_rep = simulate(
                 candles[idx:], positions[idx:], strategy=strategy, symbol=sym,
-                timeframe=timeframe, cost=cost,
+                timeframe=timeframe, cost=cost, funding=funding,
             )
             console.print(
                 f"[bold]样本外（最近 {oos_days} 天）[/bold]：收益 "
                 f"{oos_rep.total_return_pct:+.1f}% · 回撤 "
                 f"{oos_rep.max_drawdown_pct:.1f}% · 夏普 {oos_rep.sharpe:.2f}"
             )
+    if window_days > 0:
+        wins = rolling_window_report(
+            candles, positions, strategy=strategy, symbol=sym,
+            timeframe=timeframe, window_days=window_days,
+            cost=cost, funding=funding,
+        )
+        if wins:
+            pos_cnt = sum(1 for r in wins if r.total_return_pct > 0)
+            seg = "  ".join(
+                f"{r.start:%y-%m}:{r.total_return_pct:+.0f}%" for r in wins
+            )
+            console.print(
+                f"[bold]滚动窗口（每 {window_days} 天）[/bold]："
+                f"盈利 {pos_cnt}/{len(wins)} 段\n[dim]{seg}[/dim]"
+            )
+            if pos_cnt < len(wins) * 0.6:
+                console.print(
+                    "[yellow]⚠ 超过四成窗口亏损：整体数字可能靠个别行情段撑起，谨慎。[/yellow]"
+                )
     console.print(
         "[dim]提示：回测≠未来。上线前先 paper trading，单笔风险 ≤ 账户 1%。[/dim]"
     )
+
+
+@app.command("backtest-xs")
+def backtest_xs(
+    symbols: str = typer.Option(
+        "BTC,ETH,SOL,BNB,AAVE,UNI,SUI,DOGE", "--symbols",
+        help="观察池（逗号分隔），上市晚的币自动延后进入排序",
+    ),
+    timeframe: str = typer.Option("4h", "--timeframe", "-t"),
+    days: int = typer.Option(1095, "--days"),
+    lookback_days: int = typer.Option(14, "--lookback", help="动量窗口（天）"),
+    top_n: int = typer.Option(2, "--top"),
+    rebalance_days: int = typer.Option(7, "--rebalance", help="调仓间隔（天）"),
+    short_in_bear: bool = typer.Option(
+        True, "--bear-short/--bear-flat", help="熊市做空最弱 / 熊市空仓"
+    ),
+    include_funding: bool = typer.Option(True, "--funding/--no-funding"),
+):
+    """🏁 横截面动量组合回测：做多最强、熊市做空最弱（BTC 定相位）。"""
+    from analyst.backtest.classic import BARS_PER_YEAR
+    from analyst.compute.strategies.cycle_switch import build_cycle_regime
+    from analyst.compute.strategies.xs_momentum import (
+        XsMomentumConfig,
+        backtest_xs_momentum,
+        current_xs_ranking,
+    )
+    from analyst.data.derivatives import fetch_funding_history
+    from analyst.data.fetcher import fetch_candles_history
+
+    bars_per_day = BARS_PER_YEAR.get(timeframe, 2190) // 365
+    syms = [_normalize_symbol(s) for s in symbols.split(",") if s.strip()]
+    series_map = {}
+    with console.status(f"[bold cyan]拉取 {len(syms)} 币 × {days} 天..."):
+        for s in syms:
+            try:
+                sr = fetch_candles_history(s, timeframe, days=days, market="futures")
+                if len(sr.candles) > 300:
+                    series_map[s] = sr.candles
+            except Exception as e:
+                console.print(f"[yellow]{s} 拉取失败，跳过：{e}[/yellow]")
+    if "BTC/USDT" not in series_map:
+        console.print("[red]观察池必须含 BTC（定牛熊相位）[/red]")
+        raise typer.Exit(1)
+
+    regime = build_cycle_regime(series_map["BTC/USDT"])
+    funding_map = None
+    if include_funding:
+        with console.status("[bold cyan]拉取各币历史资金费..."):
+            funding_map = {s: fetch_funding_history(s, days=days) for s in series_map}
+
+    cfg = XsMomentumConfig(
+        lookback=lookback_days * bars_per_day,
+        rebalance=rebalance_days * bars_per_day,
+        top_n=top_n,
+        short_in_bear=short_in_bear,
+    )
+    rep = backtest_xs_momentum(
+        series_map, regime, cfg, timeframe=timeframe, funding_map=funding_map
+    )
+
+    t = Table(
+        title=f"🏁 横截面动量 · {len(series_map)} 币池 · "
+              f"{rep.start:%Y-%m-%d} → {rep.end:%Y-%m-%d}"
+    )
+    t.add_column("指标", style="cyan")
+    t.add_column("值", justify="right")
+    t.add_row("总收益（复利）", f"{rep.total_return_pct:+.1f}%")
+    t.add_row("年化 CAGR", f"{rep.cagr_pct:+.1f}%")
+    t.add_row("最大回撤", f"{rep.max_drawdown_pct:.1f}%")
+    t.add_row("夏普（年化）", f"{rep.sharpe:.2f}")
+    t.add_row("调仓次数", str(rep.rebalances))
+    t.add_row("持仓时间占比", f"{rep.exposure:.0%}")
+    if include_funding:
+        t.add_row("资金费净损益", f"{rep.funding_pnl_pct:+.2f}%")
+    t.add_row(
+        "参数",
+        f"动量 {lookback_days}天 · top{top_n} · {rebalance_days}天调仓 · "
+        f"熊市{'做空最弱' if short_in_bear else '空仓'}",
+    )
+    console.print(t)
+
+    console.print("\n[bold]当前动量排名[/bold]")
+    for s, m in current_xs_ranking(series_map, cfg):
+        bar = "█" * min(20, int(abs(m) * 60))
+        color = "green" if m >= 0 else "red"
+        console.print(f"  {s:12s} [{color}]{m:+7.1%} {bar}[/{color}]")
+    console.print(
+        "[dim]与 cycle_switch 相关性低，适合并行分资金跑；参数平原 12~25 天。[/dim]"
+    )
+
+
+@app.command("backtest-carry")
+def backtest_carry(
+    symbol: str = typer.Argument("BTC", help="币种"),
+    days: int = typer.Option(1095, "--days"),
+    enter_apr: float = typer.Option(
+        5.5, "--enter-apr", help="建仓门槛：费率 EMA 年化 %（÷1095 得每档）"
+    ),
+    ema_days: int = typer.Option(7, "--ema-days", help="费率 EMA 窗口（天）"),
+    fee_pct: float = typer.Option(0.05, "--fee", help="每腿单边费率 %"),
+):
+    """💰 资金费套利回测：现货多+永续空 delta 中性收费（方向无关）。"""
+    from analyst.backtest.classic import CostModel
+    from analyst.compute.strategies.funding_carry import (
+        FundingCarryConfig,
+        backtest_funding_carry,
+        current_carry_status,
+    )
+    from analyst.data.derivatives import fetch_funding_history
+
+    sym = _normalize_symbol(symbol)
+    with console.status(f"[bold cyan]拉取 {sym} 历史资金费 × {days} 天..."):
+        funding = fetch_funding_history(sym, days=days)
+    if len(funding) < 100:
+        console.print(f"[red]资金费样本不足（{len(funding)}）[/red]")
+        raise typer.Exit(1)
+
+    cfg = FundingCarryConfig(
+        ema_n=ema_days * 3,
+        enter_rate=enter_apr / 100.0 / (3 * 365),
+    )
+    rep = backtest_funding_carry(
+        sym, funding, cfg, cost=CostModel(fee_pct=fee_pct, slippage_pct=0.02)
+    )
+
+    t = Table(
+        title=f"💰 资金费套利 · {sym} · {rep.start:%Y-%m-%d} → {rep.end:%Y-%m-%d}"
+    )
+    t.add_column("指标", style="cyan")
+    t.add_column("值", justify="right")
+    t.add_row("总收益（复利）", f"{rep.total_return_pct:+.2f}%")
+    t.add_row("年化（全程）", f"{rep.apr_pct:+.2f}%")
+    t.add_row("年化（在仓时段）", f"{rep.apr_in_position_pct:+.2f}%")
+    t.add_row("最大回撤", f"{rep.max_drawdown_pct:.2f}%")
+    t.add_row("在仓时间占比", f"{rep.exposure:.0%}")
+    t.add_row("进出往返次数", str(rep.round_trips))
+    t.add_row("累计成本", f"{rep.cost_paid_pct:.2f}%")
+    t.add_row("在仓平均费率", f"{rep.avg_rate_collected_pct:+.5f}%/8h")
+    console.print(t)
+
+    st = current_carry_status(funding[-270:], cfg)
+    icon = "🟢" if st.get("signal") == "carry" else "⚪"
+    console.print(
+        f"\n{icon} 当前：费率 EMA {st.get('ema_rate_pct', 0):+.5f}%/8h"
+        f"（年化 {st.get('ema_apr_pct', 0):+.2f}%）· {st.get('note', '')}"
+    )
+    console.print(
+        "[dim]delta 中性：价格涨跌无关，赚多头杠杆的融资成本；"
+        "牛熊震荡皆可收，负费率期自动离场。实操需现货+合约双账户等名义对冲。[/dim]"
+    )
+
+
+@app.command("paper-fuse")
+def paper_fuse(
+    action: str = typer.Argument("status", help="status / clear"),
+    strategy: str = typer.Argument(None, help="clear 时指定策略名；省略=全部"),
+):
+    """🧯 纸面风控熔断：查看状态 / 恢复被停用的策略。"""
+    from analyst.trading.paper import get_paper_broker
+
+    broker = get_paper_broker()
+    if action == "clear":
+        cleared = broker.clear_strategy_fuse(strategy)
+        if cleared:
+            console.print(f"[green]已恢复策略：{', '.join(cleared)}[/green]")
+        else:
+            console.print("[dim]没有可恢复的停用策略。[/dim]")
+        return
+    st = broker.status()
+    fuse = st.get("risk_fuse", {})
+    t = Table(title="🧯 纸面风控熔断状态")
+    t.add_column("项", style="cyan")
+    t.add_column("值", justify="right")
+    t.add_row(
+        "单日亏损熔断",
+        "🔴 生效中（今日停开新仓）" if fuse.get("daily_fuse_active") else "🟢 未触发",
+    )
+    t.add_row("单日亏损限额", f"{fuse.get('daily_loss_limit_pct', 0):g}%")
+    t.add_row("当日起始权益", f"{fuse.get('day_start_equity', 0):.2f}")
+    t.add_row("当前权益", f"{st.get('equity', 0):.2f}")
+    dis = fuse.get("disabled_strategies") or []
+    t.add_row("回撤停用策略", ", ".join(dis) if dis else "无")
+    t.add_row("总敞口上限", f"equity × {fuse.get('max_gross_exposure', 0):g}")
+    console.print(t)
+    if dis:
+        console.print("[dim]恢复：analyst paper-fuse clear <策略名>[/dim]")
 
 
 @app.command("cycle-outlook")
