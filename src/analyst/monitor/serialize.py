@@ -67,7 +67,10 @@ def signal_to_alert_dict(
             "suggested_fraction": kelly.suggested_fraction,
             "risk_budget_pct": kelly.risk_budget_pct,
             "note": kelly.note,
+            "win_rate": kelly.win_rate,
         },
+        "risk_scale": round(float(signal.risk_scale or 1.0), 4),
+        "edge": None if signal.edge is None else signal.edge.to_dict(),
         "trail_note": signal.trail_note,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }

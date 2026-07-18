@@ -95,6 +95,7 @@ def test_evaluate_waits_without_breakout():
             require_ema200=False,
             require_volume=False,
             require_adx=False,
+            use_conditional_edge=False,
         ),
     )
     assert sig.direction == "wait"
@@ -103,7 +104,15 @@ def test_evaluate_waits_without_breakout():
 
 def test_flat_no_pattern():
     s = _pad_then([], n=80, base=100)
-    sig = evaluate_double_line(s, DoubleLineConfig(require_ema200=False, require_volume=False, require_adx=False))
+    sig = evaluate_double_line(
+        s,
+        DoubleLineConfig(
+            require_ema200=False,
+            require_volume=False,
+            require_adx=False,
+            use_conditional_edge=False,
+        ),
+    )
     assert sig.direction == "wait"
 
 
@@ -145,6 +154,7 @@ def test_no_chase_when_far_above_break():
             require_ema200=False,
             require_volume=False,
             require_adx=False,
+            use_conditional_edge=False,
             max_chase_atr=1.5,
         ),
     )

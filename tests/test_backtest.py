@@ -113,6 +113,7 @@ def test_run_backtest_end_to_end_synthetic():
         require_ema200=False,
         require_volume=False,
         require_adx=False,
+        use_conditional_edge=False,
     )
     report = run_backtest(
         "TEST/USDT",

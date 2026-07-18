@@ -12,13 +12,15 @@ https://www.youtube.com/watch?v=fqK-3LK_kF0
 定位：15m 实时盯盘策略（monitor / hub），震荡市期望偏低；
       与 cycle_switch（4h 周期组合）互补，不互相替代。
 
-纸面跟单默认仅 15m/1h；过滤器默认开量能 + ADX≥20。
+纸面跟单默认 15m/1h/4h；过滤器默认开量能 + ADX≥20；条件胜率缩放仓位。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
+from analyst.compute.conditional_edge import ConditionalEdge, estimate_conditional_edge
 from analyst.compute.indicators import compute_adx, ema
 from analyst.compute.kelly import KellySize, suggest_position
 from analyst.compute.plan import TradePlan, calculate_rr, _wait_plan
@@ -59,6 +61,9 @@ class DoubleLineConfig:
 
     assumed_win_rate: float = 0.47     # 视频含趋势过滤后回测约 47%
     kelly_scale: float = 0.25
+    # 条件胜率：按时段/ADX/形态质量更新先验；过低则跳过
+    use_conditional_edge: bool = True
+    min_conditional_win_rate: float = 0.42
 
 
 @dataclass
@@ -90,6 +95,8 @@ class DoubleLineSignal:
     kelly: KellySize | None = None
     trail_note: str | None = None
     bar_ts: object | None = None
+    edge: ConditionalEdge | None = None
+    risk_scale: float = 1.0
     # 兼容旧字段名（CLI / notifier 若引用）
     ema_cross: str | None = None
     macd_cross: str | None = None
@@ -473,12 +480,55 @@ def evaluate_double_line(
             bar_ts=bar_ts,
         )
 
+    # ADX 即使未强制过滤，也用于条件胜率
+    adx_v = compute_adx(
+        [c.high for c in candles],
+        [c.low for c in candles],
+        [c.close for c in candles],
+        cfg.adx_period,
+    )
+    ts_for_edge = bar_ts if isinstance(bar_ts, datetime) else None
+    edge: ConditionalEdge | None = None
+    risk_scale = 1.0
+    win_for_kelly = cfg.assumed_win_rate
+    if cfg.use_conditional_edge:
+        edge = estimate_conditional_edge(
+            base_win_rate=cfg.assumed_win_rate,
+            adx=adx_v,
+            sudden=pattern.sudden_score,
+            overlap=pattern.overlap_ratio,
+            bar_ts=ts_for_edge,
+            min_win_rate=cfg.min_conditional_win_rate,
+        )
+        if edge.skip:
+            failed.append("edge")
+            return DoubleLineSignal(
+                direction="wait",
+                strength=0.4,
+                price=price,
+                pattern=name,
+                break_level=pattern.break_level,
+                reasons=reasons + [edge.skip_reason],
+                filters_passed=passed,
+                filters_failed=failed,
+                plan=plan,
+                edge=edge,
+                risk_scale=0.0,
+                bar_ts=bar_ts,
+            )
+        risk_scale = edge.risk_scale
+        win_for_kelly = edge.win_rate
+        passed.append("edge")
+        reasons.append(
+            f"条件胜率 {edge.win_rate:.0%}（先验 {edge.base_win_rate:.0%}）"
+            f" · 仓位×{edge.risk_scale:.2f} · 时段={edge.session}"
+        )
+
     kelly = suggest_position(
-        cfg.assumed_win_rate,
+        win_for_kelly,
         max(plan.rr_ratio, 0.01),
         kelly_scale=cfg.kelly_scale,
     )
-    # 覆盖 note：强调视频里 Kelly 是盈利加仓
     kelly = KellySize(
         win_rate=kelly.win_rate,
         payoff_ratio=kelly.payoff_ratio,
@@ -486,7 +536,10 @@ def evaluate_double_line(
         fraction=kelly.fraction,
         suggested_fraction=kelly.suggested_fraction,
         risk_budget_pct=kelly.risk_budget_pct,
-        note=kelly.note + " 视频方案：浮盈后可按凯利思路加仓（需人工确认）。",
+        note=(
+            kelly.note
+            + f" 条件胜率 {win_for_kelly:.0%} · risk×{risk_scale:.2f}。"
+        ),
     )
 
     strength = min(
@@ -494,7 +547,8 @@ def evaluate_double_line(
         0.5
         + 0.15 * min(pattern.overlap_ratio, 1.0)
         + 0.1 * min(pattern.body_ratio_avg, 1.0)
-        + 0.05 * min(pattern.sudden_score / 3.0, 1.0),
+        + 0.05 * min(pattern.sudden_score / 3.0, 1.0)
+        + 0.1 * max(0.0, win_for_kelly - cfg.assumed_win_rate),
     )
 
     return DoubleLineSignal(
@@ -515,6 +569,8 @@ def evaluate_double_line(
             cfg.trail_to_8r,
         ),
         bar_ts=bar_ts,
+        edge=edge,
+        risk_scale=risk_scale,
         ema_cross="golden" if pattern.direction == "long" else "death",
         macd_cross=None,
     )
