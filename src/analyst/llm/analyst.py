@@ -787,7 +787,16 @@ def _build_user_message(
     recent_lessons = _recent_ai_lessons_markdown(max_items=recent_lessons_max_items)
     jack_block = _format_jack_block(market, compact=recent_lessons_max_items <= 3)
 
-    return template.format(
+    # 盯盘候选确认时带上触发规则（模板尾部追加，兼容全部 prompt 版本）
+    trigger_suffix = ""
+    trig = market.get("trigger_rules") or []
+    if trig:
+        trigger_suffix = (
+            "\n\n【本次收盘同时触发的规则】" + "、".join(str(t) for t in trig[:8])
+            + "\n请评估这些信号是共振还是相互矛盾，并在结论中说明。"
+        )
+
+    filled = template.format(
         symbol=market["symbol"],
         captured_at=captured_at,
         primary_timeframe=market.get("primary_timeframe") or settings.default_timeframe,
@@ -849,6 +858,7 @@ def _build_user_message(
         max_risk_pct=account.get("max_risk_pct", settings.max_risk_per_trade_pct),
         max_leverage=account.get("max_leverage", settings.max_leverage),
     )
+    return filled + trigger_suffix
 
 
 def _format_jack_block(market: dict, *, compact: bool = False) -> str:

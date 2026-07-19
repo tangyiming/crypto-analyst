@@ -11,9 +11,10 @@ from analyst.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-CHAT_SYSTEM = """你是加密 U 本位永续合约助手，回答用户关于当前盘面的追问。
+CHAT_SYSTEM = """你是加密 U 本位永续合约助手，回答用户关于当前盘面的追问，
+也可回答自动交易系统状态类问题（持仓/分策略盈亏/carry 收费/熔断，见系统状态上下文）。
 约束：
-1. 结合提供的上下文（指标/结构/规则基线/AI 计划）作答，勿编造不存在的数据。
+1. 结合提供的上下文（指标/结构/规则基线/AI 计划/系统状态）作答，勿编造不存在的数据。
 2. 给出可核对的价位与逻辑时尽量具体；信息不足要明确说不确定。
 3. 这不是投资建议；提醒杠杆与风控，勿鼓动满仓。
 4. 用简体中文，简洁分点，一般不超过 350 字。
@@ -148,6 +149,14 @@ def _context_block(symbol: str, timeframe: str, context: dict[str, Any] | None) 
         )
         if ai.get("rationale"):
             lines.append(f"AI论述摘要：{str(ai.get('rationale'))[:500]}")
+    sysstat = ctx.get("system_status") or {}
+    if sysstat:
+        import json as _json
+
+        lines.append(
+            "【自动交易系统状态（纸面）】\n"
+            + _json.dumps(sysstat, ensure_ascii=False, default=str)[:2500]
+        )
     return "\n".join(lines)
 
 

@@ -245,6 +245,34 @@ def monitor_chat(req: MonitorChatRequest):
     tf = _map_analysis_timeframe(req.timeframe)
     context = dict(req.context or {})
 
+    # 注入自动交易系统状态：支持问「carry 收了多少」「哪个策略在亏」等
+    try:
+        from analyst.trading.paper import get_paper_broker
+
+        st = get_paper_broker().status()
+        context.setdefault(
+            "system_status",
+            {
+                "equity": st.get("equity"),
+                "return_pct": st.get("return_pct"),
+                "win_rate": st.get("win_rate"),
+                "positions": [
+                    {
+                        "symbol": p.get("symbol"),
+                        "strategy": p.get("strategy"),
+                        "direction": p.get("direction"),
+                        "unrealized_pnl": p.get("unrealized_pnl"),
+                    }
+                    for p in (st.get("positions") or [])
+                ],
+                "by_strategy": st.get("by_strategy"),
+                "carry_book": st.get("carry_book"),
+                "risk_fuse": st.get("risk_fuse"),
+            },
+        )
+    except Exception:
+        pass
+
     if req.session_id:
         s = repo.get_session(req.session_id)
         if s:

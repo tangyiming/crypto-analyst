@@ -1240,6 +1240,99 @@ def backtest_carry(
     )
 
 
+@app.command("digest")
+def digest(
+    send: bool = typer.Option(False, "--send", help="生成后推送 Telegram"),
+):
+    """📋 生成 AI 交易日报（事实来自系统数据，AI 只做总结）。"""
+    from analyst.llm.digest import compose_daily_digest
+
+    with console.status("[bold cyan]聚合系统事实并生成日报..."):
+        out = compose_daily_digest()
+    console.print(
+        f"[dim]来源: {out.get('source')}"
+        + (f" · {out.get('provider')}/{out.get('model')}" if out.get("model") else "")
+        + "[/dim]\n"
+    )
+    console.print(out.get("text", ""))
+    if send:
+        from analyst.config import get_settings
+        from analyst.monitor.notifier import build_default_notifier
+
+        s = get_settings()
+        n = build_default_notifier(
+            telegram_bot_token=s.telegram_bot_token,
+            telegram_chat_id=s.telegram_chat_id,
+        )
+        try:
+            n.send_text(out.get("text", ""))
+            console.print("[green]已推送 Telegram[/green]")
+        except Exception as e:
+            console.print(f"[yellow]TG 发送失败：{e}[/yellow]")
+
+
+@app.command("research-ideas")
+def research_ideas():
+    """🔬 AI 研究助手：基于系统近况提出可回测的改进假设（AI 提假设，回测当法官）。"""
+    import json as _json
+
+    from analyst.config import get_settings
+    from analyst.llm.chat import _iter_chat_clients
+    from analyst.llm.digest import build_digest_facts
+
+    # 已证伪清单：防 AI 重提走过的死路（与项目记忆同步维护）
+    falsified = [
+        "自建 EMA 快慢线相位检测替代减半日历×200日线（全面跑输）",
+        "山寨币各自判相位（必须 BTC 定调）",
+        "bull/accum 相位内做多向均值回归（不稳健）",
+        "唐奇安入场加 ATR 突破缓冲（三币不一致）",
+        "chop_range 止损后冷却期（震荡段收益转负）",
+        "double_line 双线反转实盘开仓（近2年 1h/4h 净亏已退役）",
+        "手动/规则化跳策略切换（零延迟也跑输 cycle_switch 自动版）",
+    ]
+    facts = build_digest_facts()
+    payload = _json.dumps(
+        {"system_facts": facts, "falsified_ideas": falsified},
+        ensure_ascii=False, default=str,
+    )
+    system = (
+        "你是加密量化策略研究员。系统现有策略：cycle_switch（减半日历×200日线相位，"
+        "牛市唐奇安只多/熊市反弹空+破位空）、xs_momentum（14天横截面动量 top2，周调仓）、"
+        "funding_carry（费率EMA门槛 delta 中性收费）。回测框架支持：分市况统计、"
+        "资金费成本、波动率目标化、滚动窗口验证（5年×多币，4h）。\n"
+        "根据 system_facts 提出 3~5 个【可用现有回测框架验证】的改进假设。"
+        "每个假设给出：名称、逻辑依据（一句话）、如何验证（具体到可执行的回测对比）、"
+        "预期风险。禁止提 falsified_ideas 里已证伪的路线；禁止提无法回测的想法"
+        "（如让 AI 预测价格）。用中文，紧凑排版。"
+    )
+    settings = get_settings()
+    with console.status("[bold cyan]AI 生成研究假设..."):
+        for client, model, prov in _iter_chat_clients(settings):
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": payload},
+                    ],
+                    temperature=0.6,
+                    max_tokens=1500,
+                )
+                text = (resp.choices[0].message.content or "").strip()
+                if text:
+                    console.print(f"[dim]via {prov}/{model}[/dim]\n")
+                    console.print(text)
+                    console.print(
+                        "\n[dim]提醒：假设 ≠ 结论。逐条回测（5年×3币、看滚动窗口），"
+                        "单币变好不算数。[/dim]"
+                    )
+                    return
+            except Exception as e:
+                console.print(f"[yellow]{prov} 失败：{e}[/yellow]")
+    console.print("[red]无可用 LLM 线路[/red]")
+    raise typer.Exit(1)
+
+
 @app.command("paper-fuse")
 def paper_fuse(
     action: str = typer.Argument("status", help="status / clear"),

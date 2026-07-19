@@ -59,6 +59,8 @@ async def lifespan(app: FastAPI):
     hub = get_monitor_hub()
     heartbeat_task: asyncio.Task | None = None
     schedule_task: asyncio.Task | None = None
+    digest_task: asyncio.Task | None = None
+    news_task: asyncio.Task | None = None
     try:
         info = await hub.start_always_on_workers()
         if info.get("enabled"):
@@ -104,10 +106,20 @@ async def lifespan(app: FastAPI):
             run_schedule_reminder_loop(notify=_notify, get_premium=_premium),
             name="schedule-reminders",
         )
+
+        from analyst.monitor.digest_loop import run_daily_digest_loop
+        from analyst.monitor.news_sentinel import run_news_sentinel_loop
+
+        digest_task = asyncio.create_task(
+            run_daily_digest_loop(_notify), name="daily-digest"
+        )
+        news_task = asyncio.create_task(
+            run_news_sentinel_loop(_notify), name="news-sentinel"
+        )
     except Exception:
         logger.exception("start always-on workers failed")
     yield
-    for task in (schedule_task, heartbeat_task):
+    for task in (schedule_task, heartbeat_task, digest_task, news_task):
         if task:
             task.cancel()
             try:

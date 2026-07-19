@@ -323,6 +323,7 @@ def run_monitor_ai_confirm(
     timeframe: str,
     *,
     market: str = "futures",
+    trigger_rules: list[str] | None = None,
 ) -> dict:
     """盯盘候选确认：拉快照 → LLM → 落库。返回精简结果供告警用。
 
@@ -353,6 +354,8 @@ def run_monitor_ai_confirm(
     if not market_dict:
         market_dict = ctx.market.to_dict()
     market_dict["primary_timeframe"] = ctx.db_session.timeframe
+    if trigger_rules:
+        market_dict["trigger_rules"] = list(trigger_rules)[:8]
     # jack_levels 在 create_session 里写入 DB 快照
     if "jack_levels" not in market_dict and isinstance(ctx.db_session.market_snapshot, dict):
         jl = ctx.db_session.market_snapshot.get("jack_levels")

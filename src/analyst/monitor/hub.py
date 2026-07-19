@@ -1539,6 +1539,7 @@ class MonitorHub:
                 worker.key.symbol,
                 worker.key.timeframe,
                 market="futures",
+                trigger_rules=candidate_rules,
             )
         except Exception as e:
             logger.exception("AI 候选确认失败 %s", worker.key)

@@ -183,6 +183,24 @@ class Settings(BaseSettings):
     monitor_xs_rebalance_hours: int = Field(default=168)  # 每周调仓
     monitor_xs_bear_short: bool = Field(default=True)     # 熊市空最弱
 
+    # ── AI 日报 ──
+    monitor_digest_enabled: bool = Field(default=True)
+    monitor_digest_utc_hour: int = Field(default=5)  # UTC 5 点 = 迪拜早 9 点
+
+    # ── 新闻事件风控哨兵 ──
+    monitor_news_enabled: bool = Field(default=True)
+    monitor_news_interval_min: int = Field(default=30)
+    # 逗号分隔 RSS 源；binance = 币安公告接口
+    monitor_news_feeds: str = Field(
+        default=(
+            "https://www.coindesk.com/arc/outboundfeeds/rss/,"
+            "https://cointelegraph.com/rss,"
+            "binance"
+        )
+    )
+    # 推送门槛：high / critical
+    monitor_news_min_severity: str = Field(default="high")
+
     # ── 资金费套利实时跟单 ──
     monitor_carry_enabled: bool = Field(default=True)
     monitor_carry_symbols: str = Field(default="BTC/USDT,ETH/USDT")
