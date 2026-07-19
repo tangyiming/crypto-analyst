@@ -141,6 +141,54 @@ def build_digest_facts() -> dict[str, Any]:
         }
     except Exception as e:
         logger.warning("digest 相位获取失败（降级跳过）：%s", e)
+
+    # 汇率对相对强弱（ETH/BTC 等；轻量 REST + 缓存，失败降级跳过）
+    try:
+        from analyst.data.fetcher import fetch_candles_history
+        from analyst.monitor.ratio import (
+            build_ratio_closes,
+            evaluate_ratio_state,
+            parse_ratio_pair,
+        )
+
+        s = get_settings()
+        if getattr(s, "monitor_ratio_enabled", True):
+            ema_days = int(s.monitor_ratio_ema_days or 200)
+            hist: dict[str, list] = {}
+
+            def _daily(sym: str) -> list:
+                if sym not in hist:
+                    hist[sym] = fetch_candles_history(
+                        sym, "1d", days=ema_days * 2,
+                        market="futures", use_cache=True,
+                    ).candles
+                return hist[sym]
+
+            ratios: dict[str, Any] = {}
+            for pair in (s.monitor_ratio_pairs or "").split(","):
+                legs = parse_ratio_pair(pair)
+                if not legs:
+                    continue
+                _, closes = build_ratio_closes(_daily(legs[0]), _daily(legs[1]))
+                st = evaluate_ratio_state(
+                    closes,
+                    ema_n=ema_days,
+                    band=float(s.monitor_ratio_band or 0.02),
+                    break_n=int(s.monitor_ratio_break_days or 40),
+                )
+                if st:
+                    ratios[pair.strip().upper()] = {
+                        "ratio": round(st.ratio, 6),
+                        "vs_ema_pct": st.ema_dist_pct,
+                        "state": st.ema_state,
+                    }
+            if ratios:
+                facts["relative_strength"] = {
+                    "note": f"vs {ema_days}日EMA；above=资金外溢山寨，below=BTC独强",
+                    "pairs": ratios,
+                }
+    except Exception as e:
+        logger.warning("digest 汇率对获取失败（降级跳过）：%s", e)
     return facts
 
 
@@ -176,6 +224,15 @@ def _template_digest(facts: dict[str, Any]) -> str:
         lines.append(
             f"相位：{zh.get(m.get('regime'), m.get('regime'))}"
             f" · BTC {m.get('btc_price')}（距200日线 {dev_s}）"
+        )
+    rs = (facts.get("relative_strength") or {}).get("pairs") or {}
+    if rs:
+        zh = {"above": "山寨强", "below": "BTC强"}
+        lines.append(
+            "相对强弱：" + "；".join(
+                f"{k} {zh.get(v['state'], v['state'])}（{v['vs_ema_pct']:+.1f}%）"
+                for k, v in rs.items()
+            )
         )
     fuse = facts.get("risk_fuse") or {}
     if fuse.get("daily_fuse_active") or fuse.get("disabled_strategies"):

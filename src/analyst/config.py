@@ -201,6 +201,13 @@ class Settings(BaseSettings):
     # 推送门槛：high / critical
     monitor_news_min_severity: str = Field(default="high")
 
+    # ── 汇率对（相对强弱）监控：ETH/BTC 等，只告警不交易 ──
+    monitor_ratio_enabled: bool = Field(default=True)
+    monitor_ratio_pairs: str = Field(default="ETH/BTC,SOL/BTC,BNB/BTC")
+    monitor_ratio_ema_days: int = Field(default=200)   # 长期均线（日）
+    monitor_ratio_band: float = Field(default=0.02)    # EMA 迟滞带
+    monitor_ratio_break_days: int = Field(default=40)  # N 日新高/新低
+
     # ── 资金费套利实时跟单 ──
     monitor_carry_enabled: bool = Field(default=True)
     monitor_carry_symbols: str = Field(default="BTC/USDT,ETH/USDT")
@@ -209,7 +216,7 @@ class Settings(BaseSettings):
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
     # 默认：AI 点评 + 异动类规则（金叉死叉/放量/突破等）；cycle 仓位变化仍不直推
     monitor_tg_trade_rules: str = Field(
-        default="ai_plan,macd_cross,ema_stack,volume,boll_break,break_level,funding_extreme"
+        default="ai_plan,macd_cross,ema_stack,volume,boll_break,break_level,funding_extreme,ratio_shift"
     )
     # 关网页也继续盯盘 + Telegram（Web 进程需保持运行）
     monitor_always_on: bool = Field(default=False)

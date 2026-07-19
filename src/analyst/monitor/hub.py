@@ -108,6 +108,21 @@ def _fetch_contract_quote(symbol: str) -> dict[str, Any] | None:
     return {**prem, **tick}
 
 
+def _tf_seconds(tf: str) -> int:
+    """'15m'/'1h'/'4h'/'1d' → 秒；未知回退 4h。"""
+    t = (tf or "").strip().lower()
+    try:
+        if t.endswith("m"):
+            return int(t[:-1]) * 60
+        if t.endswith("h"):
+            return int(t[:-1]) * 3600
+        if t.endswith("d"):
+            return int(t[:-1]) * 86400
+    except ValueError:
+        pass
+    return 4 * 3600
+
+
 def _norm_symbol(symbol: str) -> str:
     s = symbol.upper().strip().replace("-", "/")
     if "/" not in s:
@@ -170,6 +185,8 @@ class MonitorHub:
         self._xs_weights: dict[str, float] = {}
         # AI 候选确认冷却：key = "SYMBOL|ai_tf" → unix ts
         self._ai_confirm_at: dict[str, float] = {}
+        # 汇率对监控：pair → 上次状态（首轮建立基线不告警，之后变化才告警）
+        self._ratio_state: dict[str, dict[str, Any]] = {}
         # 关键位快照（按品种；优先高周期 worker）
         self._level_snapshots: dict[str, LevelSnapshot] = {}
         self._level_tf_rank: dict[str, int] = {}
@@ -1201,6 +1218,123 @@ class MonitorHub:
                         f"equity={ev.get('equity')} · 模拟盘"
                     )
 
+    async def _evaluate_ratio_pairs(self, worker: StreamWorker) -> None:
+        """BTC 4h 收盘触发：合成 ETH/BTC 等汇率序列，状态变化 → 告警。
+
+        历史用 REST + 缓存拉取（200 日 EMA 需要 ~1200 根 4h，worker 内存序列不够）。
+        首轮只建立基线不告警（状态由全量历史确定，重启不会重复推送）。
+        """
+        settings = get_settings()
+        if not getattr(settings, "monitor_ratio_enabled", True):
+            return
+        tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
+        if worker.key.timeframe.lower() != tf:
+            return
+        if worker.key.symbol.upper() != "BTC/USDT":
+            return
+
+        from analyst.data.fetcher import fetch_candles_history
+        from analyst.monitor.ratio import (
+            build_ratio_closes,
+            evaluate_ratio_state,
+            parse_ratio_pair,
+        )
+
+        bars_per_day = max(1, int(24 * 3600 // _tf_seconds(tf)))
+        ema_n = max(50, int(settings.monitor_ratio_ema_days or 200) * bars_per_day)
+        break_n = max(20, int(settings.monitor_ratio_break_days or 40) * bars_per_day)
+        fetch_days = int(settings.monitor_ratio_ema_days or 200) * 2
+
+        pairs = [
+            p.strip().upper()
+            for p in (settings.monitor_ratio_pairs or "").split(",")
+            if p.strip()
+        ]
+        series_cache: dict[str, list] = {}
+
+        async def _hist(sym: str) -> list:
+            if sym not in series_cache:
+                s = await asyncio.to_thread(
+                    fetch_candles_history,
+                    sym, tf, days=fetch_days, market="futures", use_cache=True,
+                )
+                series_cache[sym] = s.candles
+            return series_cache[sym]
+
+        for pair in pairs:
+            legs = parse_ratio_pair(pair)
+            if not legs:
+                continue
+            try:
+                num_c, den_c = await _hist(legs[0]), await _hist(legs[1])
+            except Exception as e:
+                logger.warning("ratio %s 数据拉取失败：%s", pair, e)
+                continue
+            _, closes = build_ratio_closes(num_c, den_c)
+            st = evaluate_ratio_state(
+                closes,
+                ema_n=ema_n,
+                band=float(settings.monitor_ratio_band or 0.02),
+                break_n=break_n,
+            )
+            if st is None:
+                continue
+            prev = self._ratio_state.get(pair)
+            cur = {"ema_state": st.ema_state, "breakout": st.breakout}
+            self._ratio_state[pair] = {
+                **cur,
+                "ratio": st.ratio,
+                "ema_dist_pct": st.ema_dist_pct,
+            }
+            if prev is None:
+                logger.info(
+                    "ratio 基线 %s ema_state=%s dist=%.2f%%",
+                    pair, st.ema_state, st.ema_dist_pct,
+                )
+                continue
+
+            alerts: list[dict[str, Any]] = []
+            if st.ema_state != prev.get("ema_state"):
+                up = st.ema_state == "above"
+                alerts.append({
+                    "title": f"{pair} {'站上' if up else '跌破'}"
+                             f"{settings.monitor_ratio_ema_days}日EMA",
+                    "direction": "long" if up else "short",
+                    "reasons": [
+                        f"汇率 {st.ratio:.6f}（距EMA {st.ema_dist_pct:+.1f}%）",
+                        "资金外溢山寨（山寨季倾向）" if up else "BTC 独强（山寨相对失血）",
+                    ],
+                })
+            if st.breakout and st.breakout != prev.get("breakout"):
+                hi = st.breakout == "high"
+                alerts.append({
+                    "title": f"{pair} 创{settings.monitor_ratio_break_days}日"
+                             f"{'新高' if hi else '新低'}",
+                    "direction": "long" if hi else "short",
+                    "reasons": [f"汇率 {st.ratio:.6f}（距EMA {st.ema_dist_pct:+.1f}%）"],
+                })
+            for a in alerts:
+                await self._emit_rule_alert(worker, {
+                    "type": "alert",
+                    "rule": "ratio_shift",
+                    "symbol": pair,
+                    "timeframe": tf,
+                    "price": st.ratio,
+                    "strength": "info",
+                    "pattern": "ratio_shift",
+                    "break_level": None,
+                    "filters_passed": ["ratio_shift"],
+                    "marker_time": int(
+                        worker.series.candles[-1].timestamp.timestamp()
+                    ),
+                    "plan": None,
+                    "kelly": None,
+                    "trail_note": None,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "demo": False,
+                    **a,
+                })
+
     async def _evaluate_oi_rules(self, worker: StreamWorker) -> None:
         """收盘后查 OI 背离（价跌OI增/价涨OI降）。REST 快照带 60s 缓存。"""
         import asyncio as _asyncio
@@ -1920,6 +2054,11 @@ class MonitorHub:
             await self._evaluate_carry(worker)
         except Exception:
             logger.exception("funding_carry evaluate failed %s", worker.key)
+
+        try:
+            await self._evaluate_ratio_pairs(worker)
+        except Exception:
+            logger.exception("ratio pairs evaluate failed %s", worker.key)
 
         try:
             await self._maybe_ai_confirm(
