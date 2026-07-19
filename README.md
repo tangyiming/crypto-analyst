@@ -191,7 +191,7 @@ analyst config test-llm
 | `CEREBRAS_API_KEY` / `NVIDIA_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY` / `SAMBANOVA_API_KEY` | 额外免费线路；任选配置即可 failover |
 | `MONITOR_AI_COOLDOWN_MINUTES` | 同品种+AI 周期冷却（默认 240），防候选刷屏 |
 | `MONITOR_PAPER_ENABLED` | `true`：纸面模拟炒币，跟 `double_line`/`cycle_switch` |
-| `MONITOR_PAPER_EQUITY` | 初始虚拟权益（默认 100 USDT） |
+| `MONITOR_PAPER_EQUITY` | 初始虚拟权益（默认 10000 USDT） |
 | `MONITOR_PAPER_LEVERAGE` | 纸面杠杆（默认 5；保证金=名义/杠杆） |
 | `MONITOR_PAPER_SOURCES` | 纸面跟单来源，默认 `double_line,cycle_switch`（不含 `ai_plan`） |
 | `MONITOR_PAPER_DOUBLE_LINE_TFS` | 双线纸面允许周期，默认 `15m,1h,4h` |

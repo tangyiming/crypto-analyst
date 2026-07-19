@@ -2034,7 +2034,7 @@
         </div>
         <div class="paper-toolbar">
           <button type="button" class="btn-analyze" id="paperRefreshBtn">刷新</button>
-          <button type="button" class="btn-analyze" id="paperResetBtn" style="background:rgba(246,70,93,.14);color:var(--red);">重置为 100U</button>
+          <button type="button" class="btn-analyze" id="paperResetBtn" style="background:rgba(246,70,93,.14);color:var(--red);">重置为 1万U</button>
           <span class="muted" style="font-size:11px;" id="paperMeta">—</span>
         </div>
         <div id="paperFuse" class="hidden" style="border:1px solid #2b3139;border-left:3px solid var(--red);border-radius:8px;background:#12161c;padding:10px 14px;margin-bottom:14px;font-size:12px;line-height:1.7;"></div>
@@ -5525,17 +5525,17 @@
     $('paperRefreshBtn')?.addEventListener('click', () => loadPaperPage());
     $('schedRefreshBtn')?.addEventListener('click', () => loadSchedulePage({ refresh: true }));
     $('paperResetBtn')?.addEventListener('click', async () => {
-      if (!confirm('确认重置纸面账户为初始资金？持仓与成交记录将清空。')) return;
+      if (!confirm('确认重置纸面账户为 1万U？持仓与成交记录将清空。')) return;
       try {
         await fetch('/api/paper/reset', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: true }),
+          body: JSON.stringify({ confirm: true, equity: 10000 }),
         }).then((r) => {
           if (!r.ok) throw new Error('reset failed');
           return r.json();
         });
-        toast('纸面账户', '已重置', 'long');
+        toast('纸面账户', '已重置为 1万U', 'long');
         refreshPaperLive({ fullPage: true });
       } catch (e) {
         toast('重置失败', String(e), 'short');

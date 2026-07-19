@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     monitor_ai_free_only: bool = Field(default=True)
     # 纸面模拟炒币：只跟规则策略，不跟 AI
     monitor_paper_enabled: bool = Field(default=True)
-    monitor_paper_equity: float = Field(default=100.0)
+    monitor_paper_equity: float = Field(default=10000.0)
     monitor_paper_risk_pct: float = Field(default=0.01)
     monitor_paper_fee_bps: float = Field(default=4.0)
     # 展示与保证金占用：保证金 = 名义 / 杠杆；收益率 = 浮盈 / 保证金

@@ -342,7 +342,7 @@ class PaperBroker:
         except Exception as e:
             logger.warning("加载纸面账本失败，使用新账户: %s", e)
             settings = get_settings()
-            start = float(getattr(settings, "monitor_paper_equity", 100.0) or 100.0)
+            start = float(getattr(settings, "monitor_paper_equity", 10000.0) or 10000.0)
             self.state = PaperState(starting_equity=start, cash=start, equity=start)
 
     def _save(self) -> None:
@@ -595,7 +595,7 @@ class PaperBroker:
             start = float(
                 starting_equity
                 if starting_equity is not None
-                else (getattr(settings, "monitor_paper_equity", 100.0) or 100.0)
+                else (getattr(settings, "monitor_paper_equity", 10000.0) or 10000.0)
             )
             self.state = PaperState(starting_equity=start, cash=start, equity=start)
             self._roll_day_anchor()
