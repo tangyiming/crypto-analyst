@@ -83,6 +83,10 @@ def _iter_chat_clients(settings):
         kwargs: dict[str, Any] = {
             "api_key": ep["api_key"],
             "base_url": ep["base_url"],
+            # 免费线路快速失败：坏线路（如 nvidia 长期 503）别拖住 fallback 链
+            # （SDK 默认 timeout 600s + 自动重试 2 次，一条坏线路能吃掉几十秒）
+            "timeout": 30.0,
+            "max_retries": 0,
         }
         headers = _free_provider_headers(ep["name"])
         if headers:
