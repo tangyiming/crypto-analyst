@@ -165,6 +165,9 @@ class MonitorHub:
         self._startup_tg_sent: bool = False
         self._cycle_regime: dict | None = None
         self._last_outlook_key: str | None = None
+        # 横截面动量：上次调仓时间与目标权重（幂等对齐用）
+        self._xs_last_rebalance: datetime | None = None
+        self._xs_weights: dict[str, float] = {}
         # AI 候选确认冷却：key = "SYMBOL|ai_tf" → unix ts
         self._ai_confirm_at: dict[str, float] = {}
         # 关键位快照（按品种；优先高周期 worker）
@@ -1033,6 +1036,171 @@ class MonitorHub:
         )
         return series.candles
 
+    async def _evaluate_xs_momentum(self, worker: StreamWorker) -> None:
+        """BTC 4h 收盘触发：全观察池动量排名 → 每周调仓同步纸面目标仓。
+
+        节流：距上次调仓 < monitor_xs_rebalance_hours 时，沿用上次权重
+        幂等对齐（防重启丢仓），不重新排名。
+        """
+        settings = get_settings()
+        if not settings.monitor_xs_enabled or not settings.monitor_paper_enabled:
+            return
+        tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
+        if worker.key.timeframe.lower() != tf:
+            return
+        if worker.key.symbol.upper() != "BTC/USDT":
+            return
+
+        from analyst.compute.strategies.xs_momentum import (
+            XsMomentumConfig,
+            current_xs_ranking,
+        )
+        from analyst.trading.paper import get_paper_broker
+
+        # 观察池：配置指定，空=全部有该周期 worker 的品种
+        raw = (settings.monitor_xs_symbols or "").strip()
+        wanted = {s.strip().upper() for s in raw.split(",") if s.strip()} or None
+        series_map = {}
+        for w in self._workers.values():
+            if w.key.timeframe.lower() != tf:
+                continue
+            sym = w.key.symbol.upper()
+            if wanted is not None and sym not in wanted:
+                continue
+            if len(w.series.candles) > 90:
+                series_map[sym] = w.series.candles
+        if len(series_map) < 3:
+            return
+
+        cfg = XsMomentumConfig(top_n=max(1, int(settings.monitor_xs_top_n or 2)))
+        now = datetime.now(timezone.utc)
+        due = (
+            self._xs_last_rebalance is None
+            or (now - self._xs_last_rebalance).total_seconds()
+            >= max(1, int(settings.monitor_xs_rebalance_hours or 168)) * 3600
+        )
+        if due:
+            ranking = current_xs_ranking(series_map, cfg)
+            if len(ranking) < max(cfg.top_n, 2):
+                return
+            # 相位：取 cycle_regime 最新一根的值（WS 与 REST 时间戳可能相差一根）
+            reg_map = self._cycle_regime or {}
+            if not reg_map:
+                btc_candles = await self._btc_candles_for_regime(tf)
+                if len(btc_candles) >= 300:
+                    reg_map = build_cycle_regime(btc_candles)
+                    self._cycle_regime = reg_map
+            regime = reg_map[max(reg_map)] if reg_map else "accum"
+            weights: dict[str, float] = {s: 0.0 for s in series_map}
+            if regime in ("bull", "accum"):
+                for s, _ in ranking[: cfg.top_n]:
+                    weights[s] = 1.0 / cfg.top_n
+            elif regime == "bear" and settings.monitor_xs_bear_short:
+                for s, _ in ranking[-cfg.top_n:]:
+                    weights[s] = -cfg.short_size / cfg.top_n
+            self._xs_weights = weights
+            self._xs_last_rebalance = now
+            top_str = " ".join(f"{s.split('/')[0]}{m:+.0%}" for s, m in ranking[:4])
+            logger.info("xs_momentum 调仓 regime=%s 权重=%s 排名=%s",
+                        regime, {k: v for k, v in weights.items() if v}, top_str)
+        if not self._xs_weights:
+            return
+
+        broker = get_paper_broker()
+        for sym, weight in self._xs_weights.items():
+            candles = series_map.get(sym)
+            if not candles:
+                continue
+            px = float(candles[-1].close)
+            events = await asyncio.to_thread(
+                broker.sync_target_position,
+                strategy="xs_momentum",
+                symbol=sym,
+                timeframe=tf,
+                target_position=float(weight),
+                price=float(px),
+                rationale=f"xs_momentum weight={weight:+.2f}",
+            )
+            for ev in events:
+                await self._broadcast(worker, ev, alert_also=True)
+                if settings.monitor_paper_tg and self._telegram_ready():
+                    if ev.get("type") == "paper_open":
+                        pos = ev.get("position") or {}
+                        dir_zh = "多" if pos.get("direction") == "long" else "空"
+                        await self._notify_telegram_text(
+                            f"📄 纸面开{dir_zh} · [xs_momentum] {pos.get('symbol')}\n"
+                            f"weight={pos.get('target_weight')} entry={pos.get('entry')}\n"
+                            f"equity={ev.get('equity')} · 模拟盘"
+                        )
+                    elif ev.get("type") == "paper_close":
+                        tr = ev.get("trade") or {}
+                        await self._notify_telegram_text(
+                            f"📄 纸面平仓 · [xs_momentum] {tr.get('symbol')} 调仓\n"
+                            f"pnl={tr.get('pnl_usd')} · equity={ev.get('equity')} · 模拟盘"
+                        )
+
+    async def _evaluate_carry(self, worker: StreamWorker) -> None:
+        """1h 收盘触发（各 carry 品种自己的 worker）：结算入账 + 开平信号。"""
+        settings = get_settings()
+        if not settings.monitor_carry_enabled or not settings.monitor_paper_enabled:
+            return
+        if worker.key.timeframe.lower() != "1h":
+            return
+        raw = (settings.monitor_carry_symbols or "").strip()
+        carry_syms = [s.strip().upper() for s in raw.split(",") if s.strip()]
+        sym = worker.key.symbol.upper()
+        if sym not in carry_syms:
+            return
+
+        from analyst.compute.strategies.funding_carry import (
+            FundingCarryConfig,
+            current_carry_status,
+        )
+        from analyst.data.derivatives import fetch_funding_history
+        from analyst.trading.paper import get_paper_broker
+
+        # 30 天足够 EMA(21档)；不走缓存拿最新结算
+        hist = await asyncio.to_thread(
+            fetch_funding_history, sym, days=30, use_cache=False
+        )
+        if len(hist) < 30:
+            return
+        broker = get_paper_broker()
+        # 先把新结算档入账（若在仓）
+        accrued = await asyncio.to_thread(broker.apply_carry_funding, sym, hist)
+        if accrued:
+            logger.info("carry 结算入账 %s %+.6f", sym, accrued)
+
+        cfg = FundingCarryConfig()
+        st = current_carry_status(hist, cfg)
+        active = st.get("signal") == "carry"
+        alloc = float(settings.monitor_carry_alloc_pct or 0.0)
+        n = max(1, len(carry_syms))
+        notional = broker.state.equity * alloc / n if alloc > 0 else 0.0
+        events = await asyncio.to_thread(
+            broker.sync_carry,
+            symbol=sym,
+            active=active and notional > 0,
+            notional=notional,
+            note=f"费率EMA {st.get('ema_rate_pct', 0):+.5f}%/8h "
+                 f"(年化{st.get('ema_apr_pct', 0):+.1f}%)",
+        )
+        for ev in events:
+            await self._broadcast(worker, ev, alert_also=True)
+            if settings.monitor_paper_tg and self._telegram_ready():
+                if ev.get("type") == "paper_carry_open":
+                    await self._notify_telegram_text(
+                        f"📄 纸面 carry 开 · [funding_carry] {ev.get('symbol')}\n"
+                        f"notional={ev.get('notional')} · {ev.get('note')}\n"
+                        f"现货多+永续空 delta 中性 · 模拟盘"
+                    )
+                elif ev.get("type") == "paper_carry_close":
+                    await self._notify_telegram_text(
+                        f"📄 纸面 carry 平 · [funding_carry] {ev.get('symbol')}\n"
+                        f"累计收费={ev.get('accrued')} 净={ev.get('net')}\n"
+                        f"equity={ev.get('equity')} · 模拟盘"
+                    )
+
     async def _evaluate_oi_rules(self, worker: StreamWorker) -> None:
         """收盘后查 OI 背离（价跌OI增/价涨OI降）。REST 快照带 60s 缓存。"""
         import asyncio as _asyncio
@@ -1741,6 +1909,16 @@ class MonitorHub:
             await self._evaluate_cycle_outlook(worker)
         except Exception:
             logger.exception("cycle_outlook evaluate failed %s", worker.key)
+
+        try:
+            await self._evaluate_xs_momentum(worker)
+        except Exception:
+            logger.exception("xs_momentum evaluate failed %s", worker.key)
+
+        try:
+            await self._evaluate_carry(worker)
+        except Exception:
+            logger.exception("funding_carry evaluate failed %s", worker.key)
 
         try:
             await self._maybe_ai_confirm(

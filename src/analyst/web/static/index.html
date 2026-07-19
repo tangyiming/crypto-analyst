@@ -2046,6 +2046,10 @@
           <div id="paperPositions" class="muted" style="font-size:12px;">加载中…</div>
         </div>
         <div class="paper-section">
+          <h2>资金费套利（delta 中性）</h2>
+          <div id="paperCarry" class="muted" style="font-size:12px;">加载中…</div>
+        </div>
+        <div class="paper-section">
           <h2>最近成交</h2>
           <div id="paperTrades" class="muted" style="font-size:12px;">加载中…</div>
         </div>
@@ -2797,6 +2801,24 @@
             + `<span class="muted">（恢复：analyst paper-fuse clear）</span>`;
         }
         fuseEl.innerHTML = html;
+      }
+    }
+
+    const carryEl = $('paperCarry');
+    if (carryEl) {
+      const book = st.carry_book || [];
+      if (!book.length) {
+        carryEl.innerHTML = '<span class="muted">未持有。费率 EMA 高于门槛时自动开（现货多+永续空 delta 中性，不吃价格涨跌）。</span>';
+      } else {
+        carryEl.innerHTML = book.map((b) => {
+          const acc = Number(b.accrued || 0);
+          return `<div style="display:flex;gap:14px;align-items:baseline;padding:4px 0;">
+            <b>${escapeHtml(b.symbol)}</b>
+            <span>名义 ${Number(b.notional).toFixed(2)}U</span>
+            <span>累计收费 <b style="color:${acc >= 0 ? 'var(--green)' : 'var(--red)'}">${acc >= 0 ? '+' : ''}${acc.toFixed(4)}U</b></span>
+            <span class="muted">${escapeHtml(b.note || '')} · 自 ${(b.opened_at || '').slice(0, 10)}</span>
+          </div>`;
+        }).join('');
       }
     }
 

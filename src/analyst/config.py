@@ -154,9 +154,10 @@ class Settings(BaseSettings):
     monitor_paper_leverage: float = Field(default=5.0)
     monitor_paper_max_positions: int = Field(default=12)
     monitor_paper_tg: bool = Field(default=True)
-    # 纸面跟单来源：double_line,cycle_switch（不含 ai_plan）
+    # 纸面跟单来源（不含 ai_plan）。double_line 近 2 年 1h/4h 回测净亏
+    # （胜率 32.8% < 2R 盈亏平衡 33.4%），已移出默认；可手动加回观察
     monitor_paper_sources: str = Field(
-        default="double_line,cycle_switch"
+        default="cycle_switch,xs_momentum,funding_carry"
     )
     # 双线纸面允许的周期（防 1m 噪声仓）；空=不限制
     monitor_paper_double_line_tfs: str = Field(default="15m,1h,4h")
@@ -173,6 +174,20 @@ class Settings(BaseSettings):
     paper_strategy_dd_disable_pct: float = Field(default=20.0)
     # 组合总名义敞口 / 权益 上限（相关资产敞口叠加保护）；0=关
     paper_max_gross_exposure: float = Field(default=2.0)
+
+    # ── 横截面动量实时跟单 ──
+    monitor_xs_enabled: bool = Field(default=True)
+    # 观察池；空 = 全部盯盘品种（须有 4h worker）
+    monitor_xs_symbols: str = Field(default="")
+    monitor_xs_top_n: int = Field(default=2)
+    monitor_xs_rebalance_hours: int = Field(default=168)  # 每周调仓
+    monitor_xs_bear_short: bool = Field(default=True)     # 熊市空最弱
+
+    # ── 资金费套利实时跟单 ──
+    monitor_carry_enabled: bool = Field(default=True)
+    monitor_carry_symbols: str = Field(default="BTC/USDT,ETH/USDT")
+    # 合计名义 = 权益 × 该比例（各币均分）
+    monitor_carry_alloc_pct: float = Field(default=0.15)
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
     # 默认：AI 点评 + 异动类规则（金叉死叉/放量/突破等）；cycle 仓位变化仍不直推
     monitor_tg_trade_rules: str = Field(

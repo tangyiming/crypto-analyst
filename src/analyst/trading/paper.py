@@ -208,6 +208,9 @@ class PaperState:
     strategy_pnl: dict[str, float] = field(default_factory=dict)       # 累计已实现
     strategy_pnl_peak: dict[str, float] = field(default_factory=dict)  # 已实现峰值
     disabled_strategies: list[str] = field(default_factory=list)       # 回撤停用
+    # 资金费套利台账：symbol -> {notional, opened_at, accrued, last_settle_ms}
+    # delta 中性（现货多+永续空），不吃价格盈亏，只按结算费率入账
+    carry_book: dict[str, dict[str, Any]] = field(default_factory=dict)
     updated_at: str = field(default_factory=_utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -227,6 +230,7 @@ class PaperState:
             "strategy_pnl": dict(self.strategy_pnl),
             "strategy_pnl_peak": dict(self.strategy_pnl_peak),
             "disabled_strategies": list(self.disabled_strategies),
+            "carry_book": {k: dict(v) for k, v in self.carry_book.items()},
             "updated_at": self.updated_at,
         }
 
@@ -302,6 +306,11 @@ class PaperState:
             disabled_strategies=[
                 str(s) for s in (data.get("disabled_strategies") or [])
             ],
+            carry_book={
+                str(k): dict(v)
+                for k, v in (data.get("carry_book") or {}).items()
+                if isinstance(v, dict)
+            },
             updated_at=str(data.get("updated_at") or _utc_now_iso()),
         )
 
@@ -449,6 +458,124 @@ class PaperBroker:
                 self.state.strategy_pnl_peak[s] = self.state.strategy_pnl.get(s, 0.0)
             self._save()
             return cleared
+
+    # ── 资金费套利台账（delta 中性，不吃价格盈亏） ──────────
+    def sync_carry(
+        self,
+        *,
+        symbol: str,
+        active: bool,
+        notional: float,
+        note: str = "",
+    ) -> list[dict[str, Any]]:
+        """开/平 carry：active=True 且未持有 → 记账开仓（扣双腿费）；
+        active=False 且持有 → 平仓（扣双腿费，累计收费入成交记录）。"""
+        settings = get_settings()
+        if not getattr(settings, "monitor_paper_enabled", False):
+            return []
+        if "funding_carry" not in _paper_sources():
+            return []
+        sym = _norm_symbol(symbol)
+        events: list[dict[str, Any]] = []
+        fee_bps = float(getattr(settings, "monitor_paper_fee_bps", 4.0) or 0.0)
+        with _lock:
+            book = self.state.carry_book.get(sym)
+            if active and book is None:
+                if self._daily_fuse_active() or "funding_carry" in self.state.disabled_strategies:
+                    return []
+                noto = max(0.0, float(notional))
+                if noto <= 0 or self.state.equity <= 0:
+                    return []
+                open_fee = noto * (fee_bps / 10_000.0) * 2  # 现货+永续两腿
+                self.state.cash -= open_fee
+                self.state.fees_paid += open_fee
+                self.state.carry_book[sym] = {
+                    "notional": round(noto, 6),
+                    "opened_at": _utc_now_iso(),
+                    "accrued": 0.0,
+                    "open_fee": round(open_fee, 6),
+                    "last_settle_ms": 0,
+                    "note": note,
+                }
+                self._revalue()
+                self._save()
+                events.append({
+                    "type": "paper_carry_open",
+                    "symbol": sym,
+                    "notional": round(noto, 6),
+                    "note": note,
+                    "equity": round(self.state.equity, 6),
+                })
+                logger.info("纸面 carry 开 %s notional=%.2f %s", sym, noto, note)
+            elif not active and book is not None:
+                close_fee = float(book.get("notional", 0.0)) * (fee_bps / 10_000.0) * 2
+                self.state.cash -= close_fee
+                self.state.fees_paid += close_fee
+                accrued = float(book.get("accrued", 0.0))
+                net = accrued - float(book.get("open_fee", 0.0)) - close_fee
+                trade = PaperTrade(
+                    id=uuid.uuid4().hex[:12],
+                    symbol=sym,
+                    timeframe="8h",
+                    direction="carry",
+                    qty=0.0,
+                    entry=float(book.get("notional", 0.0)),
+                    exit=float(book.get("notional", 0.0)),
+                    stop_loss=None,
+                    take_profit=None,
+                    opened_at=str(book.get("opened_at") or _utc_now_iso()),
+                    closed_at=_utc_now_iso(),
+                    outcome="signal",
+                    pnl_usd=round(net, 6),
+                    fees_usd=round(float(book.get("open_fee", 0.0)) + close_fee, 6),
+                    strategy="funding_carry",
+                    notional=float(book.get("notional", 0.0)),
+                )
+                self.state.trades.append(trade)
+                if len(self.state.trades) > 500:
+                    self.state.trades = self.state.trades[-500:]
+                self.state.carry_book.pop(sym, None)
+                self._revalue()
+                self._save()
+                events.append({
+                    "type": "paper_carry_close",
+                    "symbol": sym,
+                    "accrued": round(accrued, 6),
+                    "net": round(net, 6),
+                    "note": note,
+                    "equity": round(self.state.equity, 6),
+                })
+                logger.info("纸面 carry 平 %s accrued=%.4f net=%.4f", sym, accrued, net)
+        return events
+
+    def apply_carry_funding(
+        self, symbol: str, settlements: list[tuple[int, float]]
+    ) -> float:
+        """把新结算档入账（正费率=收，负=付）。返回本次入账合计。"""
+        sym = _norm_symbol(symbol)
+        total = 0.0
+        with _lock:
+            book = self.state.carry_book.get(sym)
+            if not book:
+                return 0.0
+            last = int(book.get("last_settle_ms", 0) or 0)
+            noto = float(book.get("notional", 0.0))
+            opened = _parse_iso(str(book.get("opened_at")))
+            opened_ms = int(opened.timestamp() * 1000) if opened else 0
+            for ts_ms, rate in settlements:
+                if ts_ms <= max(last, opened_ms):
+                    continue
+                pnl = noto * float(rate)
+                self.state.cash += pnl
+                self.state.realized_pnl += pnl
+                book["accrued"] = float(book.get("accrued", 0.0)) + pnl
+                book["last_settle_ms"] = ts_ms
+                total += pnl
+            if total != 0.0:
+                self._record_strategy_pnl("funding_carry", total)
+                self._revalue()
+                self._save()
+        return total
 
     def _gross_exposure_blocked(self, new_notional: float) -> bool:
         """组合总名义敞口上限（相关资产敞口叠加保护）。"""
@@ -625,6 +752,16 @@ class PaperBroker:
                 "equity_curve": list(self.state.equity_curve[-90:]),
                 "updated_at": self.state.updated_at,
                 "marks": dict(self._marks),
+                "carry_book": [
+                    {
+                        "symbol": sym,
+                        "notional": round(float(b.get("notional", 0.0)), 6),
+                        "accrued": round(float(b.get("accrued", 0.0)), 6),
+                        "opened_at": b.get("opened_at"),
+                        "note": b.get("note", ""),
+                    }
+                    for sym, b in sorted(self.state.carry_book.items())
+                ],
                 "risk_fuse": {
                     "daily_fuse_active": self._daily_fuse_active(),
                     "daily_loss_limit_pct": float(
@@ -749,10 +886,30 @@ class PaperBroker:
         regime: str | None = None,
     ) -> list[dict[str, Any]]:
         """按 cycle_switch 目标仓位同步纸面持仓（无固定 TP/SL，信号平仓）。"""
+        return self.sync_target_position(
+            strategy="cycle_switch",
+            symbol=symbol,
+            timeframe=timeframe,
+            target_position=target_position,
+            price=price,
+            rationale=f"cycle_switch target={target_position:.2f} regime={regime or '-'}",
+        )
+
+    def sync_target_position(
+        self,
+        *,
+        strategy: str,
+        symbol: str,
+        timeframe: str,
+        target_position: float,
+        price: float,
+        rationale: str = "",
+    ) -> list[dict[str, Any]]:
+        """按目标仓位同步纸面持仓（通用：cycle_switch / xs_momentum 等权重型策略）。"""
         settings = get_settings()
         if not getattr(settings, "monitor_paper_enabled", False):
             return []
-        if "cycle_switch" not in _paper_sources():
+        if strategy not in _paper_sources():
             return []
         sym = _norm_symbol(symbol)
         px = float(price)
@@ -765,12 +922,12 @@ class PaperBroker:
             existing = [
                 p
                 for p in self.state.positions
-                if p.symbol == sym and p.strategy == "cycle_switch"
+                if p.symbol == sym and p.strategy == strategy
             ]
             others = [
                 p
                 for p in self.state.positions
-                if not (p.symbol == sym and p.strategy == "cycle_switch")
+                if not (p.symbol == sym and p.strategy == strategy)
             ]
 
             if abs(target) < 1e-9:
@@ -802,8 +959,8 @@ class PaperBroker:
                     entry=px,
                     stop=None,
                     take=None,
-                    strategy="cycle_switch",
-                    rationale=f"cycle_switch target={target:.2f} regime={regime or '-'}",
+                    strategy=strategy,
+                    rationale=rationale or f"{strategy} target={target:.2f}",
                     risk_scale=abs(target),
                     target_weight=target,
                 )

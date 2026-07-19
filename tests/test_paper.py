@@ -360,3 +360,93 @@ def test_gross_exposure_cap_blocks(tmp_path, monkeypatch):
     assert _open(broker, "ETH/USDT") is None
     st = broker.status()
     assert st["risk_fuse"]["max_gross_exposure"] == 1.5
+
+
+# ── 通用目标仓位同步（xs_momentum 等） ───────────────────────
+def test_sync_target_position_open_flip_close(tmp_path, monkeypatch):
+    broker = _reset_broker(
+        tmp_path, monkeypatch,
+        MONITOR_PAPER_SOURCES="cycle_switch,xs_momentum,funding_carry",
+        PAPER_DAILY_LOSS_LIMIT_PCT="0",
+    )
+    ev = broker.sync_target_position(
+        strategy="xs_momentum", symbol="SOL/USDT", timeframe="4h",
+        target_position=0.5, price=100.0, rationale="xs weight=+0.50",
+    )
+    assert ev and ev[0]["type"] == "paper_open"
+    assert broker.state.positions[0].strategy == "xs_momentum"
+    assert broker.state.positions[0].direction == "long"
+    # 同权重幂等：不重复开
+    assert broker.sync_target_position(
+        strategy="xs_momentum", symbol="SOL/USDT", timeframe="4h",
+        target_position=0.5, price=101.0,
+    ) == []
+    # 翻向：平多开空
+    ev2 = broker.sync_target_position(
+        strategy="xs_momentum", symbol="SOL/USDT", timeframe="4h",
+        target_position=-0.25, price=102.0,
+    )
+    types = [e["type"] for e in ev2]
+    assert "paper_close" in types and "paper_open" in types
+    assert broker.state.positions[0].direction == "short"
+    # 清零：全平
+    ev3 = broker.sync_target_position(
+        strategy="xs_momentum", symbol="SOL/USDT", timeframe="4h",
+        target_position=0.0, price=100.0,
+    )
+    assert [e["type"] for e in ev3] == ["paper_close"]
+    assert not broker.state.positions
+
+
+def test_sync_target_respects_sources_gate(tmp_path, monkeypatch):
+    broker = _reset_broker(
+        tmp_path, monkeypatch, MONITOR_PAPER_SOURCES="cycle_switch",
+    )
+    assert broker.sync_target_position(
+        strategy="xs_momentum", symbol="SOL/USDT", timeframe="4h",
+        target_position=1.0, price=100.0,
+    ) == []
+
+
+# ── 资金费套利台账 ───────────────────────────────────────────
+def test_carry_open_accrue_close(tmp_path, monkeypatch):
+    broker = _reset_broker(
+        tmp_path, monkeypatch,
+        MONITOR_PAPER_SOURCES="funding_carry",
+        MONITOR_PAPER_FEE_BPS="4",
+        PAPER_DAILY_LOSS_LIMIT_PCT="0",
+    )
+    ev = broker.sync_carry(symbol="BTC/USDT", active=True, notional=5.0, note="test")
+    assert ev and ev[0]["type"] == "paper_carry_open"
+    assert "BTC/USDT" in broker.state.carry_book
+    cash_after_open = broker.state.cash
+    assert cash_after_open < 10.0  # 扣了双腿开仓费
+
+    # 三档结算：+0.01% ×2、-0.005% ×1 → 净 +0.00015 × 5U
+    import time as _t
+    base = int(_t.time() * 1000) + 1000
+    got = broker.apply_carry_funding("BTC/USDT", [
+        (base, 0.0001), (base + 1, 0.0001), (base + 2, -0.00005),
+    ])
+    assert abs(got - 5.0 * 0.00015) < 1e-9
+    assert abs(broker.state.carry_book["BTC/USDT"]["accrued"] - got) < 1e-12
+    # 重复入账被 last_settle_ms 挡住
+    assert broker.apply_carry_funding("BTC/USDT", [(base, 0.0001)]) == 0.0
+
+    ev2 = broker.sync_carry(symbol="BTC/USDT", active=False, notional=0.0)
+    assert ev2 and ev2[0]["type"] == "paper_carry_close"
+    assert "BTC/USDT" not in broker.state.carry_book
+    trades = [t for t in broker.state.trades if t.strategy == "funding_carry"]
+    assert len(trades) == 1 and trades[0].direction == "carry"
+
+
+def test_carry_open_only_when_signal_and_idempotent(tmp_path, monkeypatch):
+    broker = _reset_broker(
+        tmp_path, monkeypatch, MONITOR_PAPER_SOURCES="funding_carry",
+        PAPER_DAILY_LOSS_LIMIT_PCT="0",
+    )
+    # 未持有 + 无信号 → 无事发生
+    assert broker.sync_carry(symbol="ETH/USDT", active=False, notional=5.0) == []
+    broker.sync_carry(symbol="ETH/USDT", active=True, notional=5.0)
+    # 已持有 + 信号仍在 → 幂等
+    assert broker.sync_carry(symbol="ETH/USDT", active=True, notional=5.0) == []
