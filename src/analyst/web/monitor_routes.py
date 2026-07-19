@@ -661,3 +661,54 @@ def paper_reset(req: PaperResetRequest):
     broker = get_paper_broker()
     broker.reset(starting_equity=float(start))
     return broker.status()
+
+
+# ── AI 日报与新闻哨兵 ──
+
+
+@router.get("/api/monitor/digest")
+async def monitor_digest(refresh: bool = Query(default=False)):
+    """AI 日报：默认返回最近一份缓存；refresh=1 现场重新生成（LLM，秒级）。"""
+    import asyncio
+
+    from analyst.llm.digest import compose_daily_digest, load_last_digest
+
+    if not refresh:
+        return {"digest": load_last_digest()}
+    try:
+        out = await asyncio.to_thread(compose_daily_digest)
+    except Exception as e:
+        raise HTTPException(500, f"日报生成失败：{e}") from e
+    return {"digest": out}
+
+
+@router.get("/api/monitor/news-events")
+def monitor_news_events(limit: int = Query(default=50, ge=1, le=200)):
+    """新闻哨兵最近分级事件（新的在前）。"""
+    from analyst.monitor.news_sentinel import load_news_events
+
+    s = get_settings()
+    return {
+        "enabled": bool(getattr(s, "monitor_news_enabled", False)),
+        "min_severity": getattr(s, "monitor_news_min_severity", "high") or "high",
+        "interval_min": int(getattr(s, "monitor_news_interval_min", 30) or 30),
+        "events": load_news_events(limit=limit),
+    }
+
+
+@router.get("/api/monitor/research-ideas")
+async def monitor_research_ideas(refresh: bool = Query(default=False)):
+    """AI 研究假设：默认返回最近一份缓存；refresh=1 现场重新生成（LLM，秒级）。"""
+    import asyncio
+
+    from analyst.llm.digest import compose_research_ideas, load_last_research
+
+    if not refresh:
+        return {"research": load_last_research()}
+    try:
+        out = await asyncio.to_thread(compose_research_ideas)
+    except Exception as e:
+        raise HTTPException(500, f"研究假设生成失败：{e}") from e
+    if not out.get("text"):
+        raise HTTPException(502, out.get("error") or "无可用 LLM 线路")
+    return {"research": out}

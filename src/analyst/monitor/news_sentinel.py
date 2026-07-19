@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -62,6 +63,40 @@ def _save_seen(seen: set[str]) -> None:
         _state_path().write_text(json.dumps(sorted(seen)[-500:]))
     except Exception:
         logger.exception("news seen save failed")
+
+
+def _events_path() -> Path:
+    s = get_settings()
+    return Path(s.data_cache_dir) / "news_events.json"
+
+
+def load_news_events(limit: int = 100) -> list[dict]:
+    """读最近的分级事件（新的在前），供 Web 页面展示。"""
+    try:
+        p = _events_path()
+        if p.is_file():
+            rows = json.loads(p.read_text()) or []
+            return list(reversed(rows))[: max(1, limit)]
+    except Exception:
+        logger.warning("news events load failed", exc_info=True)
+    return []
+
+
+def _append_events(rows: list[dict], keep: int = 200) -> None:
+    """滚动追加事件记录（时间序，尾部最新），失败静默。"""
+    if not rows:
+        return
+    try:
+        p = _events_path()
+        old = []
+        if p.is_file():
+            old = json.loads(p.read_text()) or []
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps((old + rows)[-keep:], ensure_ascii=False, default=str)
+        )
+    except Exception:
+        logger.exception("news events save failed")
 
 
 def keyword_fallback_classify(items: list[NewsItem]) -> list[dict]:
@@ -180,12 +215,29 @@ async def run_news_sentinel_loop(
 
                 has_carry = bool(get_paper_broker().state.carry_book)
                 pushed = 0
+                now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+                events: list[dict] = []
                 for item in fresh:
                     c = by_id.get(item.id)
-                    if not c or SEVERITY_ORDER.get(c["severity"], 0) < min_sev:
+                    hit = bool(
+                        c and SEVERITY_ORDER.get(c["severity"], 0) >= min_sev
+                    )
+                    events.append({
+                        "ts_utc": now_utc,
+                        "title": item.title,
+                        "source": item.source,
+                        "url": item.url,
+                        "severity": (c or {}).get("severity", "low"),
+                        "category": (c or {}).get("category", "unrated"),
+                        "affected": (c or {}).get("affected", ""),
+                        "reason": (c or {}).get("reason", ""),
+                        "pushed": hit,
+                    })
+                    if not hit:
                         continue
                     await notify(_format_alert(item, c, has_carry))
                     pushed += 1
+                _append_events(events)
                 logger.info(
                     "news sentinel 新 %d 条 · 推送 %d 条", len(fresh), pushed
                 )

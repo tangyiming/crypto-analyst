@@ -1485,6 +1485,7 @@
       <button type="button" class="app-nav-link" data-app="web3">Web3</button>
       <button type="button" class="app-nav-link" data-app="devtools">开发工具</button>
       <button type="button" class="app-nav-link" data-app="auto">自动交易<span class="tag">纸面</span></button>
+      <button type="button" class="app-nav-link" data-app="ai">AI 助手</button>
     </div>
     <div class="app-nav-status">
       <button type="button" class="paper-live" id="paperLiveStrip" title="打开纸面账本" aria-label="纸面实时盈亏">
@@ -2056,6 +2057,39 @@
       </div>
     </div>
   </div>
+
+  <div id="viewAI" class="app-view hidden">
+    <div class="app-page">
+      <div class="paper-page-inner">
+        <div class="app-page-head">
+          <h1>AI 助手</h1>
+          <p>AI 只做<strong>总结与风险提示</strong>，不开仓不调参。日报每日 UTC 定时推 Telegram，这里可随时按需生成；风险事件由新闻哨兵后台分级。</p>
+        </div>
+        <div class="paper-section">
+          <h2>交易日报
+            <button type="button" class="btn-analyze" id="btnDigestGen" style="margin-left:10px;font-size:11px;padding:3px 10px;vertical-align:2px;">生成日报</button>
+            <span id="aiDigestMeta" class="muted" style="font-weight:400;font-size:11px;margin-left:8px;"></span>
+          </h2>
+          <div id="aiDigestText" class="muted" style="font-size:13px;line-height:1.9;white-space:pre-wrap;border:1px solid #2b3139;border-radius:8px;background:#12161c;padding:12px 16px;">加载中…</div>
+        </div>
+        <div class="paper-section">
+          <h2>研究假设
+            <button type="button" class="btn-analyze" id="btnResearchGen" style="margin-left:10px;font-size:11px;padding:3px 10px;vertical-align:2px;">生成假设</button>
+            <span id="aiResearchMeta" class="muted" style="font-weight:400;font-size:11px;margin-left:8px;"></span>
+          </h2>
+          <div id="aiResearchText" class="muted" style="font-size:13px;line-height:1.9;white-space:pre-wrap;border:1px solid #2b3139;border-radius:8px;background:#12161c;padding:12px 16px;">加载中…</div>
+          <div class="muted" style="font-size:11px;margin-top:6px;">AI 只提假设，回测当法官：逐条回测（5年×3币、看滚动窗口），单币变好不算数。已证伪路线会被自动排除。</div>
+        </div>
+        <div class="paper-section">
+          <h2>新闻风险事件
+            <button type="button" class="btn-analyze" id="btnNewsRefresh" style="margin-left:10px;font-size:11px;padding:3px 10px;vertical-align:2px;">刷新</button>
+            <span id="aiNewsMeta" class="muted" style="font-weight:400;font-size:11px;margin-left:8px;"></span>
+          </h2>
+          <div id="aiNewsList" class="muted" style="font-size:12px;">加载中…</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="toasts" class="fixed top-14 right-4 z-40 space-y-2 w-80 max-w-[92vw]"></div>
@@ -2590,6 +2624,139 @@
     });
   }
 
+  const SEVERITY_STYLE = {
+    critical: 'background:rgba(246,70,93,.16);color:var(--red)',
+    high: 'background:rgba(246,70,93,.10);color:var(--red)',
+    medium: 'background:rgba(240,185,11,.14);color:var(--gold, #f0b90b)',
+    low: 'background:rgba(132,142,156,.14);color:var(--muted)',
+  };
+
+  function loadAiPage() {
+    loadAiDigest(false);
+    loadAiResearch(false);
+    loadAiNews();
+  }
+
+  async function loadAiResearch(refresh) {
+    const box = $('aiResearchText');
+    const meta = $('aiResearchMeta');
+    const btn = $('btnResearchGen');
+    if (!box) return;
+    if (refresh) {
+      if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+      box.textContent = 'AI 正在基于系统近况生成 3~5 个可回测的改进假设，约 10–30 秒…';
+    }
+    try {
+      const r = await fetch('/api/monitor/research-ideas' + (refresh ? '?refresh=1' : ''));
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        box.textContent = '生成失败：' + (err.detail || r.status);
+        return;
+      }
+      const d = (await r.json()).research;
+      if (!d) {
+        box.textContent = '还没有研究假设缓存。点「生成假设」让 AI 基于当前系统状态提可回测的改进方向。';
+        if (meta) meta.textContent = '';
+        return;
+      }
+      box.textContent = d.text || '';
+      box.style.color = 'var(--text)';
+      if (meta) {
+        const bits = [];
+        if (d.generated_at) bits.push(d.generated_at);
+        if (d.model) bits.push(d.model);
+        if (d.latency_ms) bits.push((d.latency_ms / 1000).toFixed(1) + 's');
+        meta.textContent = bits.join(' · ');
+      }
+    } catch (e) {
+      box.textContent = '研究假设加载失败：' + e;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '生成假设'; }
+    }
+  }
+
+  async function loadAiDigest(refresh) {
+    const box = $('aiDigestText');
+    const meta = $('aiDigestMeta');
+    const btn = $('btnDigestGen');
+    if (!box) return;
+    if (refresh) {
+      if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+      box.textContent = 'AI 正在按当前系统状态生成日报（LLM 不可用时降级为模板），约 5–20 秒…';
+    }
+    try {
+      const r = await fetch('/api/monitor/digest' + (refresh ? '?refresh=1' : ''));
+      const data = await r.json();
+      const d = data.digest;
+      if (!d) {
+        box.textContent = '还没有日报缓存。点「生成日报」立即生成一份；每日定时版也会出现在这里。';
+        if (meta) meta.textContent = '';
+        return;
+      }
+      box.textContent = d.text || '';
+      box.style.color = 'var(--text)';
+      if (meta) {
+        const bits = [];
+        if (d.generated_at) bits.push(d.generated_at);
+        bits.push(d.source === 'llm' ? (d.model || 'llm') : '模板降级');
+        if (d.latency_ms) bits.push((d.latency_ms / 1000).toFixed(1) + 's');
+        meta.textContent = bits.join(' · ');
+      }
+    } catch (e) {
+      box.textContent = '日报加载失败：' + e;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '生成日报'; }
+    }
+  }
+
+  async function loadAiNews() {
+    const list = $('aiNewsList');
+    const meta = $('aiNewsMeta');
+    if (!list) return;
+    try {
+      const r = await fetch('/api/monitor/news-events?limit=50');
+      const data = await r.json();
+      if (meta) {
+        meta.textContent = data.enabled
+          ? `哨兵运行中 · 每 ${data.interval_min} 分钟 · TG 推送门槛 ${data.min_severity}`
+          : '哨兵未启用（MONITOR_NEWS_ENABLED=false）';
+      }
+      const rows = data.events || [];
+      if (!rows.length) {
+        list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无事件记录。哨兵启动后每轮抓取的新条目会在这里留档，达到门槛的会推 Telegram。</div>';
+        return;
+      }
+      list.innerHTML = rows.map((ev) => {
+        const sev = String(ev.severity || 'low').toLowerCase();
+        const style = SEVERITY_STYLE[sev] || SEVERITY_STYLE.low;
+        const title = ev.url
+          ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--text);text-decoration:none;">${escapeHtml(ev.title || '')}</a>`
+          : escapeHtml(ev.title || '');
+        const sub = [
+          ev.ts_utc ? escapeHtml(ev.ts_utc) + ' UTC' : '',
+          escapeHtml(ev.source || ''),
+          ev.category && ev.category !== 'unrated' ? escapeHtml(ev.category) : '',
+          ev.affected ? '影响 ' + escapeHtml(ev.affected) : '',
+          ev.reason ? escapeHtml(ev.reason) : '',
+          ev.pushed ? '已推TG' : '',
+        ].filter(Boolean).join(' · ');
+        return `<div style="display:flex;gap:10px;align-items:flex-start;border-bottom:1px solid #1e2329;padding:9px 4px;">
+          <span style="flex:none;font-size:10px;font-weight:600;border-radius:4px;padding:2px 7px;margin-top:1px;text-transform:uppercase;${style}">${escapeHtml(sev)}</span>
+          <div style="min-width:0;">
+            <div style="font-size:12.5px;line-height:1.5;color:var(--text);">${title}</div>
+            <div class="muted" style="font-size:11px;margin-top:2px;">${sub}</div>
+          </div>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      list.innerHTML = `<div class="muted" style="padding:14px 10px;font-size:12px;">事件加载失败：${escapeHtml(String(e))}</div>`;
+    }
+  }
+
+  $('btnDigestGen')?.addEventListener('click', () => loadAiDigest(true));
+  $('btnResearchGen')?.addEventListener('click', () => loadAiResearch(true));
+  $('btnNewsRefresh')?.addEventListener('click', () => loadAiNews());
+
   function switchAppView(name) {
     const views = {
       monitor: 'viewMonitor',
@@ -2601,6 +2768,7 @@
       web3: 'viewWeb3',
       devtools: 'viewDevtools',
       auto: 'viewAuto',
+      ai: 'viewAI',
     };
     if (!views[name]) return;
     if (name !== 'cycle') stopCyclePageRefresh();
@@ -2621,6 +2789,7 @@
     if (name === 'web3') initWeb3Tools();
     if (name === 'devtools') initDevTools();
     if (name === 'auto') startPaperPageRefresh();
+    if (name === 'ai') loadAiPage();
     if (name === 'monitor') {
       requestAnimationFrame(() => {
         if (chartMode === 'native') ensureChart();

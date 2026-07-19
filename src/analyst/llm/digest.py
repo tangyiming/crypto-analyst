@@ -10,11 +10,54 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from analyst.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _cache_path(name: str) -> Path:
+    return Path(get_settings().data_cache_dir) / name
+
+
+def _save_cache(name: str, out: dict[str, Any]) -> None:
+    """缓存最近一次 AI 产出，供 Web 页面展示（失败静默）。"""
+    try:
+        out.setdefault(
+            "generated_at",
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        )
+        p = _cache_path(name)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(out, ensure_ascii=False, default=str))
+    except Exception:
+        logger.exception("%s save failed", name)
+
+
+def _load_cache(name: str) -> dict[str, Any] | None:
+    try:
+        p = _cache_path(name)
+        if p.is_file():
+            data = json.loads(p.read_text())
+            if isinstance(data, dict) and data.get("text"):
+                return data
+    except Exception:
+        logger.warning("%s load failed", name, exc_info=True)
+    return None
+
+
+def save_last_digest(out: dict[str, Any]) -> None:
+    _save_cache("last_digest.json", out)
+
+
+def load_last_digest() -> dict[str, Any] | None:
+    return _load_cache("last_digest.json")
+
+
+def load_last_research() -> dict[str, Any] | None:
+    return _load_cache("last_research.json")
 
 DIGEST_SYSTEM = (
     "你是加密量化交易系统的复盘助手。用户给你一份 JSON 事实（纸面账户、"
@@ -166,7 +209,7 @@ def compose_daily_digest(facts: dict[str, Any] | None = None) -> dict[str, Any]:
             )
             text = (resp.choices[0].message.content or "").strip()
             if text:
-                return {
+                out = {
                     "text": text,
                     "model": model,
                     "provider": prov,
@@ -174,6 +217,75 @@ def compose_daily_digest(facts: dict[str, Any] | None = None) -> dict[str, Any]:
                     "source": "llm",
                     "facts": facts,
                 }
+                save_last_digest(out)
+                return out
         except Exception as e:
             logger.warning("digest LLM %s 失败：%s", prov, e)
-    return {"text": _template_digest(facts), "source": "template", "facts": facts}
+    out = {"text": _template_digest(facts), "source": "template", "facts": facts}
+    save_last_digest(out)
+    return out
+
+
+# ── 研究助手：AI 提可回测假设，回测当法官 ──
+
+# 已证伪清单：防 AI 重提走过的死路（与项目记忆 regime-strategy-lessons 同步维护）
+FALSIFIED_IDEAS = [
+    "自建 EMA 快慢线相位检测替代减半日历×200日线（全面跑输）",
+    "山寨币各自判相位（必须 BTC 定调）",
+    "bull/accum 相位内做多向均值回归（不稳健）",
+    "唐奇安入场加 ATR 突破缓冲（三币不一致）",
+    "chop_range 止损后冷却期（震荡段收益转负）",
+    "double_line 双线反转实盘开仓（近2年 1h/4h 净亏已退役）",
+    "手动/规则化跳策略切换（零延迟也跑输 cycle_switch 自动版）",
+]
+
+RESEARCH_SYSTEM = (
+    "你是加密量化策略研究员。系统现有策略：cycle_switch（减半日历×200日线相位，"
+    "牛市唐奇安只多/熊市反弹空+破位空）、xs_momentum（14天横截面动量 top2，周调仓）、"
+    "funding_carry（费率EMA门槛 delta 中性收费）。回测框架支持：分市况统计、"
+    "资金费成本、波动率目标化、滚动窗口验证（5年×多币，4h）。\n"
+    "根据 system_facts 提出 3~5 个【可用现有回测框架验证】的改进假设。"
+    "每个假设给出：名称、逻辑依据（一句话）、如何验证（具体到可执行的回测对比）、"
+    "预期风险。禁止提 falsified_ideas 里已证伪的路线；禁止提无法回测的想法"
+    "（如让 AI 预测价格）。用中文，紧凑排版。"
+)
+
+
+def compose_research_ideas() -> dict[str, Any]:
+    """生成研究假设。返回 {text, model, source}；LLM 全挂时 text 为空并带 error。"""
+    facts = build_digest_facts()
+    settings = get_settings()
+    payload = json.dumps(
+        {"system_facts": facts, "falsified_ideas": FALSIFIED_IDEAS},
+        ensure_ascii=False,
+        default=str,
+    )
+
+    from analyst.llm.chat import _iter_chat_clients
+
+    start = time.time()
+    for client, model, prov in _iter_chat_clients(settings):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": RESEARCH_SYSTEM},
+                    {"role": "user", "content": payload},
+                ],
+                temperature=0.6,
+                max_tokens=1500,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            if text:
+                out = {
+                    "text": text,
+                    "model": model,
+                    "provider": prov,
+                    "latency_ms": int((time.time() - start) * 1000),
+                    "source": "llm",
+                }
+                _save_cache("last_research.json", out)
+                return out
+        except Exception as e:
+            logger.warning("research LLM %s 失败：%s", prov, e)
+    return {"text": "", "source": "none", "error": "无可用 LLM 线路"}
