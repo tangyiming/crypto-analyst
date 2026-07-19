@@ -87,14 +87,6 @@ def monitor_config():
             "chart_mode": "native",
             "analysis_timeframe": "4h",
         },
-        "strategy": {
-            "stop_buffer_pct": s.monitor_stop_buffer_pct,
-            "take_profit_r": s.monitor_take_profit_r,
-            "ema_trend_period": s.monitor_ema_trend_period,
-            "require_ema200": s.monitor_require_ema200,
-            "kelly_scale": s.monitor_kelly_scale,
-            "trail_to_8r": s.monitor_trail_to_8r,
-        },
         "telegram_ready": bool(
             s.telegram_bot_token.strip() and s.telegram_chat_id.strip()
         ),
@@ -219,7 +211,7 @@ class MonitorChatRequest(BaseModel):
 
 @router.post("/api/monitor/alerts/demo")
 async def monitor_demo_alert(req: DemoAlertRequest):
-    """模拟一条双线反转告警：推 WebSocket + Telegram。"""
+    """模拟一条规则告警：推 WebSocket + Telegram。"""
     hub = get_monitor_hub()
     try:
         alert = await hub.inject_demo_alert(

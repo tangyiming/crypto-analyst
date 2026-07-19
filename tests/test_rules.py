@@ -38,7 +38,6 @@ def _only_volume_cfg() -> RuleConfig:
         enable_structure_flip=False,
         enable_fib_zone=False,
         enable_baseline=False,
-        enable_break_level=False,
     )
 
 

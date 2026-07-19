@@ -75,5 +75,5 @@ def test_template_digest_renders_without_llm():
     assert "熊市" in text
     assert "熔断" not in text  # 无异常不显示熔断行
 
-    facts["risk_fuse"]["disabled_strategies"] = ["double_line"]
+    facts["risk_fuse"]["disabled_strategies"] = ["xs_momentum"]
     assert "熔断" in _template_digest(facts)

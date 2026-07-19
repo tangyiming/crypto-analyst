@@ -319,21 +319,6 @@
     .bt-result tr:last-child th, .bt-result tr:last-child td { border-bottom: 0; }
     .bt-result .pos { color: var(--green); }
     .bt-result .neg { color: var(--red); }
-    .roadmap {
-      max-width: 560px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #12161c;
-      padding: 16px 18px;
-    }
-    .roadmap li {
-      font-size: 13px;
-      color: var(--text);
-      margin: 10px 0;
-      padding-left: 4px;
-    }
-    .roadmap li.muted { color: var(--muted); }
-    .roadmap li::marker { color: var(--yellow); }
     .tools-section { margin-bottom: 28px; }
     .tools-section h2 {
       font-size: 13px;
@@ -415,28 +400,6 @@
       resize: vertical;
     }
     .tool-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
-    .fw-fit {
-      display: inline-block;
-      font-size: 10px;
-      padding: 2px 8px;
-      border-radius: 10px;
-      margin-left: 6px;
-    }
-    .fw-fit.high { background: rgba(14, 203, 129, 0.15); color: var(--green); }
-    .fw-fit.mid { background: rgba(240, 185, 11, 0.12); color: var(--yellow); }
-    .fw-fit.low { background: rgba(132, 142, 156, 0.2); color: var(--muted); }
-    .fw-note {
-      max-width: 880px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #12161c;
-      padding: 14px 16px;
-      margin-bottom: 18px;
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.55;
-    }
-    .fw-note strong { color: var(--text); font-weight: 600; }
     .chrome {
       background: #0e1218;
       border-bottom: 1px solid var(--line);
@@ -1481,7 +1444,6 @@
       <button type="button" class="app-nav-link" data-app="schedule">日程</button>
       <button type="button" class="app-nav-link" data-app="strategies">策略库</button>
       <button type="button" class="app-nav-link" data-app="backtest">回测</button>
-      <button type="button" class="app-nav-link" data-app="frameworks">开源框架</button>
       <button type="button" class="app-nav-link" data-app="web3">Web3</button>
       <button type="button" class="app-nav-link" data-app="devtools">开发工具</button>
       <button type="button" class="app-nav-link" data-app="auto">自动交易<span class="tag">纸面</span></button>
@@ -1780,36 +1742,6 @@
     </div>
   </div>
 
-  <div id="viewFrameworks" class="app-view hidden">
-    <div class="app-page">
-      <div class="app-page-head">
-        <h1>开源量化框架</h1>
-        <p>调研精选：可与本平台互补的开源策略库 / 交易框架。当前以导航与集成路线为主，不内嵌整套 bot。</p>
-      </div>
-      <div class="fw-note">
-        <strong>与本平台怎么配合：</strong>
-        Crypto Analyst 专注 AI 分析、规则盯盘、周期位置与经典回测；自动下单仍规划中。
-        更合适的集成方式是「外挂执行引擎」：本平台出信号 / 告警，Freqtrade / Jesse 等负责回测优化与 dry-run。
-        许可证注意：Freqtrade 为 GPL-3.0，若深度链接需评估合规；Jesse / Hummingbot / vectorbt / Lean 多为 MIT 或 Apache-2.0，更易做适配层。
-      </div>
-      <div class="tools-section">
-        <h2>推荐集成优先级</h2>
-        <div class="tools-grid" id="frameworkGrid"></div>
-      </div>
-      <div class="tools-section">
-        <h2>建议集成路线</h2>
-        <ul class="roadmap">
-          <li>✅ 本平台：盯盘告警 · 策略库 · 经典回测 · 周期工具</li>
-          <li>⏳ 阶段 A：策略信号导出 JSON / Webhook，对接 Freqtrade dry-run</li>
-          <li>⏳ 阶段 B：可选 sidecar 运行 Jesse / Freqtrade，结果回写告警面板</li>
-          <li>⏳ 阶段 C：研究侧用 vectorbt 做参数扫描，优胜参数回灌本平台回测</li>
-          <li class="muted">⏸ Hummingbot：做市 / 套利场景，与当前「提醒型」定位不同，暂不优先</li>
-          <li class="muted">⏸ NautilusTrader / Lean：机构级事件驱动，复杂度高，长期可选</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-
   <div id="viewWeb3" class="app-view hidden">
     <div class="app-page">
       <div class="app-page-head">
@@ -2011,7 +1943,7 @@
       <div class="paper-page-inner">
         <div class="app-page-head">
           <h1>纸面模拟炒币</h1>
-          <p>跟单 <strong>double_line / cycle_switch</strong>；非真金、不调交易所 API。顶栏与盯盘底部约 2 秒刷新浮盈。</p>
+          <p>跟单 <strong>cycle_switch / xs_momentum / funding_carry</strong>；非真金、不调交易所 API。顶栏与盯盘底部约 2 秒刷新浮盈。</p>
         </div>
         <div class="paper-hero" id="paperHero">
           <div class="paper-hero-main">
@@ -2113,7 +2045,6 @@
   let dockFilterCurrent = true;
   let levelStore = {};
   let levelPollTimer = null;
-  let signalStore = {};
   let cycleStore = {};
   let pendingAlert = null; // 切币后等 snapshot 再画点
   let historyOverlay = null; // 历史分析在图上的锚点 {symbol,time,plan,direction}
@@ -2764,7 +2695,6 @@
       backtest: 'viewBacktest',
       cycle: 'viewCycle',
       schedule: 'viewSchedule',
-      frameworks: 'viewFrameworks',
       web3: 'viewWeb3',
       devtools: 'viewDevtools',
       auto: 'viewAuto',
@@ -2785,7 +2715,6 @@
     if (name === 'strategies') loadStrategiesPage();
     if (name === 'cycle') startCyclePageRefresh();
     if (name === 'schedule') startSchedulePageRefresh();
-    if (name === 'frameworks') renderFrameworksPage();
     if (name === 'web3') initWeb3Tools();
     if (name === 'devtools') initDevTools();
     if (name === 'auto') startPaperPageRefresh();
@@ -2859,7 +2788,7 @@
 
     const rows = st.positions || [];
     if (!rows.length) {
-      list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无纸面持仓。双线 / cycle_switch 开仓后会实时出现在这里（AI 只点评不开仓）。</div>';
+      list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无纸面持仓。cycle_switch / xs_momentum / funding_carry 开仓后会实时出现在这里（AI 只点评不开仓）。</div>';
       return;
     }
     const head = `<div class="paper-pos-row paper-pos-head"><span>策略</span><span>品种</span><span>向</span><span>入场→标记</span><span>杠杆·保证金</span><span>收益率</span><span>浮盈</span></div>`;
@@ -3016,7 +2945,7 @@
     if (posEl) {
       const rows = st.positions || [];
       if (!rows.length) {
-        posEl.innerHTML = '<span class="muted">暂无持仓。双线 / cycle_switch 信号会自动开纸面仓。</span>';
+        posEl.innerHTML = '<span class="muted">暂无持仓。cycle_switch / xs_momentum / funding_carry 信号会自动开纸面仓。</span>';
       } else {
         posEl.innerHTML = rows.map((p) => {
           const upnl = Number(p.unrealized_pnl || 0);
@@ -3112,95 +3041,6 @@
 
   async function loadPaperPage() {
     await refreshPaperLive({ fullPage: true });
-  }
-
-  const FRAMEWORKS = [
-    {
-      name: 'Freqtrade',
-      fit: 'high', fitLabel: '优先集成',
-      desc: '加密交易 bot 事实标准：回测、Hyperopt、FreqAI、Telegram/WebUI、30+ 交易所。适合作为本平台自动交易的 dry-run / 实盘执行侧车。',
-      license: 'GPL-3.0',
-      stars: '50k+',
-      url: 'https://github.com/freqtrade/freqtrade',
-      note: '信号 Webhook / REST 对接最顺；注意 GPL 合规。',
-    },
-    {
-      name: 'Jesse',
-      fit: 'high', fitLabel: '优先集成',
-      desc: '现代 Python 加密框架，回测严谨（防未来函数），API 清晰。适合研究级策略验证，再把优胜逻辑迁入本平台策略库。',
-      license: 'MIT',
-      stars: '7.6k+',
-      url: 'https://github.com/jesse-ai/jesse',
-      note: 'MIT 更易做适配层；适合「研究 → 本平台盯盘」。',
-    },
-    {
-      name: 'vectorbt',
-      fit: 'high', fitLabel: '研究加速',
-      desc: '向量化回测，参数扫描极快。可与本平台经典回测互补：vectorbt 扫参，本平台做可解释分段（牛熊）报告。',
-      license: '开源 / PRO',
-      stars: '6k+',
-      url: 'https://github.com/polakowo/vectorbt',
-      note: '不负责实盘，专注研究流水线。',
-    },
-    {
-      name: 'Hummingbot',
-      fit: 'mid', fitLabel: '场景互补',
-      desc: '做市与跨所套利（CEX+DEX）。与当前「提醒型盯盘」定位不同，若未来做流动性策略可单独部署。',
-      license: 'Apache-2.0',
-      stars: '18k+',
-      url: 'https://github.com/hummingbot/hummingbot',
-      note: '不建议与现有告警引擎强耦合。',
-    },
-    {
-      name: 'OctoBot',
-      fit: 'mid', fitLabel: '可选',
-      desc: '自带 Web UI 与预置策略，上手快。可作独立 bot，与本平台并行使用。',
-      license: 'GPL-3.0',
-      stars: '5k+',
-      url: 'https://github.com/Drakkar-Software/OctoBot',
-      note: '适合「一键 bot」，深度集成价值一般。',
-    },
-    {
-      name: 'NautilusTrader',
-      fit: 'low', fitLabel: '长期可选',
-      desc: 'Rust 核心 + Python API，事件驱动、低延迟。适合未来高频 / 机构级执行层。',
-      license: 'LGPL-3.0',
-      stars: '6k+',
-      url: 'https://github.com/nautechsystems/nautilus_trader',
-      note: '学习曲线陡，短期不优先。',
-    },
-    {
-      name: 'Lean (QuantConnect)',
-      fit: 'low', fitLabel: '长期可选',
-      desc: '多资产机构级引擎（股/期/期权/加密）。云端或本地；与本平台加密永续垂直场景重叠有限。',
-      license: 'Apache-2.0',
-      stars: '18k+',
-      url: 'https://github.com/QuantConnect/Lean',
-      note: '多资产研究时可参考，非加密 bot 首选。',
-    },
-    {
-      name: 'Backtrader',
-      fit: 'mid', fitLabel: '经典参考',
-      desc: '经典 Python 回测库，文档与社区策略多。本平台 classic 回测已覆盖核心需求，可作对照实现。',
-      license: 'GPL-3.0',
-      stars: '15k+',
-      url: 'https://github.com/mementum/backtrader',
-      note: '上游维护偏缓，适合学习而非新集成。',
-    },
-  ];
-
-  function renderFrameworksPage() {
-    const grid = $('frameworkGrid');
-    if (!grid || grid.dataset.ready === '1') return;
-    grid.innerHTML = FRAMEWORKS.map((f) => `
-      <a class="tool-card" href="${escapeHtml(f.url)}" target="_blank" rel="noopener noreferrer">
-        <span class="tc-name">${escapeHtml(f.name)}<span class="fw-fit ${escapeHtml(f.fit)}">${escapeHtml(f.fitLabel)}</span></span>
-        <span class="tc-desc">${escapeHtml(f.desc)}</span>
-        <span class="tc-meta">${escapeHtml(f.license)} · ★ ${escapeHtml(f.stars)}</span>
-        <span class="tc-tag">${escapeHtml(f.note)}</span>
-      </a>
-    `).join('');
-    grid.dataset.ready = '1';
   }
 
   const WEB3_LINKS_BROWSE = [
@@ -4048,13 +3888,11 @@
       const fib = ctx.fib_zones || {};
       const longZone = fib.long || {};
       const shortZone = fib.short || {};
-      const sig = signalStore[sym] || {};
       const cyc = cycleStore[sym] || {};
       const recentAlert = alertStore.slice().reverse().find((a) => normalizeSymbol(a.symbol) === sym);
       const zCls = zoneClass(ctx);
       const reason = (z.reasons || []).slice(0, 2).join(' · ');
       const chips = [
-        sig.direction && sig.direction !== 'wait' ? `双线 ${dirLabel(sig.direction)}` : '双线 WAIT',
         cyc.target_position > 0 ? `周期 多 ${Math.round(Math.abs(cyc.target_position) * 100)}%` :
           cyc.target_position < 0 ? `周期 空 ${Math.round(Math.abs(cyc.target_position) * 100)}%` : '周期 空仓',
         recentAlert?.title ? `最近: ${recentAlert.title}` : '',
@@ -5319,9 +5157,6 @@
         updatePremium(msg);
       } else if (msg.type === 'level_context') {
         ingestLevelContext(msg);
-      } else if (msg.type === 'signal') {
-        signalStore[normalizeSymbol(msg.symbol)] = msg;
-        renderLevelBoard();
       } else if (msg.type === 'cycle_switch') {
         cycleStore[normalizeSymbol(msg.symbol)] = msg;
         renderLevelBoard();
@@ -5550,7 +5385,7 @@
 
     let savedApp = null;
     try { savedApp = localStorage.getItem('monitor.appView'); } catch (_) {}
-    if (savedApp && ['monitor', 'strategies', 'backtest', 'cycle', 'frameworks', 'web3', 'devtools', 'auto'].includes(savedApp) && savedApp !== 'monitor') {
+    if (savedApp && ['monitor', 'strategies', 'backtest', 'cycle', 'schedule', 'web3', 'devtools', 'auto', 'ai'].includes(savedApp) && savedApp !== 'monitor') {
       switchAppView(savedApp);
     }
 

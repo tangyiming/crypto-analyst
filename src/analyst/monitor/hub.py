@@ -16,16 +16,12 @@ from typing import Any
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
-from analyst.compute.strategies.double_line_reversal import (
-    DoubleLineConfig,
-    evaluate_double_line,
-)
+from analyst.config import get_settings
 from analyst.compute.strategies.cycle_switch import (
     CycleSwitchConfig,
     build_cycle_regime,
     evaluate_cycle_switch,
 )
-from analyst.config import get_settings
 from analyst.data.fetcher import Candle, CandleSeries, fetch_candles
 from analyst.data.fetcher import fetch_candles_history
 from analyst.data.ws_kline import stream_klines, stream_mark_price
@@ -45,7 +41,7 @@ from analyst.compute.level_context import (
     snapshot_from_series,
     tf_priority,
 )
-from analyst.monitor.serialize import candle_to_dict, signal_to_alert_dict
+from analyst.monitor.serialize import candle_to_dict
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -157,12 +153,10 @@ class StreamWorker:
     last_rule_keys: set[str] = field(default_factory=set)
     rule_state: dict[str, Any] = field(default_factory=dict)
     last_premium: dict[str, Any] | None = None
-    strategy: DoubleLineConfig = field(default_factory=DoubleLineConfig)
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     # 诊断：最近一根已处理收盘 K / 评估结果
     last_closed_at: datetime | None = None
     last_tick_at: datetime | None = None
-    last_signal_dir: str = "wait"
     closed_bars: int = 0
     alerts_sent: int = 0
     last_cycle_position: float = 0.0
@@ -442,7 +436,6 @@ class MonitorHub:
                     "bars": len(w.series.candles),
                     "closed_bars": w.closed_bars,
                     "alerts_sent": w.alerts_sent,
-                    "last_signal": w.last_signal_dir,
                     "last_closed_at": last_c.isoformat() if last_c else None,
                     "last_tick_at": w.last_tick_at.isoformat() if w.last_tick_at else None,
                     "sec_since_close": (
@@ -720,27 +713,6 @@ class MonitorHub:
         except Exception as e:
             logger.warning("写入 AI 确认冷却失败: %s", e)
 
-    def _strategy_from_settings(self) -> DoubleLineConfig:
-        s = get_settings()
-        return DoubleLineConfig(
-            kelly_scale=s.monitor_kelly_scale,
-            stop_buffer_pct=s.monitor_stop_buffer_pct,
-            stop_buffer_atr_mult=s.monitor_stop_buffer_atr_mult,
-            take_profit_r=s.monitor_take_profit_r,
-            max_chase_atr=s.monitor_max_chase_atr,
-            ema_trend_period=s.monitor_ema_trend_period,
-            require_ema200=s.monitor_require_ema200,
-            require_ema_slope=s.monitor_require_ema_slope,
-            trail_to_8r=s.monitor_trail_to_8r,
-            require_fib_zone=s.monitor_require_fib_zone,
-            require_volume=s.monitor_require_volume,
-            require_adx=s.monitor_require_adx,
-            adx_period=s.monitor_adx_period,
-            adx_min=s.monitor_adx_min,
-            use_conditional_edge=s.monitor_use_conditional_edge,
-            min_conditional_win_rate=s.monitor_min_conditional_win_rate,
-        )
-
     async def _ensure_worker(self, key: StreamKey) -> StreamWorker:
         # 快路径：已有 worker 不占锁久等
         existing = self._workers.get(str(key))
@@ -768,7 +740,6 @@ class MonitorHub:
             worker = StreamWorker(
                 key=key,
                 series=series,
-                strategy=self._strategy_from_settings(),
             )
             if key.market == "futures":
                 seeded = await asyncio.to_thread(_fetch_contract_quote, key.symbol)
@@ -1028,7 +999,6 @@ class MonitorHub:
             enable_structure_flip=s.monitor_rule_structure_flip,
             enable_fib_zone=s.monitor_rule_fib_zone,
             enable_baseline=s.monitor_rule_baseline,
-            enable_break_level=s.monitor_rule_break_level,
             enable_funding=s.monitor_rule_funding,
             enable_premium=s.monitor_rule_premium,
             funding_extreme_pct=s.monitor_funding_extreme_pct,
@@ -1636,7 +1606,7 @@ class MonitorHub:
         had_candidate: bool,
         candidate_rules: list[str],
     ) -> None:
-        """有双线/规则候选时调 AI；long/short 推盯盘点评（页面+TG），不开纸面仓。"""
+        """有规则/周期候选时调 AI；long/short 推盯盘点评（页面+TG），不开纸面仓。"""
         settings = get_settings()
         if not settings.monitor_ai_on_candidate or not had_candidate:
             return
@@ -1709,7 +1679,7 @@ class MonitorHub:
             marker = int(last_ts.astimezone(timezone.utc).timestamp())
 
         reasons = [
-            f"候选规则: {', '.join(candidate_rules[:4]) or 'double_line'}",
+            f"候选规则: {', '.join(candidate_rules[:4]) or '-'}",
             f"AI 周期 {result.get('ai_timeframe') or ai_tf}",
         ]
         if rationale:
@@ -1745,7 +1715,7 @@ class MonitorHub:
             result.get("session_id"),
         )
         await self._emit_rule_alert(worker, alert)
-        # ai_plan 不再开纸面仓：只作监控点评/通知；开仓仅 double_line / cycle_switch
+        # ai_plan 不再开纸面仓：只作监控点评/通知；开仓见 MONITOR_PAPER_SOURCES
 
 
     async def _paper_try_open(
@@ -1925,79 +1895,23 @@ class MonitorHub:
             await self._notify_telegram_text(text)
 
     async def _evaluate_and_alert(self, worker: StreamWorker) -> None:
-        signal = evaluate_double_line(worker.series, worker.strategy)
-        worker.last_signal_dir = signal.direction
+        settings = get_settings()
+        had_candidate = False
+        candidate_rules: list[str] = []
+
+        price = (
+            float(worker.series.candles[-1].close)
+            if worker.series.candles
+            else 0.0
+        )
         logger.info(
-            "收盘评估 %s price=%.6g dir=%s pattern=%s closed_bars=%d reasons=%s",
+            "收盘评估 %s price=%.6g closed_bars=%d",
             worker.key,
-            signal.price,
-            signal.direction,
-            signal.pattern or "-",
+            price,
             worker.closed_bars,
-            (signal.reasons or [])[:2],
         )
-        await self._broadcast(
-            worker,
-            {
-                "type": "signal",
-                "symbol": worker.key.symbol,
-                "timeframe": worker.key.timeframe,
-                "direction": signal.direction,
-                "pattern": signal.pattern,
-                "break_level": signal.break_level,
-                "price": signal.price,
-                "reasons": signal.reasons[:3],
-            },
-        )
-        had_candidate = signal.direction != "wait"
-        candidate_rules: list[str] = ["double_line"] if had_candidate else []
-
-        if signal.direction != "wait":
-            alert = signal_to_alert_dict(
-                worker.key.symbol,
-                worker.key.timeframe,
-                signal,
-            )
-            alert["rule"] = "double_line"
-            alert["title"] = "双线反转"
-            dedupe = (
-                f"{alert['symbol']}|{alert['timeframe']}|{alert['direction']}|"
-                f"{alert['marker_time']}"
-            )
-            if dedupe != worker.last_alert_key:
-                worker.last_alert_key = dedupe
-                self._alerts.append(alert)
-                worker.alerts_sent += 1
-                await self._broadcast(worker, alert, alert_also=True)
-
-                # 双线仅页面；TG 改由 AI 确认（ai_plan）
-                if self._tg_rule_allowed("double_line") and self._telegram_ready():
-                    settings = get_settings()
-                    notifier = build_default_notifier(
-                        telegram_bot_token=settings.telegram_bot_token,
-                        telegram_chat_id=settings.telegram_chat_id,
-                    )
-                    logger.info(
-                        "双线反转告警 → TG %s %s dir=%s strength=%.2f",
-                        worker.key.symbol,
-                        worker.key.timeframe,
-                        signal.direction,
-                        signal.strength,
-                    )
-                    await asyncio.to_thread(
-                        notifier.notify,
-                        worker.key.symbol,
-                        worker.key.timeframe,
-                        signal,
-                    )
-                # 纸面跟单双线（有 plan 时）
-                try:
-                    await self._paper_try_open(worker, alert, strategy="double_line")
-                except Exception:
-                    logger.exception("paper double_line open failed %s", worker.key)
 
         # 规则批次（页面全量；TG 受白名单限制，默认不含噪音规则）
-        settings = get_settings()
         if settings.monitor_rules_enabled:
             try:
                 events, new_state = evaluate_closed_bar_rules(
@@ -2084,10 +1998,8 @@ class MonitorHub:
         direction: str = "long",
         market: str = "futures",
     ) -> dict[str, Any]:
-        """注入一条模拟可交易告警：推页面 WS + Telegram（便于联调）。"""
-        from analyst.compute.kelly import KellySize
+        """注入一条模拟规则告警：推页面 WS + Telegram（便于联调）。"""
         from analyst.compute.plan import TradePlan
-        from analyst.compute.strategies.double_line_reversal import DoubleLineSignal
 
         symbol = _norm_symbol(symbol)
         direction = direction if direction in ("long", "short") else "long"
@@ -2104,7 +2016,6 @@ class MonitorHub:
         elif worker and worker.last_premium and worker.last_premium.get("mark_price"):
             price = float(worker.last_premium["mark_price"])
         else:
-            # 无活跃流时用 REST 拉一根
             series = await asyncio.to_thread(
                 fetch_candles, symbol, timeframe, 5, False, market
             )
@@ -2116,7 +2027,6 @@ class MonitorHub:
         if not price:
             price = 65000.0 if symbol.startswith("BTC") else 1.0
 
-        # 按方向造一份看得见的计划
         if direction == "long":
             entry_low, entry_high = price * 0.998, price * 1.002
             stop = price * 0.985
@@ -2138,37 +2048,42 @@ class MonitorHub:
             rr_ratio=rr,
             rationale="【模拟告警】仅用于联调页面标记与 Telegram，非实盘信号",
         )
-        signal = DoubleLineSignal(
-            direction=direction,
-            strength=0.86,
-            price=price,
-            pattern="demo_double_line",
-            break_level=entry_high if direction == "long" else entry_low,
-            reasons=[
-                "【模拟】双线反转形态命中",
-                "【模拟】放量确认",
+        if marker_ts.tzinfo is None:
+            marker_time = int(marker_ts.replace(tzinfo=timezone.utc).timestamp())
+        else:
+            marker_time = int(marker_ts.astimezone(timezone.utc).timestamp())
+
+        alert = {
+            "type": "alert",
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "rule": "demo",
+            "title": "模拟规则告警",
+            "direction": direction,
+            "strength": 0.86,
+            "price": price,
+            "reasons": [
+                "【模拟】规则命中",
+                "【模拟】量能确认",
                 "【模拟】趋势过滤通过",
             ],
-            filters_passed=["demo"],
-            plan=plan,
-            kelly=KellySize(
-                win_rate=0.47,
-                payoff_ratio=2.0,
-                full_kelly=0.2,
-                fraction=0.25,
-                suggested_fraction=0.05,
-                risk_budget_pct=1.0,
-                note="模拟 Kelly",
-            ),
-            trail_note="【模拟】可按 2R 分批止盈",
-            bar_ts=marker_ts,
-        )
-
-        alert = signal_to_alert_dict(symbol, timeframe, signal)
-        alert["demo"] = True
+            "filters_passed": ["demo"],
+            "marker_time": marker_time,
+            "plan": {
+                "direction": plan.direction,
+                "entry_low": plan.entry_low,
+                "entry_high": plan.entry_high,
+                "stop_loss": plan.stop_loss,
+                "take_profit_1": plan.take_profit_1,
+                "take_profit_2": plan.take_profit_2,
+                "rr_ratio": plan.rr_ratio,
+                "rationale": plan.rationale,
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "demo": True,
+        }
         self._alerts.append(alert)
 
-        # 广播到所有连着该品种的客户端；若无 worker 则广播给任意 BTC 流客户端
         targets_worker = worker
         if targets_worker is None:
             for w in self._workers.values():
@@ -2178,7 +2093,6 @@ class MonitorHub:
         if targets_worker is not None:
             await self._broadcast(targets_worker, alert, alert_also=True)
         else:
-            # 推给任意已连接客户端（告警列表 / toast），哪怕品种不完全相同
             pushed = False
             for w in self._workers.values():
                 if w.clients or w.alert_clients:
@@ -2189,11 +2103,13 @@ class MonitorHub:
                 logger.info("demo alert stored (no live WS clients): %s", symbol)
 
         settings = get_settings()
-        notifier = build_default_notifier(
-            telegram_bot_token=settings.telegram_bot_token,
-            telegram_chat_id=settings.telegram_chat_id,
-        )
-        await asyncio.to_thread(notifier.notify, symbol, timeframe, signal)
+        if self._telegram_ready():
+            text = format_rule_alert_text(symbol, timeframe, alert)
+            notifier = build_default_notifier(
+                telegram_bot_token=settings.telegram_bot_token,
+                telegram_chat_id=settings.telegram_chat_id,
+            )
+            await asyncio.to_thread(notifier.send_text, text)
         return alert
 
 

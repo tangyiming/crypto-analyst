@@ -13,11 +13,8 @@ def _reset_broker(tmp_path, monkeypatch, **extra_env):
     monkeypatch.setenv("MONITOR_PAPER_RISK_PCT", "0.01")
     monkeypatch.setenv("MONITOR_PAPER_FEE_BPS", "0")
     monkeypatch.setenv("MONITOR_PAPER_MAX_POSITIONS", "12")
-    monkeypatch.setenv("MONITOR_PAPER_DOUBLE_LINE_TFS", "15m,1h,4h")
-    monkeypatch.setenv("MONITOR_PAPER_MAX_MARGIN_PCT", "0.15")
-    monkeypatch.setenv("MONITOR_PAPER_SL_COOLDOWN_MINUTES", "120")
     monkeypatch.setenv(
-        "MONITOR_PAPER_SOURCES", "ai_plan,double_line,cycle_switch"
+        "MONITOR_PAPER_SOURCES", "ai_plan,cycle_switch"
     )
     for k, v in extra_env.items():
         monkeypatch.setenv(k, str(v))
@@ -98,14 +95,14 @@ def test_paper_open_tp_and_sl(tmp_path, monkeypatch):
             direction="short",
             price=100.0,
             plan=short_plan,
-            strategy="double_line",
+            strategy="cycle_switch",
         )
         is not None
     )
     closed2 = broker.on_mark("ETH/USDT", 101.0)
     assert closed2 and closed2[0]["trade"]["outcome"] == "sl"
     assert closed2[0]["trade"]["pnl_usd"] < 0
-    assert closed2[0]["trade"]["strategy"] == "double_line"
+    assert closed2[0]["trade"]["strategy"] == "cycle_switch"
 
 
 def test_paper_skips_duplicate_same_strategy(tmp_path, monkeypatch):
@@ -149,7 +146,7 @@ def test_paper_multi_strategy_same_symbol(tmp_path, monkeypatch):
         direction="long",
         price=100,
         plan=plan,
-        strategy="double_line",
+        strategy="cycle_switch",
     )
     assert len(broker.state.positions) == 2
 
@@ -158,74 +155,8 @@ def test_paper_multi_strategy_same_symbol(tmp_path, monkeypatch):
     assert st["unrealized_pnl"] > 0
     by = {b["strategy"]: b for b in st["by_strategy"]}
     assert by["ai_plan"]["open"] == 1
-    assert by["double_line"]["open"] == 1
+    assert by["cycle_switch"]["open"] == 1
     assert by["ai_plan"]["unrealized_pnl"] > 0
-
-
-    assert by["ai_plan"]["unrealized_pnl"] > 0
-
-
-def test_paper_rejects_double_line_1m(tmp_path, monkeypatch):
-    broker = _reset_broker(tmp_path, monkeypatch)
-    plan = {"stop_loss": 99, "take_profit_1": 102}
-    assert (
-        broker.try_open_from_plan(
-            symbol="BTC/USDT",
-            timeframe="1m",
-            direction="long",
-            price=100,
-            plan=plan,
-            strategy="double_line",
-        )
-        is None
-    )
-
-
-def test_paper_double_line_margin_cap(tmp_path, monkeypatch):
-    broker = _reset_broker(tmp_path, monkeypatch, MONITOR_PAPER_EQUITY="100")
-    broker.reset(100.0)
-    # 止损极窄 → 风险仓位名义巨大，应被保证金封顶
-    plan = {"stop_loss": 99.9, "take_profit_1": 100.2}
-    opened = broker.try_open_from_plan(
-        symbol="BNB/USDT",
-        timeframe="15m",
-        direction="long",
-        price=100.0,
-        plan=plan,
-        strategy="double_line",
-    )
-    assert opened is not None
-    pos = broker.state.positions[0]
-    assert pos.margin is not None
-    assert pos.margin <= 100.0 * 0.15 + 1e-6
-
-
-def test_paper_sl_cooldown(tmp_path, monkeypatch):
-    broker = _reset_broker(
-        tmp_path, monkeypatch, MONITOR_PAPER_SL_COOLDOWN_MINUTES="60"
-    )
-    plan = {"stop_loss": 99, "take_profit_1": 102}
-    assert broker.try_open_from_plan(
-        symbol="SOL/USDT",
-        timeframe="15m",
-        direction="long",
-        price=100,
-        plan=plan,
-        strategy="double_line",
-    )
-    assert broker.on_mark("SOL/USDT", 99.0)
-    # 止损后同向冷却
-    assert (
-        broker.try_open_from_plan(
-            symbol="SOL/USDT",
-            timeframe="15m",
-            direction="long",
-            price=100,
-            plan=plan,
-            strategy="double_line",
-        )
-        is None
-    )
 
 
 def test_paper_cycle_switch_sync(tmp_path, monkeypatch):
@@ -331,23 +262,21 @@ def test_strategy_dd_fuse_disables_and_clears(tmp_path, monkeypatch):
         tmp_path, monkeypatch, PAPER_STRATEGY_DD_DISABLE_PCT="10",
         PAPER_DAILY_LOSS_LIMIT_PCT="0",
     )
-    # 直接记录已实现回撤：峰值 0 → 累计 -1.5（= 初始 10 的 15% > 10% 限额）
-    broker._record_strategy_pnl("double_line", -1.5)
-    assert "double_line" in broker.state.disabled_strategies
+    broker._record_strategy_pnl("cycle_switch", -1.5)
+    assert "cycle_switch" in broker.state.disabled_strategies
     opened = broker.try_open_from_plan(
         symbol="BTC/USDT", timeframe="15m", direction="long",
-        price=100.0, plan=_plan(), strategy="double_line",
+        price=100.0, plan=_plan(), strategy="cycle_switch",
     )
     assert opened is None
     # 其他策略不受影响
     assert _open(broker, "ETH/USDT", strategy="ai_plan") is not None
     # 手动恢复
-    cleared = broker.clear_strategy_fuse("double_line")
-    assert cleared == ["double_line"]
+    cleared = broker.clear_strategy_fuse("cycle_switch")
+    assert cleared == ["cycle_switch"]
     assert broker.state.disabled_strategies == []
-    # 恢复后峰值重置到当前累计，不会立刻再触发
-    broker._record_strategy_pnl("double_line", 0.01)
-    assert "double_line" not in broker.state.disabled_strategies
+    broker._record_strategy_pnl("cycle_switch", 0.01)
+    assert "cycle_switch" not in broker.state.disabled_strategies
 
 
 def test_gross_exposure_cap_blocks(tmp_path, monkeypatch):
@@ -355,7 +284,6 @@ def test_gross_exposure_cap_blocks(tmp_path, monkeypatch):
         tmp_path, monkeypatch, PAPER_MAX_GROSS_EXPOSURE="1.5",
         PAPER_DAILY_LOSS_LIMIT_PCT="0",
     )
-    # 每仓 notional = 10（equity 10 × risk1% / dist1% ×100）→ 第二仓总敞口 20 > 15
     assert _open(broker, "BTC/USDT") is not None
     assert _open(broker, "ETH/USDT") is None
     st = broker.status()
@@ -376,12 +304,10 @@ def test_sync_target_position_open_flip_close(tmp_path, monkeypatch):
     assert ev and ev[0]["type"] == "paper_open"
     assert broker.state.positions[0].strategy == "xs_momentum"
     assert broker.state.positions[0].direction == "long"
-    # 同权重幂等：不重复开
     assert broker.sync_target_position(
         strategy="xs_momentum", symbol="SOL/USDT", timeframe="4h",
         target_position=0.5, price=101.0,
     ) == []
-    # 翻向：平多开空
     ev2 = broker.sync_target_position(
         strategy="xs_momentum", symbol="SOL/USDT", timeframe="4h",
         target_position=-0.25, price=102.0,
@@ -389,7 +315,6 @@ def test_sync_target_position_open_flip_close(tmp_path, monkeypatch):
     types = [e["type"] for e in ev2]
     assert "paper_close" in types and "paper_open" in types
     assert broker.state.positions[0].direction == "short"
-    # 清零：全平
     ev3 = broker.sync_target_position(
         strategy="xs_momentum", symbol="SOL/USDT", timeframe="4h",
         target_position=0.0, price=100.0,
@@ -420,9 +345,8 @@ def test_carry_open_accrue_close(tmp_path, monkeypatch):
     assert ev and ev[0]["type"] == "paper_carry_open"
     assert "BTC/USDT" in broker.state.carry_book
     cash_after_open = broker.state.cash
-    assert cash_after_open < 10.0  # 扣了双腿开仓费
+    assert cash_after_open < 10.0
 
-    # 三档结算：+0.01% ×2、-0.005% ×1 → 净 +0.00015 × 5U
     import time as _t
     base = int(_t.time() * 1000) + 1000
     got = broker.apply_carry_funding("BTC/USDT", [
@@ -430,7 +354,6 @@ def test_carry_open_accrue_close(tmp_path, monkeypatch):
     ])
     assert abs(got - 5.0 * 0.00015) < 1e-9
     assert abs(broker.state.carry_book["BTC/USDT"]["accrued"] - got) < 1e-12
-    # 重复入账被 last_settle_ms 挡住
     assert broker.apply_carry_funding("BTC/USDT", [(base, 0.0001)]) == 0.0
 
     ev2 = broker.sync_carry(symbol="BTC/USDT", active=False, notional=0.0)
@@ -445,8 +368,6 @@ def test_carry_open_only_when_signal_and_idempotent(tmp_path, monkeypatch):
         tmp_path, monkeypatch, MONITOR_PAPER_SOURCES="funding_carry",
         PAPER_DAILY_LOSS_LIMIT_PCT="0",
     )
-    # 未持有 + 无信号 → 无事发生
     assert broker.sync_carry(symbol="ETH/USDT", active=False, notional=5.0) == []
     broker.sync_carry(symbol="ETH/USDT", active=True, notional=5.0)
-    # 已持有 + 信号仍在 → 幂等
     assert broker.sync_carry(symbol="ETH/USDT", active=True, notional=5.0) == []

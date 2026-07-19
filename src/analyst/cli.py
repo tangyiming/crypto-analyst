@@ -631,137 +631,6 @@ def config_test_llm():
 
 
 # ═══════════════════════════════════════════════════════════════
-# 实时监控（双线反转 + Binance WS）
-# ═══════════════════════════════════════════════════════════════
-monitor_app = typer.Typer(help="📡 实时监控与可交易提醒（不下单）")
-app.add_typer(monitor_app, name="monitor")
-
-
-@monitor_app.command("once")
-def monitor_once(
-    symbol: str = typer.Argument("BTC", help="币种，如 BTC / ETH"),
-    timeframe: str = typer.Option(None, "--timeframe", "-t", help="K 线周期"),
-    market: str = typer.Option(None, "--market", help="spot 或 futures"),
-    fib_zone: bool = typer.Option(False, "--fib-zone", help="要求价格在斐波入场区"),
-    volume: bool = typer.Option(False, "--volume", help="启用量能过滤"),
-):
-    """一眼评估当前双线反转信号（REST，不挂 WS）。"""
-    from analyst.compute.strategies.double_line_reversal import DoubleLineConfig
-    from analyst.config import get_settings
-    from analyst.monitor.engine import MonitorConfig, MonitorEngine
-    from analyst.monitor.notifier import build_default_notifier
-
-    settings = get_settings()
-    sym = _normalize_symbol(symbol)
-    tf = timeframe or settings.monitor_timeframe
-    mkt = market or settings.monitor_market
-    cfg = MonitorConfig(
-        symbol=sym,
-        timeframe=tf,
-        market=mkt,
-        strategy=DoubleLineConfig(
-            kelly_scale=settings.monitor_kelly_scale,
-            stop_buffer_pct=settings.monitor_stop_buffer_pct,
-            stop_buffer_atr_mult=settings.monitor_stop_buffer_atr_mult,
-            take_profit_r=settings.monitor_take_profit_r,
-            max_chase_atr=settings.monitor_max_chase_atr,
-            ema_trend_period=settings.monitor_ema_trend_period,
-            require_ema200=settings.monitor_require_ema200,
-            require_ema_slope=settings.monitor_require_ema_slope,
-            trail_to_8r=settings.monitor_trail_to_8r,
-            require_fib_zone=fib_zone or settings.monitor_require_fib_zone,
-            require_volume=volume or settings.monitor_require_volume,
-            require_adx=settings.monitor_require_adx,
-            adx_period=settings.monitor_adx_period,
-            adx_min=settings.monitor_adx_min,
-            use_conditional_edge=settings.monitor_use_conditional_edge,
-            min_conditional_win_rate=settings.monitor_min_conditional_win_rate,
-        ),
-    )
-    engine = MonitorEngine(cfg, notifier=build_default_notifier(
-        telegram_bot_token=settings.telegram_bot_token,
-        telegram_chat_id=settings.telegram_chat_id,
-    ))
-    with console.status(f"[bold green]拉取 {sym} {tf} …"):
-        signal = engine.evaluate_once()
-
-    if signal.direction == "wait":
-        console.print(
-            Panel(
-                f"[yellow]观望[/yellow]\n"
-                f"价格：{signal.price:.4f}\n"
-                f"形态：{signal.pattern or '-'}  突破位：{signal.break_level or '-'}\n"
-                + "\n".join(signal.reasons),
-                title=f"📡 {sym} · {tf}",
-                border_style="yellow",
-            )
-        )
-    else:
-        engine.notifier.notify(sym, tf, signal)
-
-
-@monitor_app.command("start")
-def monitor_start(
-    symbol: str = typer.Argument("BTC", help="币种，如 BTC / ETH"),
-    timeframe: str = typer.Option(None, "--timeframe", "-t", help="K 线周期"),
-    market: str = typer.Option(None, "--market", help="spot 或 futures"),
-    fib_zone: bool = typer.Option(False, "--fib-zone", help="要求价格在斐波入场区"),
-    volume: bool = typer.Option(False, "--volume", help="启用量能过滤"),
-):
-    """订阅 Binance WebSocket，收盘 K 触发双线反转提醒（Ctrl+C 停止）。"""
-    from analyst.compute.strategies.double_line_reversal import DoubleLineConfig
-    from analyst.config import get_settings
-    from analyst.monitor.engine import MonitorConfig, run_monitor_blocking
-    from analyst.monitor.notifier import build_default_notifier
-
-    settings = get_settings()
-    sym = _normalize_symbol(symbol)
-    tf = timeframe or settings.monitor_timeframe
-    mkt = market or settings.monitor_market
-    console.print(
-        Panel(
-            f"品种：[bold]{sym}[/bold]\n"
-            f"周期：{tf} · 市场：{mkt}\n"
-            f"策略：双线反转(K线形态) + EMA{settings.monitor_ema_trend_period}"
-            f" + 止损缓冲{settings.monitor_stop_buffer_pct:g}%"
-            f" + {settings.monitor_take_profit_r:g}R"
-            f" + Kelly×{settings.monitor_kelly_scale}\n"
-            f"[dim]对齐视频口述规则；仅提醒，不自动下单。Ctrl+C 退出。[/dim]",
-            title="📡 实时监控启动",
-            border_style="cyan",
-        )
-    )
-    cfg = MonitorConfig(
-        symbol=sym,
-        timeframe=tf,
-        market=mkt,
-        strategy=DoubleLineConfig(
-            kelly_scale=settings.monitor_kelly_scale,
-            stop_buffer_pct=settings.monitor_stop_buffer_pct,
-            stop_buffer_atr_mult=settings.monitor_stop_buffer_atr_mult,
-            take_profit_r=settings.monitor_take_profit_r,
-            max_chase_atr=settings.monitor_max_chase_atr,
-            ema_trend_period=settings.monitor_ema_trend_period,
-            require_ema200=settings.monitor_require_ema200,
-            require_ema_slope=settings.monitor_require_ema_slope,
-            trail_to_8r=settings.monitor_trail_to_8r,
-            require_fib_zone=fib_zone or settings.monitor_require_fib_zone,
-            require_volume=volume or settings.monitor_require_volume,
-            require_adx=settings.monitor_require_adx,
-            adx_period=settings.monitor_adx_period,
-            adx_min=settings.monitor_adx_min,
-            use_conditional_edge=settings.monitor_use_conditional_edge,
-            min_conditional_win_rate=settings.monitor_min_conditional_win_rate,
-        ),
-    )
-    notifier = build_default_notifier(
-        telegram_bot_token=settings.telegram_bot_token,
-        telegram_chat_id=settings.telegram_chat_id,
-    )
-    run_monitor_blocking(cfg, notifier=notifier)
-
-
-# ═══════════════════════════════════════════════════════════════
 # 回测
 # ═══════════════════════════════════════════════════════════════
 @app.command()
@@ -772,34 +641,14 @@ def backtest(
     market: str = typer.Option("futures", "--market", help="spot 或 futures"),
     rules: bool = typer.Option(True, "--rules/--no-rules", help="是否统计规则告警命中率"),
     horizon: int = typer.Option(12, "--horizon", help="规则前瞻窗口（根）"),
-    max_hold: int = typer.Option(96, "--max-hold", help="策略单笔最长持仓（根）"),
     json_out: Optional[str] = typer.Option(None, "--json", help="结果另存 JSON 文件"),
 ):
-    """🧪 历史回放回测：双线反转策略胜率 + 各规则告警前瞻命中率。"""
+    """🧪 历史回放：各规则告警前瞻命中率。"""
     import json as _json
 
     from analyst.backtest import run_backtest
-    from analyst.compute.strategies.double_line_reversal import DoubleLineConfig
-    from analyst.config import get_settings
 
-    settings = get_settings()
     sym = _normalize_symbol(symbol)
-    strategy_cfg = DoubleLineConfig(
-        kelly_scale=settings.monitor_kelly_scale,
-        stop_buffer_pct=settings.monitor_stop_buffer_pct,
-        stop_buffer_atr_mult=settings.monitor_stop_buffer_atr_mult,
-        take_profit_r=settings.monitor_take_profit_r,
-        max_chase_atr=settings.monitor_max_chase_atr,
-        ema_trend_period=settings.monitor_ema_trend_period,
-        require_ema200=settings.monitor_require_ema200,
-        require_ema_slope=settings.monitor_require_ema_slope,
-        require_volume=settings.monitor_require_volume,
-        require_adx=settings.monitor_require_adx,
-        adx_period=settings.monitor_adx_period,
-        adx_min=settings.monitor_adx_min,
-        use_conditional_edge=settings.monitor_use_conditional_edge,
-        min_conditional_win_rate=settings.monitor_min_conditional_win_rate,
-    )
 
     with console.status(f"[bold cyan]回放 {sym} {timeframe} × {bars} 根..."):
         report = run_backtest(
@@ -807,10 +656,8 @@ def backtest(
             timeframe,
             bars=bars,
             market=market,
-            strategy_cfg=strategy_cfg,
             include_rules=rules,
             rule_horizon=horizon,
-            max_hold=max_hold,
         )
 
     span = ""
@@ -825,52 +672,6 @@ def backtest(
         )
     )
 
-    # ── 策略结果 ──
-    closed = report.closed_trades
-    if closed:
-        t = Table(title="📐 双线反转策略（触发即模拟下单）")
-        t.add_column("项", style="cyan")
-        t.add_column("值", justify="right")
-        t.add_row("信号次数", str(len(report.trades)))
-        t.add_row("已结算", str(len(closed)))
-        t.add_row("胜率(TP/SL)", f"{report.win_rate:.0%}")
-        t.add_row("累计 R", f"{report.total_r:+.2f}")
-        t.add_row("加权累计 R", f"{report.total_weighted_r:+.2f}")
-        t.add_row("平均 R/笔", f"{report.avg_r:+.2f}")
-        pf = report.profit_factor
-        t.add_row("盈亏比 PF", "∞" if pf == float("inf") else f"{pf:.2f}")
-        t.add_row("最大回撤", f"{report.max_drawdown_r:.2f} R")
-        console.print(t)
-
-        dt = Table(title="交易明细", show_header=True)
-        dt.add_column("时间")
-        dt.add_column("方向")
-        dt.add_column("入场", justify="right")
-        dt.add_column("SL", justify="right")
-        dt.add_column("TP", justify="right")
-        dt.add_column("结果")
-        dt.add_column("R", justify="right")
-        dt.add_column("持仓根数", justify="right")
-        for tr in report.trades:
-            style = {"tp": "green", "sl": "red"}.get(tr.outcome, "yellow")
-            dt.add_row(
-                tr.entry_time.strftime("%m-%d %H:%M"),
-                tr.direction,
-                f"{tr.entry:.6g}",
-                f"{tr.stop_loss:.6g}",
-                f"{tr.take_profit:.6g}",
-                f"[{style}]{tr.outcome}[/{style}]",
-                _fmt_r(tr.pnl_r),
-                str(tr.bars_held),
-            )
-        console.print(dt)
-    else:
-        console.print(
-            "[yellow]该区间内双线反转策略未触发任何可交易信号"
-            "（形态+EMA200+突破全过滤后为空）[/yellow]"
-        )
-
-    # ── 规则命中率 ──
     if rules and report.rule_stats:
         rt = Table(
             title=f"📡 规则告警前瞻命中率（{horizon} 根内先走 ±1×ATR）"
@@ -901,6 +702,8 @@ def backtest(
             "[dim]命中率≈50% 说明该规则单独使用无优势，只适合当上下文参考；"
             "样本 < 10 时结论不可靠。[/dim]"
         )
+    elif rules:
+        console.print("[yellow]该区间内未触发任何带方向的规则告警[/yellow]")
 
     if json_out:
         from pathlib import Path as _P
@@ -914,7 +717,7 @@ def backtest(
 
 @app.command("strategies")
 def strategies_list():
-    """📚 列出策略库（双线反转 + 经典组合策略）。"""
+    """📚 列出策略库（经典组合策略 + 实时周期策略）。"""
     from analyst.compute.strategies.registry import list_strategies
 
     t = Table(title="策略库")
@@ -928,7 +731,8 @@ def strategies_list():
         t.add_row(s.id, s.name, kind, s.description, s.cli or "-")
     console.print(t)
     console.print(
-        "[dim]实时策略走 monitor；组合策略走 backtest-classic / cycle-status。[/dim]"
+        "[dim]组合策略走 backtest-classic / backtest-xs / backtest-carry；"
+        "规则命中率走 backtest；实时盯盘走 Web。[/dim]"
     )
 
 

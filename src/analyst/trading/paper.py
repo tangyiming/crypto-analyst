@@ -1,4 +1,4 @@
-"""纸面交易账本：跟 double_line / cycle_switch，标记价盯盈亏（非真金）。"""
+"""纸面交易账本：跟 cycle_switch / xs_momentum / funding_carry，标记价盯盈亏（非真金）。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 _broker: PaperBroker | None = None
 
-DEFAULT_SOURCES = ("double_line", "cycle_switch")
+DEFAULT_SOURCES = ("cycle_switch", "xs_momentum", "funding_carry")
 
 
 def _utc_now() -> datetime:
@@ -39,19 +39,6 @@ def _parse_iso(ts: str | None) -> datetime | None:
         return dt
     except ValueError:
         return None
-
-
-def _cooldown_key(strategy: str, symbol: str, direction: str) -> str:
-    return f"{strategy}|{symbol}|{direction}".lower()
-
-
-def _double_line_tfs_allowed() -> set[str] | None:
-    """None=不限制；空集合视为不限制。"""
-    raw = (getattr(get_settings(), "monitor_paper_double_line_tfs", "") or "").strip()
-    if not raw:
-        return None
-    out = {x.strip().lower() for x in raw.split(",") if x.strip()}
-    return out or None
 
 
 def _norm_symbol(symbol: str) -> str:
@@ -790,23 +777,13 @@ class PaperBroker:
         model_id: str | None = None,
         risk_scale: float = 1.0,
     ) -> dict[str, Any] | None:
-        """按计划开纸面仓（ai_plan / double_line）。成功返回事件 dict。"""
+        """按计划开纸面仓。成功返回事件 dict。"""
         settings = get_settings()
         if not getattr(settings, "monitor_paper_enabled", False):
             return None
         strategy = (strategy or "ai_plan").strip().lower()
         if strategy not in _paper_sources():
             return None
-        if strategy == "double_line":
-            allowed = _double_line_tfs_allowed()
-            tf_l = (timeframe or "").strip().lower()
-            if allowed is not None and tf_l not in allowed:
-                logger.info(
-                    "纸面跳过：double_line 周期 %s 不在白名单 %s",
-                    tf_l or "?",
-                    ",".join(sorted(allowed)),
-                )
-                return None
         direction = (direction or "").lower().strip()
         if direction not in ("long", "short"):
             return None
@@ -1006,23 +983,6 @@ class PaperBroker:
             logger.info("纸面跳过：策略 %s 因回撤熔断已停用", strategy)
             return None
 
-        if strategy == "double_line":
-            cool_min = int(
-                getattr(settings, "monitor_paper_sl_cooldown_minutes", 0) or 0
-            )
-            if cool_min > 0:
-                ck = _cooldown_key(strategy, symbol, direction)
-                until = _parse_iso(self.state.sl_cooldown_until.get(ck))
-                if until is not None and _utc_now() < until:
-                    logger.info(
-                        "纸面跳过：%s/%s/%s 止损冷却至 %s",
-                        strategy,
-                        symbol,
-                        direction,
-                        until.isoformat(),
-                    )
-                    return None
-
         risk_pct = float(getattr(settings, "monitor_paper_risk_pct", 0.01) or 0.01)
         risk_pct = max(0.001, min(risk_pct, 0.05))
         risk_usd = self.state.equity * risk_pct * max(0.05, min(abs(risk_scale), 1.0))
@@ -1043,29 +1003,6 @@ class PaperBroker:
 
         lev = _paper_leverage()
         margin = notional / lev if lev > 0 else notional
-        max_mgn_pct = float(
-            getattr(settings, "monitor_paper_max_margin_pct", 0.15) or 0.0
-        )
-        # 仅 double_line：止损极窄时名义仓会爆炸
-        if (
-            strategy == "double_line"
-            and max_mgn_pct > 0
-            and self.state.equity > 0
-        ):
-            max_mgn = self.state.equity * max(0.01, min(max_mgn_pct, 1.0))
-            if margin > max_mgn and margin > 0:
-                scale = max_mgn / margin
-                qty *= scale
-                notional = qty * entry
-                margin = notional / lev if lev > 0 else notional
-                logger.info(
-                    "纸面缩仓：保证金封顶 equity×%.0f%% → margin=%.4f",
-                    max_mgn_pct * 100,
-                    margin,
-                )
-        if qty <= 0 or notional < 0.01:
-            logger.info("纸面跳过：缩仓后过小")
-            return None
 
         if self._gross_exposure_blocked(notional):
             logger.info(
@@ -1236,25 +1173,6 @@ class PaperBroker:
         if len(self.state.trades) > 500:
             self.state.trades = self.state.trades[-500:]
         self._record_strategy_pnl(pos.strategy, pnl)
-
-        if outcome == "sl" and (pos.strategy or "").lower() == "double_line":
-            cool_min = int(
-                getattr(settings, "monitor_paper_sl_cooldown_minutes", 0) or 0
-            )
-            if cool_min > 0:
-                ck = _cooldown_key(pos.strategy, pos.symbol, pos.direction)
-                until = _utc_now() + timedelta(minutes=cool_min)
-                self.state.sl_cooldown_until[ck] = until.isoformat()
-                # 清理过期冷却键
-                now = _utc_now()
-                expired = [
-                    k
-                    for k, v in self.state.sl_cooldown_until.items()
-                    if (t := _parse_iso(v)) is not None and t <= now
-                ]
-                for k in expired:
-                    if k != ck:
-                        self.state.sl_cooldown_until.pop(k, None)
 
         logger.info(
             "纸面平仓 [%s] %s %s outcome=%s pnl=%.4f cash=%.4f",

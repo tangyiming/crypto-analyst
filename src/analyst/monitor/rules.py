@@ -13,13 +13,20 @@ from analyst.compute.fibonacci import compute_fib
 from analyst.compute.indicators import compute_all
 from analyst.compute.plan import generate_baseline_plan
 from analyst.compute.structure import detect_structure
-from analyst.compute.strategies.double_line_reversal import (
-    DoubleLineConfig,
-    detect_pattern,
-    _atr,
-)
 from analyst.compute.volume import analyze_volume
-from analyst.data.fetcher import CandleSeries
+from analyst.data.fetcher import Candle, CandleSeries
+
+
+def _atr(candles: list[Candle], period: int) -> float:
+    if len(candles) < period + 1:
+        return 0.0
+    trs: list[float] = []
+    for i in range(1, len(candles)):
+        c, p = candles[i], candles[i - 1]
+        tr = max(c.high - c.low, abs(c.high - p.close), abs(c.low - p.close))
+        trs.append(tr)
+    window = trs[-period:]
+    return sum(window) / len(window) if window else 0.0
 
 
 @dataclass
@@ -38,7 +45,6 @@ class RuleConfig:
     enable_structure_flip: bool = True
     enable_fib_zone: bool = True
     enable_baseline: bool = True
-    enable_break_level: bool = True
     enable_funding: bool = True
     enable_premium: bool = True
 
@@ -424,39 +430,6 @@ def evaluate_closed_bar_rules(
             )
         if plan.direction != "wait" or prev_dir is None:
             state["baseline_dir"] = plan.direction
-
-    # ── 双线形态突破位触及（早于完整可交易信号） ──
-    if cfg.enable_break_level:
-        # 告警用宽松突变阈值（1.2）：作为提醒回测命中率 62–77%，样本宝贵；
-        # 策略入场则用更严的默认 2.0（见 DoubleLineConfig）。
-        pattern = detect_pattern(
-            series.candles, DoubleLineConfig(min_sudden_atr_mult=1.2)
-        )
-        if pattern and pattern.break_level:
-            bl = pattern.break_level
-            crossed = False
-            if pattern.direction == "long" and high >= bl and prev_close < bl:
-                crossed = True
-            if pattern.direction == "short" and low <= bl and prev_close > bl:
-                crossed = True
-            key = f"{t}:break:{round(bl, 6)}:{pattern.direction}"
-            if crossed and state.get("break_touch") != key:
-                events.append(
-                    RuleEvent(
-                        rule="break_level",
-                        title="触及双线突破位",
-                        direction=pattern.direction,
-                        strength=0.75,
-                        price=price,
-                        reasons=[
-                            f"突破位 {bl:.6g} · {pattern.direction}",
-                            f"重合度 {pattern.overlap_ratio:.2f}",
-                        ],
-                        break_level=bl,
-                        marker_time=t,
-                    )
-                )
-                state["break_touch"] = key
 
     return events, state
 

@@ -95,28 +95,9 @@ class Settings(BaseSettings):
     max_leverage: int = Field(default=10)
     default_account_usd: float = Field(default=10000)
 
-    # 实时监控（双线反转 K 线形态 + Binance WS）
+    # 实时监控（Binance WS + 规则/周期策略）
     monitor_market: str = Field(default="futures")  # 监控页固定 U 本位合约
     monitor_timeframe: str = Field(default="15m")
-    monitor_kelly_scale: float = Field(default=0.25)
-    monitor_stop_buffer_pct: float = Field(default=2.0)
-    monitor_stop_buffer_atr_mult: float = Field(default=1.0)  # 缓冲被 ATR 封顶；0=禁用
-    monitor_take_profit_r: float = Field(default=2.0)
-    monitor_max_chase_atr: float = Field(default=1.5)  # 超出突破位该倍 ATR 不追；0=禁用
-    monitor_ema_trend_period: int = Field(default=200)
-    monitor_require_ema200: bool = Field(default=True)
-    monitor_require_ema_slope: bool = Field(default=False)  # EMA200 需同向倾斜（可选）
-    monitor_trail_to_8r: bool = Field(default=False)
-    monitor_require_fib_zone: bool = Field(default=False)
-    # 量能冲突过滤；默认开，减少震荡假突破
-    monitor_require_volume: bool = Field(default=True)
-    # ADX 趋势强度过滤（常见阈值 20–25）
-    monitor_require_adx: bool = Field(default=True)
-    monitor_adx_period: int = Field(default=14)
-    monitor_adx_min: float = Field(default=20.0)
-    # 条件胜率：按时段/ADX/形态质量更新先验并缩放仓位
-    monitor_use_conditional_edge: bool = Field(default=True)
-    monitor_min_conditional_win_rate: float = Field(default=0.42)
     # 规则引擎（无 AI 实时提醒，默认全开）
     monitor_rules_enabled: bool = Field(default=True)
     monitor_rule_macd: bool = Field(default=True)
@@ -127,7 +108,6 @@ class Settings(BaseSettings):
     monitor_rule_structure_flip: bool = Field(default=True)
     monitor_rule_fib_zone: bool = Field(default=True)
     monitor_rule_baseline: bool = Field(default=True)
-    monitor_rule_break_level: bool = Field(default=True)
     monitor_rule_funding: bool = Field(default=True)
     monitor_rule_premium: bool = Field(default=True)
     monitor_funding_extreme_pct: float = Field(default=0.05)
@@ -140,7 +120,7 @@ class Settings(BaseSettings):
     # cycle_switch 跟单/告警白名单；空=全部盯盘品种。默认砍弱 beta（如 AAVE）
     monitor_cycle_symbols: str = Field(default="BTC/USDT,ETH/USDT,SOL/USDT")
     monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
-    # 收盘有双线/规则候选时才调 AI；long/short → 盯盘点评通知（不开纸面）
+    # 收盘有规则/周期候选时才调 AI；long/short → 盯盘点评通知（不开纸面）
     monitor_ai_on_candidate: bool = Field(default=True)
     monitor_ai_cooldown_minutes: int = Field(default=240)
     # 盯盘 AI 确认只走免费层（Groq/Cerebras/Gemini/OpenRouter/SambaNova）；失败不回落付费
@@ -154,17 +134,10 @@ class Settings(BaseSettings):
     monitor_paper_leverage: float = Field(default=5.0)
     monitor_paper_max_positions: int = Field(default=12)
     monitor_paper_tg: bool = Field(default=True)
-    # 纸面跟单来源（不含 ai_plan）。double_line 近 2 年 1h/4h 回测净亏
-    # （胜率 32.8% < 2R 盈亏平衡 33.4%），已移出默认；可手动加回观察
+    # 纸面跟单来源（不含 ai_plan）
     monitor_paper_sources: str = Field(
         default="cycle_switch,xs_momentum,funding_carry"
     )
-    # 双线纸面允许的周期（防 1m 噪声仓）；空=不限制
-    monitor_paper_double_line_tfs: str = Field(default="15m,1h,4h")
-    # 单笔保证金上限占权益比例（止损极窄时防止名义仓爆炸）
-    monitor_paper_max_margin_pct: float = Field(default=0.15)
-    # 双线止损后同品种同向冷却（分钟）；0=关闭
-    monitor_paper_sl_cooldown_minutes: int = Field(default=120)
     # ── 风控熔断 ──
     # 单日亏损熔断：当日权益回撤 ≥ 该百分比 → 停开新仓（次日 UTC 自动复位）；0=关
     paper_daily_loss_limit_pct: float = Field(default=5.0)
@@ -216,7 +189,7 @@ class Settings(BaseSettings):
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
     # 默认：AI 点评 + 异动类规则（金叉死叉/放量/突破等）；cycle 仓位变化仍不直推
     monitor_tg_trade_rules: str = Field(
-        default="ai_plan,macd_cross,ema_stack,volume,boll_break,break_level,funding_extreme,ratio_shift"
+        default="ai_plan,macd_cross,ema_stack,volume,boll_break,funding_extreme,ratio_shift"
     )
     # 关网页也继续盯盘 + Telegram（Web 进程需保持运行）
     monitor_always_on: bool = Field(default=False)

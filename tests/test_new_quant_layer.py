@@ -161,7 +161,7 @@ def test_cvd_divergence_fires_on_hollow_breakout():
         enable_macd=False, enable_ema_stack=False, enable_boll=False,
         enable_volume=False, enable_structure_touch=False,
         enable_structure_flip=False, enable_fib_zone=False,
-        enable_baseline=False, enable_break_level=False,
+        enable_baseline=False,
         cvd_lookback=40,
     )
     events, _ = evaluate_closed_bar_rules(series, {}, cfg)
@@ -179,7 +179,7 @@ def test_cvd_rule_silent_without_taker_data():
         enable_macd=False, enable_ema_stack=False, enable_boll=False,
         enable_volume=False, enable_structure_touch=False,
         enable_structure_flip=False, enable_fib_zone=False,
-        enable_baseline=False, enable_break_level=False,
+        enable_baseline=False,
     )
     events, _ = evaluate_closed_bar_rules(series, {}, cfg)
     assert not [e for e in events if e.rule == "cvd_divergence"]

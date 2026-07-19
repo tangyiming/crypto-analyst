@@ -1,4 +1,4 @@
-"""历史 K 线回测：双线反转策略交易模拟 + 规则告警前瞻命中率 + 经典组合策略。"""
+"""历史 K 线回测：规则告警前瞻命中率 + 经典组合策略。"""
 
 from analyst.backtest.classic import (
     HALVING_DATES,
@@ -18,14 +18,12 @@ from analyst.compute.strategies.cycle_switch import (
 from analyst.backtest.engine import (
     BacktestReport,
     RuleStat,
-    Trade,
     run_backtest,
 )
 
 __all__ = [
     "BacktestReport",
     "RuleStat",
-    "Trade",
     "run_backtest",
     "ClassicReport",
     "CostModel",

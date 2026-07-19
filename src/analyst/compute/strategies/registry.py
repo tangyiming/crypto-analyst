@@ -1,7 +1,7 @@
 """策略库目录。
 
 实时策略（monitor / hub 收盘评估）：
-  · double_line   — 双线反转，15m 形态突破
+  · cycle_switch  — 牛熊周期切换（4h 收盘）
 
 组合策略（backtest/classic 仓位回测，含交易成本）：
   · cycle_switch  — 牛熊周期切换（本包）
@@ -28,14 +28,6 @@ class StrategyInfo:
 
 
 STRATEGY_CATALOG: list[StrategyInfo] = [
-    StrategyInfo(
-        id="double_line",
-        name="双线反转",
-        kind="realtime",
-        module="analyst.compute.strategies.double_line_reversal",
-        description="K 线形态突破 + EMA200 过滤；适合 15m 盯盘，震荡市期望偏低",
-        cli="analyst monitor check BTC",
-    ),
     StrategyInfo(
         id="cycle_switch",
         name="牛熊周期切换（D）",
