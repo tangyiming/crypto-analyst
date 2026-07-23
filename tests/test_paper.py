@@ -129,6 +129,61 @@ def test_paper_skips_duplicate_same_strategy(tmp_path, monkeypatch):
     )
 
 
+def test_paper_ai_plan_requires_source(tmp_path, monkeypatch):
+    """MONITOR_PAPER_SOURCES 不含 ai_plan 时不跟 AI 点评开仓。"""
+    broker = _reset_broker(
+        tmp_path, monkeypatch, MONITOR_PAPER_SOURCES="cycle_switch"
+    )
+    plan = {"stop_loss": 99, "take_profit_1": 102, "rationale": "ai"}
+    assert (
+        broker.try_open_from_plan(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            direction="long",
+            price=100.0,
+            plan=plan,
+            strategy="ai_plan",
+        )
+        is None
+    )
+    assert broker.state.positions == []
+
+
+def test_paper_ai_plan_opens_and_tp(tmp_path, monkeypatch):
+    """ai_plan 在 sources 内且计划合法 → 开仓带 SL/TP，标记价可止盈。"""
+    broker = _reset_broker(
+        tmp_path,
+        monkeypatch,
+        MONITOR_PAPER_SOURCES="cycle_switch,ai_plan",
+    )
+    plan = {
+        "direction": "long",
+        "stop_loss": 99,
+        "take_profit_1": 102,
+        "rr_ratio": 2,
+        "rationale": "AI 盯盘点评",
+    }
+    opened = broker.try_open_from_plan(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        direction="long",
+        price=100.0,
+        plan=plan,
+        strategy="ai_plan",
+        model_id="test-model",
+    )
+    assert opened is not None
+    pos = broker.state.positions[0]
+    assert pos.strategy == "ai_plan"
+    assert pos.stop_loss == 99
+    assert pos.take_profit == 102
+    assert pos.model_id == "test-model"
+    closed = broker.on_mark("BTC/USDT", 102.0)
+    assert len(closed) == 1
+    assert closed[0]["trade"]["outcome"] == "tp"
+    assert closed[0]["trade"]["strategy"] == "ai_plan"
+
+
 def test_paper_multi_strategy_same_symbol(tmp_path, monkeypatch):
     broker = _reset_broker(tmp_path, monkeypatch)
     plan = {"stop_loss": 99, "take_profit_1": 102}

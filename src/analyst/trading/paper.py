@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 _broker: PaperBroker | None = None
 
-DEFAULT_SOURCES = ("cycle_switch", "xs_momentum", "funding_carry")
+DEFAULT_SOURCES = ("cycle_switch", "xs_momentum", "funding_carry", "ai_plan")
 
 
 def _utc_now() -> datetime:

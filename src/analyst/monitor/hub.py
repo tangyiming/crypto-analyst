@@ -1606,7 +1606,7 @@ class MonitorHub:
         had_candidate: bool,
         candidate_rules: list[str],
     ) -> None:
-        """有规则/周期候选时调 AI；long/short 推盯盘点评（页面+TG），不开纸面仓。"""
+        """有规则/周期候选时调 AI；long/short 推盯盘点评（页面+TG），并尝试纸面跟单。"""
         settings = get_settings()
         if not settings.monitor_ai_on_candidate or not had_candidate:
             return
@@ -1706,16 +1706,19 @@ class MonitorHub:
             "model_id": result.get("model_id"),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "demo": False,
-            "paper_trade": False,
+            "paper_trade": True,
         }
         logger.info(
-            "AI 盯盘点评 %s dir=%s session=%s（仅提醒，不开纸面）",
+            "AI 盯盘点评 %s dir=%s session=%s（提醒 + 纸面跟单）",
             worker.key,
             direction,
             result.get("session_id"),
         )
         await self._emit_rule_alert(worker, alert)
-        # ai_plan 不再开纸面仓：只作监控点评/通知；开仓见 MONITOR_PAPER_SOURCES
+        try:
+            await self._paper_try_open(worker, alert, strategy="ai_plan")
+        except Exception:
+            logger.exception("paper ai_plan open failed %s", worker.key)
 
 
     async def _paper_try_open(

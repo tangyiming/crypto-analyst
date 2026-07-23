@@ -1943,7 +1943,7 @@
       <div class="paper-page-inner">
         <div class="app-page-head">
           <h1>纸面模拟炒币</h1>
-          <p>跟单 <strong>cycle_switch / xs_momentum / funding_carry</strong>；非真金、不调交易所 API。顶栏与盯盘底部约 2 秒刷新浮盈。</p>
+          <p>跟单 <strong>cycle_switch / xs_momentum / funding_carry / ai_plan</strong>；AI 点评带 SL/TP，其余信号平仓。非真金、不调交易所 API。顶栏与盯盘底部约 2 秒刷新浮盈。</p>
         </div>
         <div class="paper-hero" id="paperHero">
           <div class="paper-hero-main">
@@ -2788,7 +2788,7 @@
 
     const rows = st.positions || [];
     if (!rows.length) {
-      list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无纸面持仓。cycle_switch / xs_momentum / funding_carry 开仓后会实时出现在这里（AI 只点评不开仓）。</div>';
+      list.innerHTML = '<div class="muted" style="padding:14px 10px;font-size:12px;">暂无纸面持仓。cycle_switch / xs_momentum / funding_carry / ai_plan 开仓后会实时出现在这里。</div>';
       return;
     }
     const head = `<div class="paper-pos-row paper-pos-head"><span>策略</span><span>品种</span><span>向</span><span>入场→标记</span><span>杠杆·保证金</span><span>收益率</span><span>浮盈</span></div>`;
@@ -2945,7 +2945,7 @@
     if (posEl) {
       const rows = st.positions || [];
       if (!rows.length) {
-        posEl.innerHTML = '<span class="muted">暂无持仓。cycle_switch / xs_momentum / funding_carry 信号会自动开纸面仓。</span>';
+        posEl.innerHTML = '<span class="muted">暂无持仓。cycle / xs / carry 信号或 AI 点评会自动开纸面仓。</span>';
       } else {
         posEl.innerHTML = rows.map((p) => {
           const upnl = Number(p.unrealized_pnl || 0);

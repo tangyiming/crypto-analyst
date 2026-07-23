@@ -120,12 +120,12 @@ class Settings(BaseSettings):
     # cycle_switch 跟单/告警白名单；空=全部盯盘品种。默认砍弱 beta（如 AAVE）
     monitor_cycle_symbols: str = Field(default="BTC/USDT,ETH/USDT,SOL/USDT")
     monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
-    # 收盘有规则/周期候选时才调 AI；long/short → 盯盘点评通知（不开纸面）
+    # 收盘有规则/周期候选时才调 AI；long/short → 盯盘点评（可纸面跟单，见 MONITOR_PAPER_SOURCES）
     monitor_ai_on_candidate: bool = Field(default=True)
     monitor_ai_cooldown_minutes: int = Field(default=240)
     # 盯盘 AI 确认只走免费层（Groq/Cerebras/Gemini/OpenRouter/SambaNova）；失败不回落付费
     monitor_ai_free_only: bool = Field(default=True)
-    # 纸面模拟炒币：只跟规则策略，不跟 AI
+    # 纸面模拟炒币：规则策略 + 可选 AI 点评跟单（ai_plan 有 SL/TP）
     monitor_paper_enabled: bool = Field(default=True)
     monitor_paper_equity: float = Field(default=10000.0)
     monitor_paper_risk_pct: float = Field(default=0.01)
@@ -134,9 +134,9 @@ class Settings(BaseSettings):
     monitor_paper_leverage: float = Field(default=5.0)
     monitor_paper_max_positions: int = Field(default=12)
     monitor_paper_tg: bool = Field(default=True)
-    # 纸面跟单来源（不含 ai_plan）
+    # 纸面跟单来源（可含 ai_plan：AI 盯盘点评带 SL/TP）
     monitor_paper_sources: str = Field(
-        default="cycle_switch,xs_momentum,funding_carry"
+        default="cycle_switch,xs_momentum,funding_carry,ai_plan"
     )
     # ── 风控熔断 ──
     # 单日亏损熔断：当日权益回撤 ≥ 该百分比 → 停开新仓（次日 UTC 自动复位）；0=关

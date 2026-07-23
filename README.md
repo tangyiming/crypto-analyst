@@ -10,11 +10,11 @@
 
 顶栏 **「自动交易」** 现为纸面账本（**非真金**）：
 
-- 跟单 **`cycle_switch` / `xs_momentum` / `funding_carry`**（`MONITOR_PAPER_SOURCES`；**不含 AI 开仓**）
-- 默认初始 **100 USDT**，单笔风险约权益 1%；默认 **5x 杠杆**（保证金=名义/杠杆，页面显示保证金收益率）；开平各收手续费（默认 4 bps）
+- 跟单 **`cycle_switch` / `xs_momentum` / `funding_carry` / `ai_plan`**（`MONITOR_PAPER_SOURCES`）
+- 默认初始 **10000 USDT**，单笔风险约权益 1%；默认 **5x 杠杆**（保证金=名义/杠杆，页面显示保证金收益率）；开平各收手续费（默认 4 bps）
 - `cycle_switch` / `xs_momentum`：按目标仓位同步，信号平仓
 - `funding_carry`：delta 中性收资金费
-- **AI** 只做候选后的盯盘点评（页面/TG），**不写纸面仓**
+- **`ai_plan`**：AI 盯盘点评 `long`/`short` 且计划含 SL/TP 时纸面开仓，标记价止盈止损
 - 页面：Hero 权益 + 策略 chip + 可点持仓卡片；约 2 秒刷新浮盈；可选 TG「📄 纸面…」
 - 落盘：`.cache/data/paper_account.json`；API：`GET /api/paper/status` · `POST /api/paper/reset`
 
@@ -57,7 +57,7 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 | 类型 | 页面 | Telegram |
 |------|------|----------|
 | 规则噪音（放量、触及等） | 有 | 默认不推（可改白名单） |
-| 收盘有候选 → AI 点评 `long`/`short`（`ai_plan`） | 有 | 推（仅提醒，不开仓） |
+| 收盘有候选 → AI 点评 `long`/`short`（`ai_plan`） | 有 | 推；可纸面跟单（含 SL/TP） |
 | 各币 `cycle_switch` 仓位变化 | 有（触发 AI 候选） | 不直推；等 AI 确认 |
 | 周期位置日更（`cycle_outlook`，BTC） | 有 | UTC **每天最多 1 条** |
 | 日程：时段 / 资金费 / 宏观高影响 | 「日程」页 | 提前期推（`MONITOR_SCHEDULE_TG`） |
@@ -183,7 +183,7 @@ analyst config test-llm
 | `MONITOR_CYCLE_SWITCH_ENABLED` | `true`：各盯盘币对跑 `cycle_switch`；相对上一根 K 仓位变化 → 页面 + AI 候选（**不直推 TG**） |
 | `MONITOR_CYCLE_SYMBOLS` | cycle 跟单白名单，默认 `BTC/USDT,ETH/USDT,SOL/USDT`；空=全部 |
 | `MONITOR_CYCLE_OUTLOOK_ENABLED` | `true`：每天提醒一次当前周期位置（BTC，**UTC 每天最多 1 条**） |
-| `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有规则/`cycle_switch` 候选时才调 AI；`long`/`short` 推「盯盘点评」（**不开纸面**） |
+| `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有规则/`cycle_switch` 候选时才调 AI；`long`/`short` 推「盯盘点评」，并可纸面跟单 |
 | `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认**只用免费层**（Groq/Cerebras/Gemini/OpenRouter/SambaNova），失败不回落付费 |
 | `LLM_FREE_ORDER` | 免费层顺序，默认 `nvidia,groq,cerebras,openrouter,sambanova,gemini`（有 key 才实际调用） |
 | `CEREBRAS_API_KEY` / `NVIDIA_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY` / `SAMBANOVA_API_KEY` | 额外免费线路；任选配置即可 failover |
@@ -191,7 +191,7 @@ analyst config test-llm
 | `MONITOR_PAPER_ENABLED` | `true`：纸面模拟炒币，跟 `MONITOR_PAPER_SOURCES` |
 | `MONITOR_PAPER_EQUITY` | 初始虚拟权益（默认 10000 USDT） |
 | `MONITOR_PAPER_LEVERAGE` | 纸面杠杆（默认 5；保证金=名义/杠杆） |
-| `MONITOR_PAPER_SOURCES` | 纸面跟单来源，默认 `cycle_switch,xs_momentum,funding_carry`（不含 `ai_plan`） |
+| `MONITOR_PAPER_SOURCES` | 纸面跟单来源，默认 `cycle_switch,xs_momentum,funding_carry,ai_plan` |
 | `MONITOR_PAPER_MAX_POSITIONS` | 最大同时持仓数（默认 12；去重键=品种×策略） |
 | `MONITOR_SCHEDULE_ENABLED` / `MONITOR_SCHEDULE_TG` | 市场日程页与 TG 提前提醒 |
 | `MONITOR_SCHEDULE_SESSION_LEADS` 等 | 时段 / 资金费 / 宏观提前提醒分钟（逗号分隔） |
@@ -284,7 +284,7 @@ analyst backtest-classic ETH -s ema_cross -t 4h --oos-days 365
 
 - **图 1 日历**：锚定历次熊市底部，牛市 1064 天 → 预计见顶，熊市 364 天 → 预计见底
 - **图 2 狼波**：RSI + 短期动量近似 TradingView 狼波指数，红区过热、蓝区超卖
-- **提醒**：异动规则（MACD 金叉死叉、放量、突破等）+ AI 盯盘点评推 TG；`cycle_outlook` 每天推周期位置；**日程**推时段/资金费/宏观；纸面跟 `cycle_switch` / `xs_momentum` / `funding_carry`
+- **提醒**：异动规则（MACD 金叉死叉、放量、突破等）+ AI 盯盘点评推 TG；`cycle_outlook` 每天推周期位置；**日程**推时段/资金费/宏观；纸面跟 `cycle_switch` / `xs_momentum` / `funding_carry` / `ai_plan`
 
 ```bash
 analyst cycle-outlook              # 终端查看当前相位与倒计时
