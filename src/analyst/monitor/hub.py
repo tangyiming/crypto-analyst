@@ -1782,7 +1782,19 @@ class MonitorHub:
         settings = get_settings()
         if not settings.monitor_paper_enabled:
             return
-        from analyst.trading.paper import get_paper_broker
+        from analyst.trading.paper import _paper_sources, get_paper_broker
+
+        # 临时停跟单时强制归零，避免孤儿 cycle 空仓继续浮亏
+        if "cycle_switch" not in _paper_sources():
+            if abs(float(target_position)) >= 1e-9:
+                logger.info(
+                    "cycle_switch 不在 PAPER_SOURCES，强制平仓 %s (was target=%.2f)",
+                    worker.key.symbol,
+                    float(target_position),
+                )
+            target_position = 0.0
+            if regime not in ("filtered", "paused"):
+                regime = "paused"
 
         broker = get_paper_broker()
         events = await asyncio.to_thread(

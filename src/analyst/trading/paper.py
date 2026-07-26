@@ -882,17 +882,22 @@ class PaperBroker:
         price: float,
         rationale: str = "",
     ) -> list[dict[str, Any]]:
-        """按目标仓位同步纸面持仓（通用：cycle_switch / xs_momentum 等权重型策略）。"""
+        """按目标仓位同步纸面持仓（通用：cycle_switch / xs_momentum 等权重型策略）。
+
+        策略不在 MONITOR_PAPER_SOURCES 时：只允许 target≈0 平掉已有仓，不开新仓。
+        """
         settings = get_settings()
         if not getattr(settings, "monitor_paper_enabled", False):
             return []
+        target = float(target_position)
         if strategy not in _paper_sources():
-            return []
+            if abs(target) >= 1e-9:
+                return []
+            # 跟单已关：继续往下走归零平仓逻辑
         sym = _norm_symbol(symbol)
         px = float(price)
         if px <= 0:
             return []
-        target = float(target_position)
         events: list[dict[str, Any]] = []
         with _lock:
             self._marks[sym] = px

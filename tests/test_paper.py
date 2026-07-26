@@ -149,6 +149,49 @@ def test_paper_ai_plan_requires_source(tmp_path, monkeypatch):
     assert broker.state.positions == []
 
 
+def test_paper_flat_when_source_removed(tmp_path, monkeypatch):
+    """策略移出 PAPER_SOURCES 后：不可再开仓，但 target=0 仍可平掉旧仓。"""
+    broker = _reset_broker(
+        tmp_path, monkeypatch, MONITOR_PAPER_SOURCES="cycle_switch"
+    )
+    events = broker.sync_target_position(
+        strategy="cycle_switch",
+        symbol="BTC/USDT",
+        timeframe="4h",
+        target_position=-0.5,
+        price=100.0,
+    )
+    assert any(e.get("type") == "paper_open" for e in events)
+    assert len(broker.state.positions) == 1
+
+    import analyst.config as cfg
+
+    monkeypatch.setenv("MONITOR_PAPER_SOURCES", "ai_plan")
+    cfg._settings = None
+
+    assert (
+        broker.sync_target_position(
+            strategy="cycle_switch",
+            symbol="BTC/USDT",
+            timeframe="4h",
+            target_position=-0.5,
+            price=101.0,
+        )
+        == []
+    )
+    assert len(broker.state.positions) == 1
+
+    closed = broker.sync_target_position(
+        strategy="cycle_switch",
+        symbol="BTC/USDT",
+        timeframe="4h",
+        target_position=0.0,
+        price=101.0,
+    )
+    assert any(e.get("type") == "paper_close" for e in closed)
+    assert broker.state.positions == []
+
+
 def test_paper_ai_plan_opens_and_tp(tmp_path, monkeypatch):
     """ai_plan 在 sources 内且计划合法 → 开仓带 SL/TP，标记价可止盈。"""
     broker = _reset_broker(
