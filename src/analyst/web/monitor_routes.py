@@ -12,10 +12,10 @@ from analyst.monitor.hub import get_monitor_hub
 
 router = APIRouter(tags=["monitor"])
 
-# 训练/分析快照只含这些周期
-ANALYSIS_TIMEFRAMES = ("30m", "1h", "4h", "1d")
+# 训练/分析快照可用主周期（含短周期）
+ANALYSIS_TIMEFRAMES = ("5m", "15m", "30m", "1h", "4h", "1d")
 # 盯盘实时图默认允许周期（可被 MONITOR_CHART_TIMEFRAMES 覆盖）
-DEFAULT_CHART_TIMEFRAMES = ("15m", "1h", "4h")
+DEFAULT_CHART_TIMEFRAMES = ("5m", "15m", "1h", "4h")
 
 
 class MonitorAnalyzeRequest(BaseModel):
@@ -30,12 +30,15 @@ def _chart_timeframes() -> list[str]:
 
 
 def _normalize_chart_tf(tf: str | None) -> str:
-    """非法/过短周期一律回退到 15m。"""
+    """非法周期回退到允许列表中的最短档。"""
     t = (tf or "15m").strip().lower()
     allowed = set(_chart_timeframes())
     if t in allowed:
         return t
-    return "15m" if "15m" in allowed else next(iter(allowed))
+    for fallback in ("15m", "5m", "1h", "4h"):
+        if fallback in allowed:
+            return fallback
+    return next(iter(allowed))
 
 
 def _map_analysis_timeframe(tf: str) -> str:
@@ -43,8 +46,8 @@ def _map_analysis_timeframe(tf: str) -> str:
     t = (tf or "4h").strip().lower()
     if t in ANALYSIS_TIMEFRAMES:
         return t
-    if t in ("1m", "3m", "5m", "15m"):
-        return "1h"
+    if t in ("1m", "3m"):
+        return "5m"
     if t in ("2h",):
         return "1h"
     if t in ("6h", "8h", "12h"):
@@ -236,34 +239,6 @@ def monitor_chat(req: MonitorChatRequest):
     symbol = _norm_symbol(req.symbol)
     tf = _map_analysis_timeframe(req.timeframe)
     context = dict(req.context or {})
-
-    # 注入自动交易系统状态：支持问「carry 收了多少」「哪个策略在亏」等
-    try:
-        from analyst.trading.paper import get_paper_broker
-
-        st = get_paper_broker().status()
-        context.setdefault(
-            "system_status",
-            {
-                "equity": st.get("equity"),
-                "return_pct": st.get("return_pct"),
-                "win_rate": st.get("win_rate"),
-                "positions": [
-                    {
-                        "symbol": p.get("symbol"),
-                        "strategy": p.get("strategy"),
-                        "direction": p.get("direction"),
-                        "unrealized_pnl": p.get("unrealized_pnl"),
-                    }
-                    for p in (st.get("positions") or [])
-                ],
-                "by_strategy": st.get("by_strategy"),
-                "carry_book": st.get("carry_book"),
-                "risk_fuse": st.get("risk_fuse"),
-            },
-        )
-    except Exception:
-        pass
 
     if req.session_id:
         s = repo.get_session(req.session_id)
@@ -625,34 +600,6 @@ async def monitor_ws(
         market="futures",
         watch_symbols=watch_symbols,
     )
-
-
-# ── 纸面模拟炒币 ──
-
-
-@router.get("/api/paper/status")
-def paper_status():
-    from analyst.trading.paper import get_paper_broker
-
-    return get_paper_broker().status()
-
-
-class PaperResetRequest(BaseModel):
-    confirm: bool = False
-    equity: float | None = None
-
-
-@router.post("/api/paper/reset")
-def paper_reset(req: PaperResetRequest):
-    if not req.confirm:
-        raise HTTPException(400, "请传 confirm=true 以重置纸面账户")
-    from analyst.trading.paper import get_paper_broker
-
-    settings = get_settings()
-    start = req.equity if req.equity is not None else settings.monitor_paper_equity
-    broker = get_paper_broker()
-    broker.reset(starting_equity=float(start))
-    return broker.status()
 
 
 # ── AI 日报与新闻哨兵 ──

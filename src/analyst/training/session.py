@@ -35,6 +35,8 @@ class SessionContext:
 # 经验值：6-12 根 K 线足够看清止损/止盈是否被触发，
 # 既给市场留出演化时间，又不让反馈循环太慢。
 _DEFAULT_VERIFY_HOURS = {
+    "5m": 2,     # 24 根
+    "15m": 4,    # 16 根
     "30m": 6,    # 12 根
     "1h": 12,    # 12 根
     "2h": 24,    # 12 根
@@ -64,8 +66,8 @@ def create_session(
     """
     settings = get_settings()
     timeframe = timeframe or settings.default_timeframe
-    # 快照固定含 1d/4h/1h/30m；非法周期回退到 4h
-    if timeframe not in ("1d", "4h", "1h", "30m"):
+    # 快照固定含 1d/4h/1h/30m/15m/5m；非法周期回退到 4h
+    if timeframe not in ("1d", "4h", "1h", "30m", "15m", "5m"):
         timeframe = "4h"
 
     market_snap = build_snapshot(symbol, market=market)
@@ -309,12 +311,12 @@ def run_practice_quick(
 
 
 def map_monitor_tf_to_ai_tf(timeframe: str) -> str:
-    """盯盘周期 → AI 快照允许周期（create_session 仅 1d/4h/1h/30m）。"""
+    """盯盘周期 → AI 快照允许周期（create_session：1d/4h/1h/30m/15m/5m）。"""
     tf = (timeframe or "").strip().lower()
-    if tf == "15m":
-        return "1h"
-    if tf in ("1d", "4h", "1h", "30m"):
+    if tf in ("1d", "4h", "1h", "30m", "15m", "5m"):
         return tf
+    if tf in ("1m", "3m"):
+        return "5m"
     return "4h"
 
 

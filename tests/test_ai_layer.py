@@ -55,25 +55,16 @@ def test_keyword_fallback_flags_critical_only():
 def test_template_digest_renders_without_llm():
     facts = {
         "as_of_utc": "2026-07-19 05:00",
-        "equity": 101.74,
-        "day_change_pct": 0.42,
-        "open_positions": [
-            {"symbol": "AVAX/USDT", "strategy": "xs_momentum",
-             "direction": "short", "unrealized_pnl": 0.12},
-        ],
-        "carry_book": [
-            {"symbol": "BTC/USDT", "notional": 7.63, "accrued": 0.0021},
-        ],
         "market": {"regime": "bear", "btc_price": 63910.0,
                    "btc_vs_ema200d_pct": -14.0},
-        "risk_fuse": {"daily_fuse_active": False, "disabled_strategies": []},
+        "relative_strength": {
+            "pairs": {
+                "ETH/BTC": {"state": "above", "vs_ema_pct": 2.1},
+            },
+        },
     }
     text = _template_digest(facts)
-    assert "101.74" in text
-    assert "xs_momentum" in text
-    assert "BTC/USDT" in text and "0.0021" in text
+    assert "63910" in text
     assert "熊市" in text
-    assert "熔断" not in text  # 无异常不显示熔断行
-
-    facts["risk_fuse"]["disabled_strategies"] = ["xs_momentum"]
-    assert "熔断" in _template_digest(facts)
+    assert "ETH/BTC" in text
+    assert "熔断" not in text

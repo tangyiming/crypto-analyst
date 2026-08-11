@@ -2,23 +2,7 @@
 
 本地跑的 **AI 行情分析 + U 本位永续盯盘 + 牛熊周期工具**。AI 给出观点/计划并落库复盘；规则引擎常驻盯盘，命中后推 Telegram——**只提醒，不下单**。
 
-顶栏：**盯盘** → **周期** → **日程** → **策略库** → **回测** → **Web3** → **开发工具** → **自动交易**（纸面）→ **AI 助手**。
-
----
-
-## 纸面模拟炒币
-
-顶栏 **「自动交易」** 现为纸面账本（**非真金**）：
-
-- 跟单 **`cycle_switch` / `xs_momentum` / `funding_carry` / `ai_plan`**（`MONITOR_PAPER_SOURCES`）
-- 默认初始 **10000 USDT**，单笔风险约权益 1%；默认 **5x 杠杆**（保证金=名义/杠杆，页面显示保证金收益率）；开平各收手续费（默认 4 bps）
-- `cycle_switch` / `xs_momentum`：按目标仓位同步，信号平仓
-- `funding_carry`：delta 中性收资金费
-- **`ai_plan`**：AI 盯盘点评 `long`/`short` 且计划含 SL/TP 时纸面开仓，标记价止盈止损
-- 页面：Hero 权益 + 策略 chip + 可点持仓卡片；约 2 秒刷新浮盈；可选 TG「📄 纸面…」
-- 落盘：`.cache/data/paper_account.json`；API：`GET /api/paper/status` · `POST /api/paper/reset`
-
-开启常驻盯盘（`MONITOR_ALWAYS_ON=true`）后，策略信号会自动记纸面仓。
+顶栏：**盯盘** → **周期** → **日程** → **策略库** → **回测** → **AI 助手**。
 
 ---
 
@@ -34,7 +18,7 @@
 
 API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 
-盯盘图表周期仅 **`15m / 1h / 4h`**（`MONITOR_CHART_TIMEFRAMES`）；短周期请求会回退到 15m。
+盯盘图表周期 **`5m / 15m / 1h / 4h`**（`MONITOR_CHART_TIMEFRAMES`）。
 
 ---
 
@@ -49,7 +33,7 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 ```
 盯盘推送（Web / TG）  ←→  选币做 AI 分析（锁点注入）落库  →  到期验证  →  历史复盘
                               ↑
-              周期图 / cycle_switch / 转折点倒计时 / Web3 头仓计算器
+              周期图 / cycle_switch / 转折点倒计时
 ```
 
 ### 告警怎么推（简要）
@@ -57,7 +41,7 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 | 类型 | 页面 | Telegram |
 |------|------|----------|
 | 规则噪音（放量、触及等） | 有 | 默认不推（可改白名单） |
-| 收盘有候选 → AI 点评 `long`/`short`（`ai_plan`） | 有 | 推；可纸面跟单（含 SL/TP） |
+| 收盘有候选 → AI 点评 `long`/`short`（`ai_plan`） | 有 | 推；仅提醒（含 SL/TP 计划） |
 | 各币 `cycle_switch` 仓位变化 | 有（触发 AI 候选） | 不直推；等 AI 确认 |
 | 周期位置日更（`cycle_outlook`，BTC） | 有 | UTC **每天最多 1 条** |
 | 日程：时段 / 资金费 / 宏观高影响 | 「日程」页 | 提前期推（`MONITOR_SCHEDULE_TG`） |
@@ -79,8 +63,6 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 |----|------|
 | 日程 | 交易时段 · 本地时区时钟 · 资金费 · USD 高影响宏观日历 + TG 提前提醒 |
 | 策略库 / 回测 | 本平台策略目录；经典组合回测与 CLI `backtest-classic` 同源 |
-| Web3 | ETH 单位换算、地址/Hex 工具、**头仓/补仓计算器**、链上/DeFi 外链 |
-| 开发工具 | JSON / Base64 / URL / 时间戳 / UUID + 常用在线工具外链 |
 | AI 助手 | 交易日报 · 研究假设 · 新闻风险事件 |
 
 ---
@@ -109,7 +91,6 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 
 防踏空小头仓（默认权益 3–4%）+ 短线总仓上限（默认 18%）；回踩补仓与突破补仓**二选一**，不可叠加。
 
-- Web：**Web3 → 头仓/补仓计算器**
 - API：`GET /api/tools/seed-position?account=10000&leverage=25&seed_pct=0.04&max_total_pct=0.18&add_mode=pullback`
 - 代码：`src/analyst/compute/position_sizing.py`
 
@@ -178,21 +159,16 @@ analyst config test-llm
 | `DEFAULT_SYMBOLS` | 默认观察列表；常驻品种未单独配置时也用这份 |
 | `MONITOR_ALWAYS_ON` | `true`：Web 进程在跑时关页面也继续盯盘并推 TG |
 | `MONITOR_DAEMON_TIMEFRAMES` | 常驻多周期，默认 `15m,1h,4h` |
-| `MONITOR_CHART_TIMEFRAMES` | 盯盘图表可选周期，默认 `15m,1h,4h`（不含 1m） |
+| `MONITOR_CHART_TIMEFRAMES` | 盯盘图表可选周期，默认 `5m,15m,1h,4h` |
 | `MONITOR_DAEMON_SYMBOLS` | 常驻品种；空则跟 `DEFAULT_SYMBOLS` / 页面观察列表（常驻模式下加减币**无需重启**） |
 | `MONITOR_CYCLE_SWITCH_ENABLED` | `true`：各盯盘币对跑 `cycle_switch`；相对上一根 K 仓位变化 → 页面 + AI 候选（**不直推 TG**） |
-| `MONITOR_CYCLE_SYMBOLS` | cycle 跟单白名单，默认 `BTC/USDT,ETH/USDT,SOL/USDT`；空=全部 |
+| `MONITOR_CYCLE_SYMBOLS` | cycle 评估/告警白名单，默认 `BTC/USDT,ETH/USDT,SOL/USDT`；空=全部 |
 | `MONITOR_CYCLE_OUTLOOK_ENABLED` | `true`：每天提醒一次当前周期位置（BTC，**UTC 每天最多 1 条**） |
-| `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有规则/`cycle_switch` 候选时才调 AI；`long`/`short` 推「盯盘点评」，并可纸面跟单 |
+| `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有规则/`cycle_switch` 候选时才调 AI；`long`/`short` 推「盯盘点评」（仅提醒） |
 | `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认**只用免费层**（Groq/Cerebras/Gemini/OpenRouter/SambaNova），失败不回落付费 |
 | `LLM_FREE_ORDER` | 免费层顺序，默认 `nvidia,groq,cerebras,openrouter,sambanova,gemini`（有 key 才实际调用） |
 | `CEREBRAS_API_KEY` / `NVIDIA_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY` / `SAMBANOVA_API_KEY` | 额外免费线路；任选配置即可 failover |
 | `MONITOR_AI_COOLDOWN_MINUTES` | 同品种+AI 周期冷却（默认 240），防候选刷屏 |
-| `MONITOR_PAPER_ENABLED` | `true`：纸面模拟炒币，跟 `MONITOR_PAPER_SOURCES` |
-| `MONITOR_PAPER_EQUITY` | 初始虚拟权益（默认 10000 USDT） |
-| `MONITOR_PAPER_LEVERAGE` | 纸面杠杆（默认 5；保证金=名义/杠杆） |
-| `MONITOR_PAPER_SOURCES` | 纸面跟单来源，默认 `cycle_switch,xs_momentum,funding_carry,ai_plan` |
-| `MONITOR_PAPER_MAX_POSITIONS` | 最大同时持仓数（默认 12；去重键=品种×策略） |
 | `MONITOR_SCHEDULE_ENABLED` / `MONITOR_SCHEDULE_TG` | 市场日程页与 TG 提前提醒 |
 | `MONITOR_SCHEDULE_SESSION_LEADS` 等 | 时段 / 资金费 / 宏观提前提醒分钟（逗号分隔） |
 | `MONITOR_TG_TRADE_RULES` | TG 白名单；默认 AI 点评 + MACD/均线/放量/布林/突破/资金费等异动 |
@@ -284,7 +260,7 @@ analyst backtest-classic ETH -s ema_cross -t 4h --oos-days 365
 
 - **图 1 日历**：锚定历次熊市底部，牛市 1064 天 → 预计见顶，熊市 364 天 → 预计见底
 - **图 2 狼波**：RSI + 短期动量近似 TradingView 狼波指数，红区过热、蓝区超卖
-- **提醒**：异动规则（MACD 金叉死叉、放量、突破等）+ AI 盯盘点评推 TG；`cycle_outlook` 每天推周期位置；**日程**推时段/资金费/宏观；纸面跟 `cycle_switch` / `xs_momentum` / `funding_carry` / `ai_plan`
+- **提醒**：异动规则（MACD 金叉死叉、放量、突破等）+ AI 盯盘点评推 TG；`cycle_outlook` 每天推周期位置；**日程**推时段/资金费/宏观；`xs_momentum` / `funding_carry` 信号变化上页面告警
 
 ```bash
 analyst cycle-outlook              # 终端查看当前相位与倒计时
@@ -301,7 +277,6 @@ Web：`GET /api/monitor/cycle-timeline` · 顶栏「周期」专页（盯盘后�
 | 路径 | 内容 |
 |------|------|
 | `analyst.db` | AI 会话、计划、验证、聊天 |
-| `.cache/data/paper_account.json` | 纸面模拟账户（权益/持仓/成交/止损冷却） |
 | `.cache/data/monitor_daemon.json` | 常驻盯盘品种（页面观察列表可同步过来） |
 | `.cache/data/schedule_reminders.json` | 日程 TG 提醒去重键 |
 | `.cache/data/cycle_outlook_tg.json` | 周期位置日更 TG 日戳 |
@@ -333,7 +308,6 @@ crypto-analyst/
 │   ├── compute/jack_levels.py        # 波段锁点预计算
 │   ├── compute/position_sizing.py    # 头仓/补仓分层
 │   ├── monitor/schedule_reminders.py # 日程 TG 提前提醒轮询
-│   ├── trading/paper.py              # 纸面模拟账本
 │   ├── web/schedule_routes.py        # GET /api/schedule
 │   └── compute/strategies/           # cycle_switch / xs_momentum / registry
 └── tests/
@@ -343,7 +317,7 @@ crypto-analyst/
 
 ## 说明
 
-- **不自动下单**；盈亏与决策自负。
+- **不自动下单**；盈亏与决策自负。（纸面模拟交易功能已移除，系统只提醒不下单。）
 - 周期日历为「刻舟求剑」模型，里程碑日期有**过拟合历史**风险，请与盘面结合判断。
 - 波段锁点为结构/斐波启发式，**不是**对任何个人交易员的复刻保证；请与盘面与风控一并使用。
 - 需能访问 Binance 行情；Python **3.11+**。

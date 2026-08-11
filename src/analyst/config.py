@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # 数据源
     exchange: str = Field(default="binance")
     default_symbols: str = Field(
-        default="BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,SUI/USDT,UNI/USDT"
+        default="BTC/USDT,ETH/USDT,BNB/USDT,UNI/USDT"
     )
     # 遗留项（当前 Web 已固定 U 本位，代码未再读取）；保留以免旧 .env 报未知字段
     futures_only_symbols: str = Field(default="")
@@ -117,38 +117,16 @@ class Settings(BaseSettings):
     # 牛熊周期切换（方案 D）：4h 收盘评估仓位变化并推 TG
     monitor_cycle_switch_enabled: bool = Field(default=True)
     monitor_cycle_switch_timeframe: str = Field(default="4h")
-    # cycle_switch 跟单/告警白名单；空=全部盯盘品种。默认砍弱 beta（如 AAVE）
-    monitor_cycle_symbols: str = Field(default="BTC/USDT,ETH/USDT,SOL/USDT")
+    # cycle_switch 评估/告警白名单；空=全部盯盘品种。默认砍弱 beta（如 AAVE）
+    monitor_cycle_symbols: str = Field(default="BTC/USDT,ETH/USDT,BNB/USDT,UNI/USDT")
     monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
-    # 收盘有规则/周期候选时才调 AI；long/short → 盯盘点评（可纸面跟单，见 MONITOR_PAPER_SOURCES）
+    # 收盘有规则/周期候选时才调 AI；long/short → 盯盘点评（仅提醒）
     monitor_ai_on_candidate: bool = Field(default=True)
     monitor_ai_cooldown_minutes: int = Field(default=240)
     # 盯盘 AI 确认只走免费层（Groq/Cerebras/Gemini/OpenRouter/SambaNova）；失败不回落付费
     monitor_ai_free_only: bool = Field(default=True)
-    # 纸面模拟炒币：规则策略 + 可选 AI 点评跟单（ai_plan 有 SL/TP）
-    monitor_paper_enabled: bool = Field(default=True)
-    monitor_paper_equity: float = Field(default=10000.0)
-    monitor_paper_risk_pct: float = Field(default=0.01)
-    monitor_paper_fee_bps: float = Field(default=4.0)
-    # 展示与保证金占用：保证金 = 名义 / 杠杆；收益率 = 浮盈 / 保证金
-    monitor_paper_leverage: float = Field(default=5.0)
-    monitor_paper_max_positions: int = Field(default=12)
-    monitor_paper_tg: bool = Field(default=True)
-    # 纸面跟单来源（可含 ai_plan：AI 盯盘点评带 SL/TP）
-    monitor_paper_sources: str = Field(
-        default="cycle_switch,xs_momentum,funding_carry,ai_plan"
-    )
-    # ── 风控熔断 ──
-    # 单日亏损熔断：当日权益回撤 ≥ 该百分比 → 停开新仓（次日 UTC 自动复位）；0=关
-    paper_daily_loss_limit_pct: float = Field(default=5.0)
-    # 熔断时是否顺带全平现有仓位（默认只停新仓）
-    paper_flatten_on_daily_fuse: bool = Field(default=False)
-    # 单策略累计已实现亏损回撤 ≥ 初始权益该百分比 → 停用该策略开仓；0=关
-    paper_strategy_dd_disable_pct: float = Field(default=20.0)
-    # 组合总名义敞口 / 权益 上限（相关资产敞口叠加保护）；0=关
-    paper_max_gross_exposure: float = Field(default=2.0)
 
-    # ── 横截面动量实时跟单 ──
+    # ── 横截面动量评估告警 ──
     monitor_xs_enabled: bool = Field(default=True)
     # 观察池；空 = 全部盯盘品种（须有 4h worker）
     monitor_xs_symbols: str = Field(default="")
@@ -176,14 +154,16 @@ class Settings(BaseSettings):
 
     # ── 汇率对（相对强弱）监控：ETH/BTC 等，只告警不交易 ──
     monitor_ratio_enabled: bool = Field(default=True)
-    monitor_ratio_pairs: str = Field(default="ETH/BTC,SOL/BTC,BNB/BTC")
+    monitor_ratio_pairs: str = Field(default="ETH/BTC,BNB/BTC,UNI/BTC")
     monitor_ratio_ema_days: int = Field(default=200)   # 长期均线（日）
     monitor_ratio_band: float = Field(default=0.02)    # EMA 迟滞带
     monitor_ratio_break_days: int = Field(default=40)  # N 日新高/新低
 
-    # ── 资金费套利实时跟单 ──
+    # ── 资金费套利信号评估 ──
     monitor_carry_enabled: bool = Field(default=True)
-    monitor_carry_symbols: str = Field(default="BTC/USDT,ETH/USDT")
+    monitor_carry_symbols: str = Field(
+        default="BTC/USDT,ETH/USDT,BNB/USDT,UNI/USDT"
+    )
     # 合计名义 = 权益 × 该比例（各币均分）
     monitor_carry_alloc_pct: float = Field(default=0.15)
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
@@ -198,7 +178,7 @@ class Settings(BaseSettings):
     # 常驻多级别周期（逗号分隔）；空则仅 MONITOR_TIMEFRAME
     monitor_daemon_timeframes: str = Field(default="15m,1h,4h")
     # 盯盘图表可选周期（实时 K / WS）；默认不含 1m 等短周期
-    monitor_chart_timeframes: str = Field(default="15m,1h,4h")
+    monitor_chart_timeframes: str = Field(default="5m,15m,1h,4h")
     # 市场日程：时段 / 资金费 / 宏观日历提醒
     monitor_schedule_enabled: bool = Field(default=True)
     monitor_schedule_tg: bool = Field(default=True)
@@ -223,7 +203,7 @@ class Settings(BaseSettings):
 
     @property
     def cycle_symbols_set(self) -> set[str] | None:
-        """cycle_switch 白名单。None=不限制；否则仅集合内品种评估/纸面跟单。"""
+        """cycle_switch 白名单。None=不限制；否则仅集合内品种评估/告警。"""
         raw = (self.monitor_cycle_symbols or "").strip()
         if not raw:
             return None
@@ -268,7 +248,7 @@ class Settings(BaseSettings):
     def chart_timeframes_list(self) -> list[str]:
         """盯盘图表/WS 允许的周期。"""
         raw = (self.monitor_chart_timeframes or "").strip()
-        allowed = {"15m", "1h", "4h"}
+        allowed = {"5m", "15m", "1h", "4h"}
         if raw:
             tfs = [t.strip().lower() for t in raw.split(",") if t.strip()]
             seen: set[str] = set()
@@ -279,7 +259,7 @@ class Settings(BaseSettings):
                     out.append(t)
             if out:
                 return out
-        return ["15m", "1h", "4h"]
+        return ["5m", "15m", "1h", "4h"]
 
     @property
     def tg_trade_rules_set(self) -> set[str] | None:

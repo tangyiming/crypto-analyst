@@ -4,18 +4,25 @@ from analyst.config import Settings
 from analyst.training.session import map_monitor_tf_to_ai_tf
 
 
-def test_map_15m_to_1h():
-    assert map_monitor_tf_to_ai_tf("15m") == "1h"
+def test_map_short_tfs_passthrough():
+    assert map_monitor_tf_to_ai_tf("5m") == "5m"
+    assert map_monitor_tf_to_ai_tf("15m") == "15m"
 
 
 def test_map_allowed_passthrough():
-    for tf in ("1d", "4h", "1h", "30m"):
+    for tf in ("1d", "4h", "1h", "30m", "15m", "5m"):
         assert map_monitor_tf_to_ai_tf(tf) == tf
 
 
 def test_map_unknown_to_4h():
-    assert map_monitor_tf_to_ai_tf("5m") == "4h"
+    assert map_monitor_tf_to_ai_tf("2h") == "4h"
     assert map_monitor_tf_to_ai_tf("") == "4h"
+    assert map_monitor_tf_to_ai_tf("1m") == "5m"
+
+
+def test_chart_timeframes_include_5m_15m():
+    s = Settings.model_construct(monitor_chart_timeframes="5m,15m,1h,4h")
+    assert s.chart_timeframes_list == ["5m", "15m", "1h", "4h"]
 
 
 def test_tg_trade_rules_parsing():
@@ -69,4 +76,3 @@ def test_list_free_endpoints_order(monkeypatch):
     )
     names = [e["name"] for e in mod.list_free_endpoints(s)]
     assert names == ["cerebras", "groq", "openrouter"]
-

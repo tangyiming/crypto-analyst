@@ -890,7 +890,7 @@ def backtest_classic(
                     "[yellow]⚠ 超过四成窗口亏损：整体数字可能靠个别行情段撑起，谨慎。[/yellow]"
                 )
     console.print(
-        "[dim]提示：回测≠未来。上线前先 paper trading，单笔风险 ≤ 账户 1%。[/dim]"
+        "[dim]提示：回测≠未来。上线前先小仓位验证，单笔风险 ≤ 账户 1%。[/dim]"
     )
 
 
@@ -1091,42 +1091,6 @@ def research_ideas():
         "\n[dim]提醒：假设 ≠ 结论。逐条回测（5年×3币、看滚动窗口），"
         "单币变好不算数。[/dim]"
     )
-
-
-@app.command("paper-fuse")
-def paper_fuse(
-    action: str = typer.Argument("status", help="status / clear"),
-    strategy: str = typer.Argument(None, help="clear 时指定策略名；省略=全部"),
-):
-    """🧯 纸面风控熔断：查看状态 / 恢复被停用的策略。"""
-    from analyst.trading.paper import get_paper_broker
-
-    broker = get_paper_broker()
-    if action == "clear":
-        cleared = broker.clear_strategy_fuse(strategy)
-        if cleared:
-            console.print(f"[green]已恢复策略：{', '.join(cleared)}[/green]")
-        else:
-            console.print("[dim]没有可恢复的停用策略。[/dim]")
-        return
-    st = broker.status()
-    fuse = st.get("risk_fuse", {})
-    t = Table(title="🧯 纸面风控熔断状态")
-    t.add_column("项", style="cyan")
-    t.add_column("值", justify="right")
-    t.add_row(
-        "单日亏损熔断",
-        "🔴 生效中（今日停开新仓）" if fuse.get("daily_fuse_active") else "🟢 未触发",
-    )
-    t.add_row("单日亏损限额", f"{fuse.get('daily_loss_limit_pct', 0):g}%")
-    t.add_row("当日起始权益", f"{fuse.get('day_start_equity', 0):.2f}")
-    t.add_row("当前权益", f"{st.get('equity', 0):.2f}")
-    dis = fuse.get("disabled_strategies") or []
-    t.add_row("回撤停用策略", ", ".join(dis) if dis else "无")
-    t.add_row("总敞口上限", f"equity × {fuse.get('max_gross_exposure', 0):g}")
-    console.print(t)
-    if dis:
-        console.print("[dim]恢复：analyst paper-fuse clear <策略名>[/dim]")
 
 
 @app.command("cycle-outlook")

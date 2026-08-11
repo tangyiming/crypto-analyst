@@ -318,7 +318,7 @@ def fetch_multi_timeframe(
 ) -> dict[str, CandleSeries]:
     """同时拉取多个周期。"""
     if timeframes is None:
-        timeframes = ["1d", "4h", "1h", "30m"]
+        timeframes = ["1d", "4h", "1h", "30m", "15m", "5m"]
     return {
         tf: fetch_candles(symbol, timeframe=tf, limit=limit, market=market)
         for tf in timeframes

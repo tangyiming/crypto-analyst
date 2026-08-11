@@ -177,6 +177,7 @@ class MonitorHub:
         # 横截面动量：上次调仓时间与目标权重（幂等对齐用）
         self._xs_last_rebalance: datetime | None = None
         self._xs_weights: dict[str, float] = {}
+        self._carry_active: dict[str, bool] = {}
         # AI 候选确认冷却：key = "SYMBOL|ai_tf" → unix ts
         self._ai_confirm_at: dict[str, float] = {}
         # 汇率对监控：pair → 上次状态（首轮建立基线不告警，之后变化才告警）
@@ -399,22 +400,7 @@ class MonitorHub:
                 f"周期={','.join(tfs)}\n"
                 "TG：各币策略点位照推；周期位置日更每天 1 条"
             )
-        await self._bootstrap_cycle_paper_sync()
         return info
-
-    async def _bootstrap_cycle_paper_sync(self) -> None:
-        """常驻盯盘启动后立刻对齐 cycle 纸面仓（不必等下一根 4h 收盘）。"""
-        settings = get_settings()
-        if not settings.monitor_cycle_switch_enabled or not settings.monitor_paper_enabled:
-            return
-        tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
-        for w in self._workers.values():
-            if not self.is_daemon_key(w.key) or w.key.timeframe.lower() != tf:
-                continue
-            try:
-                await self._evaluate_cycle_switch(w)
-            except Exception:
-                logger.exception("cycle bootstrap failed %s", w.key)
 
     def worker_health(self) -> list[dict[str, Any]]:
         """供 /api/monitor/daemon 诊断：每个 worker 是否存活、最近收盘评估。"""
@@ -466,7 +452,7 @@ class MonitorHub:
             self._telegram_ready(),
             newest,
             [
-                f"{h['key']}@{h['last_signal']}/c{h['closed_bars']}"
+                f"{h['key']}/c{h['closed_bars']}"
                 for h in health[:4]
             ],
         )
@@ -879,10 +865,6 @@ class MonitorHub:
                 )
                 if owns_mark and mark is not None:
                     try:
-                        await self._paper_on_mark(worker, float(mark))
-                    except Exception:
-                        logger.exception("paper mark check failed %s", key.symbol)
-                    try:
                         await self._push_level_context(key.symbol, float(mark))
                     except Exception:
                         logger.exception("level context push failed %s", key.symbol)
@@ -972,11 +954,6 @@ class MonitorHub:
                 worker.last_closed_at = candle.timestamp
                 worker.closed_bars += 1
                 await self._evaluate_and_alert(worker)
-                try:
-                    close_px = float(candle.close)
-                    await self._paper_on_mark(worker, close_px)
-                except Exception:
-                    logger.exception("paper close-bar check failed %s", worker.key)
         except asyncio.CancelledError:
             logger.info("Binance K 线流取消 %s", key)
             raise
@@ -1024,13 +1001,13 @@ class MonitorHub:
         return series.candles
 
     async def _evaluate_xs_momentum(self, worker: StreamWorker) -> None:
-        """BTC 4h 收盘触发：全观察池动量排名 → 每周调仓同步纸面目标仓。
+        """BTC 4h 收盘触发：全观察池动量排名 → 每周调仓告警。
 
         节流：距上次调仓 < monitor_xs_rebalance_hours 时，沿用上次权重
-        幂等对齐（防重启丢仓），不重新排名。
+        幂等对齐（防重启丢状态），不重新排名。
         """
         settings = get_settings()
-        if not settings.monitor_xs_enabled or not settings.monitor_paper_enabled:
+        if not settings.monitor_xs_enabled:
             return
         tf = (settings.monitor_cycle_switch_timeframe or "4h").strip().lower()
         if worker.key.timeframe.lower() != tf:
@@ -1042,7 +1019,6 @@ class MonitorHub:
             XsMomentumConfig,
             current_xs_ranking,
         )
-        from analyst.trading.paper import get_paper_broker
 
         # 观察池：配置指定，空=全部有该周期 worker 的品种
         raw = (settings.monitor_xs_symbols or "").strip()
@@ -1090,46 +1066,40 @@ class MonitorHub:
             top_str = " ".join(f"{s.split('/')[0]}{m:+.0%}" for s, m in ranking[:4])
             logger.info("xs_momentum 调仓 regime=%s 权重=%s 排名=%s",
                         regime, {k: v for k, v in weights.items() if v}, top_str)
-        if not self._xs_weights:
-            return
 
-        broker = get_paper_broker()
-        for sym, weight in self._xs_weights.items():
-            candles = series_map.get(sym)
-            if not candles:
-                continue
-            px = float(candles[-1].close)
-            events = await asyncio.to_thread(
-                broker.sync_target_position,
-                strategy="xs_momentum",
-                symbol=sym,
-                timeframe=tf,
-                target_position=float(weight),
-                price=float(px),
-                rationale=f"xs_momentum weight={weight:+.2f}",
-            )
-            for ev in events:
-                await self._broadcast(worker, ev, alert_also=True)
-                if settings.monitor_paper_tg and self._telegram_ready():
-                    if ev.get("type") == "paper_open":
-                        pos = ev.get("position") or {}
-                        dir_zh = "多" if pos.get("direction") == "long" else "空"
-                        await self._notify_telegram_text(
-                            f"📄 纸面开{dir_zh} · [xs_momentum] {pos.get('symbol')}\n"
-                            f"weight={pos.get('target_weight')} entry={pos.get('entry')}\n"
-                            f"equity={ev.get('equity')} · 模拟盘"
-                        )
-                    elif ev.get("type") == "paper_close":
-                        tr = ev.get("trade") or {}
-                        await self._notify_telegram_text(
-                            f"📄 纸面平仓 · [xs_momentum] {tr.get('symbol')} 调仓\n"
-                            f"pnl={tr.get('pnl_usd')} · equity={ev.get('equity')} · 模拟盘"
-                        )
+            active = {k: v for k, v in weights.items() if v}
+            weight_lines = [
+                f"{sym.split('/')[0]} {w:+.0%}" for sym, w in sorted(active.items())
+            ]
+            last_ts = worker.series.candles[-1].timestamp if worker.series.candles else None
+            if last_ts is None:
+                marker = int(datetime.now(timezone.utc).timestamp())
+            elif last_ts.tzinfo is None:
+                marker = int(last_ts.replace(tzinfo=timezone.utc).timestamp())
+            else:
+                marker = int(last_ts.astimezone(timezone.utc).timestamp())
+            alert = {
+                "type": "alert",
+                "rule": "xs_momentum",
+                "title": "横截面动量调仓",
+                "symbol": worker.key.symbol,
+                "timeframe": worker.key.timeframe,
+                "direction": "info",
+                "strength": 0.75,
+                "price": float(worker.series.candles[-1].close) if worker.series.candles else None,
+                "reasons": [
+                    f"相位 {regime}",
+                    f"目标权重：{' · '.join(weight_lines) or '空仓'}",
+                    f"排名 {top_str}",
+                ],
+                "marker_time": marker,
+            }
+            await self._emit_rule_alert(worker, alert)
 
     async def _evaluate_carry(self, worker: StreamWorker) -> None:
-        """1h 收盘触发（各 carry 品种自己的 worker）：结算入账 + 开平信号。"""
+        """1h 收盘触发（各 carry 品种自己的 worker）：评估资金费信号并告警。"""
         settings = get_settings()
-        if not settings.monitor_carry_enabled or not settings.monitor_paper_enabled:
+        if not settings.monitor_carry_enabled:
             return
         if worker.key.timeframe.lower() != "1h":
             return
@@ -1144,49 +1114,45 @@ class MonitorHub:
             current_carry_status,
         )
         from analyst.data.derivatives import fetch_funding_history
-        from analyst.trading.paper import get_paper_broker
 
-        # 30 天足够 EMA(21档)；不走缓存拿最新结算
         hist = await asyncio.to_thread(
             fetch_funding_history, sym, days=30, use_cache=False
         )
         if len(hist) < 30:
             return
-        broker = get_paper_broker()
-        # 先把新结算档入账（若在仓）
-        accrued = await asyncio.to_thread(broker.apply_carry_funding, sym, hist)
-        if accrued:
-            logger.info("carry 结算入账 %s %+.6f", sym, accrued)
 
         cfg = FundingCarryConfig()
         st = current_carry_status(hist, cfg)
         active = st.get("signal") == "carry"
-        alloc = float(settings.monitor_carry_alloc_pct or 0.0)
-        n = max(1, len(carry_syms))
-        notional = broker.state.equity * alloc / n if alloc > 0 else 0.0
-        events = await asyncio.to_thread(
-            broker.sync_carry,
-            symbol=sym,
-            active=active and notional > 0,
-            notional=notional,
-            note=f"费率EMA {st.get('ema_rate_pct', 0):+.5f}%/8h "
-                 f"(年化{st.get('ema_apr_pct', 0):+.1f}%)",
-        )
-        for ev in events:
-            await self._broadcast(worker, ev, alert_also=True)
-            if settings.monitor_paper_tg and self._telegram_ready():
-                if ev.get("type") == "paper_carry_open":
-                    await self._notify_telegram_text(
-                        f"📄 纸面 carry 开 · [funding_carry] {ev.get('symbol')}\n"
-                        f"notional={ev.get('notional')} · {ev.get('note')}\n"
-                        f"现货多+永续空 delta 中性 · 模拟盘"
-                    )
-                elif ev.get("type") == "paper_carry_close":
-                    await self._notify_telegram_text(
-                        f"📄 纸面 carry 平 · [funding_carry] {ev.get('symbol')}\n"
-                        f"累计收费={ev.get('accrued')} 净={ev.get('net')}\n"
-                        f"equity={ev.get('equity')} · 模拟盘"
-                    )
+        prev = self._carry_active.get(sym)
+        self._carry_active[sym] = active
+        if prev is None or prev == active:
+            return
+
+        last_ts = worker.series.candles[-1].timestamp if worker.series.candles else None
+        if last_ts is None:
+            marker = int(datetime.now(timezone.utc).timestamp())
+        elif last_ts.tzinfo is None:
+            marker = int(last_ts.replace(tzinfo=timezone.utc).timestamp())
+        else:
+            marker = int(last_ts.astimezone(timezone.utc).timestamp())
+        alert = {
+            "type": "alert",
+            "rule": "funding_carry",
+            "title": "资金费 carry " + ("信号开启" if active else "信号关闭"),
+            "symbol": sym,
+            "timeframe": worker.key.timeframe,
+            "direction": "info",
+            "strength": 0.7,
+            "price": float(worker.series.candles[-1].close) if worker.series.candles else None,
+            "reasons": [
+                f"费率EMA {st.get('ema_rate_pct', 0):+.5f}%/8h "
+                f"(年化{st.get('ema_apr_pct', 0):+.1f}%)",
+                st.get("note") or ("可开 delta 中性 carry" if active else "费率不足，观望"),
+            ],
+            "marker_time": marker,
+        }
+        await self._emit_rule_alert(worker, alert)
 
     async def _evaluate_ratio_pairs(self, worker: StreamWorker) -> None:
         """BTC 4h 收盘触发：合成 ETH/BTC 等汇率序列，状态变化 → 告警。
@@ -1348,7 +1314,6 @@ class MonitorHub:
 
         - 牛熊相位仍由 BTC 定调；各币用自身 K 线做唐奇安/反弹做空等执行
         - 相对上一根 K 仓位变化 → 页面告警 + AI 候选点评（不直推 TG）
-        - 纸面直接跟目标仓位；AI 不开仓
         - 「每天提醒周期位置」见 cycle_outlook
         """
         from analyst.compute.cycle_theory import (
@@ -1366,20 +1331,6 @@ class MonitorHub:
         allow = settings.cycle_symbols_set
         sym_u = worker.key.symbol.upper().replace("-", "/").split(":")[0]
         if allow is not None and sym_u not in allow:
-            # 白名单外：清掉已有纸面 cycle 仓，不再发仓位告警
-            try:
-                if len(worker.series.candles) >= 1:
-                    px = float(worker.series.candles[-1].close)
-                    await self._paper_sync_cycle(
-                        worker,
-                        target_position=0.0,
-                        price=px,
-                        regime="filtered",
-                    )
-            except Exception:
-                logger.exception(
-                    "paper cycle flat failed (filtered) %s", worker.key
-                )
             worker.last_cycle_position = 0.0
             return False
         if len(worker.series.candles) < 50:
@@ -1413,17 +1364,6 @@ class MonitorHub:
                 "donchian_exit": signal.donchian_exit,
             },
         )
-
-        # 纸面每根 4h 都对齐目标仓（幂等）；避免「已持仓但本根未变仓」时永远不开仓
-        try:
-            await self._paper_sync_cycle(
-                worker,
-                target_position=signal.target_position,
-                price=float(signal.price),
-                regime=signal.market_regime,
-            )
-        except Exception:
-            logger.exception("paper cycle sync failed %s", worker.key)
 
         if not signal.changed:
             return False
@@ -1606,7 +1546,7 @@ class MonitorHub:
         had_candidate: bool,
         candidate_rules: list[str],
     ) -> None:
-        """有规则/周期候选时调 AI；long/short 推盯盘点评（页面+TG），并尝试纸面跟单。"""
+        """有规则/周期候选时调 AI；long/short 推盯盘点评（页面+TG，仅提醒）。"""
         settings = get_settings()
         if not settings.monitor_ai_on_candidate or not had_candidate:
             return
@@ -1706,147 +1646,14 @@ class MonitorHub:
             "model_id": result.get("model_id"),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "demo": False,
-            "paper_trade": True,
         }
         logger.info(
-            "AI 盯盘点评 %s dir=%s session=%s（提醒 + 纸面跟单）",
+            "AI 盯盘点评 %s dir=%s session=%s（仅提醒）",
             worker.key,
             direction,
             result.get("session_id"),
         )
         await self._emit_rule_alert(worker, alert)
-        try:
-            await self._paper_try_open(worker, alert, strategy="ai_plan")
-        except Exception:
-            logger.exception("paper ai_plan open failed %s", worker.key)
-
-
-    async def _paper_try_open(
-        self,
-        worker: StreamWorker,
-        alert: dict[str, Any],
-        *,
-        strategy: str,
-    ) -> None:
-        settings = get_settings()
-        if not settings.monitor_paper_enabled:
-            return
-        from analyst.trading.paper import get_paper_broker
-
-        plan = alert.get("plan")
-        if not isinstance(plan, dict):
-            return
-        price = alert.get("price")
-        if price is None:
-            return
-        broker = get_paper_broker()
-        try:
-            risk_scale = float(alert.get("risk_scale") or 1.0)
-        except (TypeError, ValueError):
-            risk_scale = 1.0
-        event = await asyncio.to_thread(
-            broker.try_open_from_plan,
-            symbol=alert["symbol"],
-            timeframe=alert.get("timeframe") or worker.key.timeframe,
-            direction=alert.get("direction") or "",
-            price=float(price),
-            plan=plan,
-            strategy=strategy,
-            session_id=alert.get("session_id"),
-            model_id=alert.get("model_id"),
-            risk_scale=risk_scale,
-        )
-        if not event:
-            return
-        await self._broadcast(worker, event, alert_also=True)
-        if settings.monitor_paper_tg and self._telegram_ready():
-            pos = event.get("position") or {}
-            dir_zh = "多" if pos.get("direction") == "long" else "空"
-            text = (
-                f"📄 纸面开{dir_zh} · [{pos.get('strategy') or strategy}] "
-                f"{pos.get('symbol')} {pos.get('timeframe')}\n"
-                f"entry={pos.get('entry')} SL={pos.get('stop_loss')} TP={pos.get('take_profit')}\n"
-                f"qty={pos.get('qty')} · equity={event.get('equity')}\n"
-                f"模拟盘 · 非真金"
-            )
-            await self._notify_telegram_text(text)
-
-    async def _paper_sync_cycle(
-        self,
-        worker: StreamWorker,
-        *,
-        target_position: float,
-        price: float,
-        regime: str | None,
-    ) -> None:
-        settings = get_settings()
-        if not settings.monitor_paper_enabled:
-            return
-        from analyst.trading.paper import _paper_sources, get_paper_broker
-
-        # 临时停跟单时强制归零，避免孤儿 cycle 空仓继续浮亏
-        if "cycle_switch" not in _paper_sources():
-            if abs(float(target_position)) >= 1e-9:
-                logger.info(
-                    "cycle_switch 不在 PAPER_SOURCES，强制平仓 %s (was target=%.2f)",
-                    worker.key.symbol,
-                    float(target_position),
-                )
-            target_position = 0.0
-            if regime not in ("filtered", "paused"):
-                regime = "paused"
-
-        broker = get_paper_broker()
-        events = await asyncio.to_thread(
-            broker.sync_cycle_target,
-            symbol=worker.key.symbol,
-            timeframe=worker.key.timeframe,
-            target_position=float(target_position),
-            price=float(price),
-            regime=regime,
-        )
-        for ev in events:
-            await self._broadcast(worker, ev, alert_also=True)
-            if settings.monitor_paper_tg and self._telegram_ready():
-                if ev.get("type") == "paper_open":
-                    pos = ev.get("position") or {}
-                    dir_zh = "多" if pos.get("direction") == "long" else "空"
-                    text = (
-                        f"📄 纸面开{dir_zh} · [cycle_switch] {pos.get('symbol')}\n"
-                        f"target={pos.get('target_weight')} entry={pos.get('entry')}\n"
-                        f"equity={ev.get('equity')} · 模拟盘"
-                    )
-                else:
-                    tr = ev.get("trade") or {}
-                    text = (
-                        f"📄 纸面平仓 · [cycle_switch] {tr.get('symbol')} SIGNAL\n"
-                        f"pnl={tr.get('pnl_usd')} · equity={ev.get('equity')} · 模拟盘"
-                    )
-                await self._notify_telegram_text(text)
-
-    async def _paper_on_mark(self, worker: StreamWorker, mark_price: float) -> None:
-        settings = get_settings()
-        if not settings.monitor_paper_enabled:
-            return
-        from analyst.trading.paper import get_paper_broker
-
-        broker = get_paper_broker()
-        events = await asyncio.to_thread(
-            broker.on_mark, worker.key.symbol, float(mark_price)
-        )
-        for ev in events:
-            await self._broadcast(worker, ev, alert_also=True)
-            if settings.monitor_paper_tg and self._telegram_ready():
-                tr = ev.get("trade") or {}
-                outcome = tr.get("outcome") or "?"
-                text = (
-                    f"📄 纸面平仓 · [{tr.get('strategy') or '?'}] "
-                    f"{tr.get('symbol')} {outcome.upper()}\n"
-                    f"{tr.get('direction')} entry={tr.get('entry')} → exit={tr.get('exit')}\n"
-                    f"pnl={tr.get('pnl_usd')} · equity={ev.get('equity')}\n"
-                    f"模拟盘 · 非真金"
-                )
-                await self._notify_telegram_text(text)
 
     async def _emit_ai_confirm_failure(
         self,

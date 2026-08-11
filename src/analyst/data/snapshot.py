@@ -78,7 +78,7 @@ def build_snapshot(symbol: str, market: str = "spot") -> MarketSnapshot:
     market = market if market in ("spot", "futures") else "spot"
     timeframes_data = fetch_multi_timeframe(
         symbol,
-        timeframes=["1d", "4h", "1h", "30m"],
+        timeframes=["1d", "4h", "1h", "30m", "15m", "5m"],
         market=market,
     )
 

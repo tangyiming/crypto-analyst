@@ -18,6 +18,7 @@ TF_PRIORITY: dict[str, int] = {
     "1h": 3,
     "30m": 2,
     "15m": 1,
+    "5m": 0,
 }
 
 

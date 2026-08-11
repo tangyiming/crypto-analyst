@@ -26,10 +26,10 @@
   · 各盯盘币对在配置周期（默认 4h）收盘评估仓位；相位用 BTC 定调
   · 仓位相对上一根 K 线变化 → 页面告警 + AI 候选（不直推 TG；可交易由 AI→ai_plan）
   · 周期位置日更见 cycle_outlook（每天 1 条）
-  · 跟单品种可用 MONITOR_CYCLE_SYMBOLS 白名单（默认 BTC,ETH,SOL）
+  · 评估品种可用 MONITOR_CYCLE_SYMBOLS 白名单（默认 BTC,ETH,SOL）
 
   注意：减半日历边界（牛 550 天 / 熊 400 天）仅拟合 2 个完整周期，
-  必须与均线双确认一起用；回测≠未来，上线先 paper trading。
+  必须与均线双确认一起用；回测≠未来，上线前请小仓位验证。
 """
 
 from __future__ import annotations

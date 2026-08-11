@@ -162,7 +162,7 @@ def classify_news(items: list[NewsItem]) -> list[dict]:
     return keyword_fallback_classify(items)
 
 
-def _format_alert(item: NewsItem, cls: dict, has_carry: bool) -> str:
+def _format_alert(item: NewsItem, cls: dict) -> str:
     icon = "🚨" if cls["severity"] == "critical" else "⚠️"
     lines = [
         f"{icon} 风险事件（{cls['severity'].upper()} · {cls.get('category')}）",
@@ -171,8 +171,8 @@ def _format_alert(item: NewsItem, cls: dict, has_carry: bool) -> str:
     ]
     if cls.get("reason"):
         lines.append(f"判定：{cls['reason']}")
-    if has_carry and cls["severity"] == "critical":
-        lines.append("💡 提示：carry 两腿在同一交易所，交易所级风险请考虑手动平 carry 降敞口")
+    if cls["severity"] == "critical":
+        lines.append("💡 提示：交易所级风险事件请评估敞口并自行决策")
     if item.url:
         lines.append(item.url)
     lines.append("（AI 分级仅供参考，不构成自动交易动作）")
@@ -211,9 +211,6 @@ async def run_news_sentinel_loop(
             elif fresh:
                 cls_rows = await asyncio.to_thread(classify_news, fresh)
                 by_id = {c["id"]: c for c in cls_rows}
-                from analyst.trading.paper import get_paper_broker
-
-                has_carry = bool(get_paper_broker().state.carry_book)
                 pushed = 0
                 now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
                 events: list[dict] = []
@@ -235,7 +232,7 @@ async def run_news_sentinel_loop(
                     })
                     if not hit:
                         continue
-                    await notify(_format_alert(item, c, has_carry))
+                    await notify(_format_alert(item, c))
                     pushed += 1
                 _append_events(events)
                 logger.info(
