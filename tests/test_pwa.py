@@ -1,4 +1,4 @@
-"""PWA 静态资源存在，供手机安装 / APK WebView 加载。"""
+"""PWA 静态资源存在，供手机浏览器安装。"""
 
 from pathlib import Path
 

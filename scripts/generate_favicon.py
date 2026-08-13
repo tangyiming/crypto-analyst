@@ -10,7 +10,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "src" / "analyst" / "web" / "static"
 OUT = STATIC / "favicon.ico"
-ANDROID_MIPMAP = ROOT / "android" / "app" / "src" / "main" / "res" / "mipmap-xxxhdpi"
 
 BG = (11, 14, 17, 255)
 BORDER = (30, 35, 41, 255)
@@ -163,14 +162,6 @@ def main() -> None:
         path = STATIC / name
         path.write_bytes(_png_bytes(size, render_icon(size), top_down=True))
         print(f"wrote {path}")
-    if ANDROID_MIPMAP.parent.exists() or True:
-        ANDROID_MIPMAP.mkdir(parents=True, exist_ok=True)
-        launcher = ANDROID_MIPMAP / "ic_launcher.png"
-        launcher.write_bytes(_png_bytes(192, render_icon(192), top_down=True))
-        print(f"wrote {launcher}")
-        hdpi = ROOT / "android" / "app" / "src" / "main" / "res" / "mipmap-hdpi"
-        hdpi.mkdir(parents=True, exist_ok=True)
-        (hdpi / "ic_launcher.png").write_bytes(_png_bytes(72, render_icon(72), top_down=True))
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@
 #   ./scripts/run-web.sh
 #   WEB_PORT=9000 ./scripts/run-web.sh
 #   WEB_HOST=0.0.0.0 ./scripts/run-web.sh
-#   ./scripts/run-web.sh --lan    # 手机浏览器 / APK 可连
+#   ./scripts/run-web.sh --lan    # 局域网可访问（手机浏览器）
 #
 set -euo pipefail
 
@@ -35,7 +35,7 @@ fi
 
 echo "启动 Web: http://${WEB_HOST}:${WEB_PORT}"
 if [[ "$WEB_HOST" == "0.0.0.0" ]]; then
-  echo "手机 / APK 请填本机局域网地址，例如 http://$(ipconfig getifaddr en0 2>/dev/null || echo '192.168.x.x'):${WEB_PORT}"
+  echo "局域网地址，例如 http://$(ipconfig getifaddr en0 2>/dev/null || echo '192.168.x.x'):${WEB_PORT}"
 fi
 
 if [[ -x "$ROOT/.venv/bin/python" ]]; then

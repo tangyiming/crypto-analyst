@@ -44,7 +44,7 @@ def _parse_period(period: str) -> int:
 
 
 def _lan_ipv4() -> list[str]:
-    """本机局域网 IPv4，供手机 / APK 填写。"""
+    """本机局域网 IPv4，供手机浏览器填写。"""
     import socket
 
     found: list[str] = []
@@ -1263,7 +1263,7 @@ def web(
     port: int = typer.Option(8000, "--port", help="监听端口"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="自动打开浏览器"),
     lan: bool = typer.Option(
-        False, "--lan", help="局域网可访问（绑定 0.0.0.0，供手机浏览器 / APK 连接）"
+        False, "--lan", help="局域网可访问（绑定 0.0.0.0，供手机浏览器连接）"
     ),
 ):
     """🌐 启动 Web 界面（推文流风格）"""
@@ -1283,7 +1283,7 @@ def web(
     console.print(f"[bold green]🌐 Web 界面启动中: [link]{url}[/link][/bold green]")
     if host in ("0.0.0.0", "::"):
         for ip in _lan_ipv4():
-            console.print(f"[bold cyan]手机访问 / APK 填：http://{ip}:{port}[/bold cyan]")
+            console.print(f"[bold cyan]手机访问：http://{ip}:{port}[/bold cyan]")
     console.print(f"[dim]web.server 源码: {web_server_mod.__file__}[/dim]")
 
     if open_browser:

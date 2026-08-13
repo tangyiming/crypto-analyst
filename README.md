@@ -145,46 +145,11 @@ analyst config test-llm
 
 打开 **http://127.0.0.1:8000**。改代码后重新跑脚本即可（会先释放端口再启动）。
 
----
-
-## 手机上看（后端也可以在手机上跑）
-
-Python 盯盘服务能在 Android 上跑，推荐 **Termux**（完整 Linux 环境）。不能指望把 FastAPI 打进一个普通 APK 里当原生引擎——依赖和 WebSocket 在 Termux 里跑才稳。
-
-### A. 后端就在手机上（推荐出门用）
-
-1. F-Droid 安装 [Termux](https://f-droid.org/packages/com.termux/)（不要用 Play 商店旧包）
-2. 把仓库拷到手机，例如：
-
-```bash
-pkg install git
-git clone <你的仓库地址> ~/crypto-analyst
-cd ~/crypto-analyst
-bash scripts/termux-setup.sh
-nano .env          # 填 API Key / Telegram
-bash scripts/termux-run.sh
-```
-
-3. 保持 Termux 开着，浏览器打开 **http://127.0.0.1:8000**，或打开「盯盘」APK 点 **本机 Termux**。
-4. 系统设置 → 应用 → Termux → 电池 → **不优化**。可选：装 Termux:Widget，主屏会有「盯盘」一键启动。
-
-流量、CPU、发热都会比电脑高；切后台仍可能被杀，所以要关电池优化。
-
-### B. 后端在电脑，手机只看页面
+同一 Wi-Fi 下用手机浏览器看，可加 `--lan`：
 
 ```bash
 ./scripts/run-web.sh --lan
 ```
-
-手机 Chrome 打开打印的 `http://192.168.x.x:8000`，或 APK 里填这个地址。同一 Wi-Fi。
-
-### 安装 APK 图标
-
-```bash
-./scripts/build-apk.sh
-```
-
-产物 `dist/crypto-analyst.apk`。允许未知来源后安装。
 
 ---
 
