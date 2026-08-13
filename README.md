@@ -155,16 +155,20 @@ analyst config test-llm
 |------|------|
 | `DEEPSEEK_API_KEY` / `LLM_*` | 主分析线路（还可切 b.ai / Anthropic / Groq 等） |
 | `LLM_PROMPT_VERSION` | 提示词版本，默认 `v1`（完整）；Groq 前置层固定用短版 `groq` |
-| `DEFAULT_ACCOUNT_USD` / `MAX_*` | AI 建议用的账户规模、单笔风险%、杠杆上限（亦用于头仓计算器默认参考） |
-| `DEFAULT_SYMBOLS` | 默认观察列表；常驻品种未单独配置时也用这份 |
+| `DEFAULT_ACCOUNT_USD` / `MAX_*` | 注入 AI 分析 prompt 的账户规模、单笔风险%、杠杆上限（仅建议，不下单） |
+| `DEFAULT_SYMBOLS` | **唯一品种列表**（盯盘 / cycle / xs / carry 默认都跟这份） |
 | `MONITOR_ALWAYS_ON` | `true`：Web 进程在跑时关页面也继续盯盘并推 TG |
 | `MONITOR_DAEMON_TIMEFRAMES` | 常驻多周期，默认 `15m,1h,4h` |
 | `MONITOR_CHART_TIMEFRAMES` | 盯盘图表可选周期，默认 `5m,15m,1h,4h` |
-| `MONITOR_DAEMON_SYMBOLS` | 常驻品种；空则跟 `DEFAULT_SYMBOLS` / 页面观察列表（常驻模式下加减币**无需重启**） |
-| `MONITOR_CYCLE_SWITCH_ENABLED` | `true`：各盯盘币对跑 `cycle_switch`；相对上一根 K 仓位变化 → 页面 + AI 候选（**不直推 TG**） |
-| `MONITOR_CYCLE_SYMBOLS` | cycle 评估/告警白名单，默认 `BTC/USDT,ETH/USDT,SOL/USDT`；空=全部 |
+| `MONITOR_DAEMON_SYMBOLS` | 常驻品种覆盖；空则跟 `DEFAULT_SYMBOLS`（常驻模式下加减币**无需重启**） |
+| `MONITOR_CYCLE_SWITCH_ENABLED` | `true`：各盯盘币对跑 `cycle_switch`；**新开仓**且 ADX 达标 → 页面 + AI 候选（平仓/震荡开仓只上页面，**不直推 TG**） |
+| `MONITOR_ADX_MIN_TREND` | 趋势规则（MACD/EMA/布林）最低 ADX，默认 18；震荡市不报 |
+| `MONITOR_HTF_FILTER` | `true`：逆更高周期 EMA 排列的趋势信号丢掉（1h 看 4h） |
+| `MONITOR_CYCLE_ADX_MIN` | cycle 新开仓 ADX 门槛，默认 20 |
+| `MONITOR_CYCLE_SYMBOLS` / `MONITOR_XS_SYMBOLS` / `MONITOR_CARRY_SYMBOLS` | 策略观察池覆盖；空=跟随盯盘品种 |
 | `MONITOR_CYCLE_OUTLOOK_ENABLED` | `true`：每天提醒一次当前周期位置（BTC，**UTC 每天最多 1 条**） |
-| `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有规则/`cycle_switch` 候选时才调 AI；`long`/`short` 推「盯盘点评」（仅提醒） |
+| `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有合格候选时才调 AI；`long`/`short` 推「盯盘点评」（仅提醒） |
+| `MONITOR_AI_REQUIRE_QUALITY` | `true`：单条放量/触及不够；需质量规则或同根 ≥2 条 |
 | `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认**只用免费层**（Groq/Cerebras/Gemini/OpenRouter/SambaNova），失败不回落付费 |
 | `LLM_FREE_ORDER` | 免费层顺序，默认 `nvidia,groq,cerebras,openrouter,sambanova,gemini`（有 key 才实际调用） |
 | `CEREBRAS_API_KEY` / `NVIDIA_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY` / `SAMBANOVA_API_KEY` | 额外免费线路；任选配置即可 failover |
@@ -188,9 +192,8 @@ analyst strategies    # 列出全部策略及 CLI 示例
 | 类型 | ID | 说明 |
 |------|-----|------|
 | **组合** | `cycle_switch` | 牛熊周期切换（D）：减半日历×200 日线双确认；牛市唐奇安只多，熊市反弹做空半仓 |
-| **组合** | `donchian` | 唐奇安 40/20 通道只多，低频趋势基线 |
-| **组合** | `ema_cross` | EMA 双均线 always-in |
-| **组合** | `boll_mr` | 布林均值回归（对照组） |
+| **组合** | `xs_momentum` | 横截面动量：多币 top2 做多、熊市空最弱 |
+| **组合** | `funding_carry` | 资金费 delta 中性套利：现货多+永续空收资金费 |
 
 组合策略看长周期仓位与牛熊相位；实时盯盘走 Web 规则引擎 + `cycle_switch`。
 
@@ -243,12 +246,13 @@ analyst backtest SOL -t 1h --bars 1500 --json r.json   # 结果另存 JSON
 长周期仓位回测，含单边手续费/滑点、复利收益、牛熊震荡分段贡献与样本外验证：
 
 ```bash
-analyst backtest-classic BTC -s donchian --days 1825      # 唐奇安只多 5 年
-analyst backtest-classic BTC -s cycle_switch --days 1825  # 牛熊周期切换
-analyst backtest-classic ETH -s ema_cross -t 4h --oos-days 365
+analyst backtest-classic BTC -s cycle_switch --days 1825  # 牛熊周期切换 5 年
+analyst backtest-classic BTC -s buy_hold --days 1825      # 买入持有基准
+analyst backtest-xs --days 1825                           # 横截面动量
+analyst backtest-carry BTC --days 1825                    # 资金费套利
 ```
 
-可选策略：`-s donchian | ema_cross | boll_mr | cycle_switch | buy_hold`
+可选策略（`backtest-classic`）：`-s cycle_switch | buy_hold`
 
 读数参考：规则命中率 ≈50% 说明单独使用无优势；组合策略在加密市场**做空腿普遍拖累收益**，`cycle_switch` 仅在熊市用反弹做空；样本 < 10 或日历边界过拟合需谨慎。
 

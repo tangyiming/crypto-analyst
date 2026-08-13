@@ -29,10 +29,13 @@ from analyst.monitor.notifier import (
     build_default_notifier,
     format_rule_alert_text,
 )
+from analyst.compute.indicators import compute_all
 from analyst.monitor.rules import (
     RuleConfig,
+    ema_trend_bias,
     evaluate_closed_bar_rules,
     evaluate_premium_rules,
+    is_ai_candidate,
     rule_event_to_alert,
 )
 from analyst.compute.level_context import (
@@ -965,7 +968,7 @@ class MonitorHub:
                 alert_also=True,
             )
 
-    def _rule_config(self) -> RuleConfig:
+    def _rule_config(self, htf_bias: str = "mixed") -> RuleConfig:
         s = get_settings()
         return RuleConfig(
             enable_macd=s.monitor_rule_macd,
@@ -982,7 +985,23 @@ class MonitorHub:
             premium_extreme_pct=s.monitor_premium_extreme_pct,
             volume_spike_ratio=s.monitor_volume_spike_ratio,
             touch_cooldown_bars=s.monitor_touch_cooldown_bars,
+            adx_min_trend=float(s.monitor_adx_min_trend or 0),
+            htf_bias=htf_bias if s.monitor_htf_filter else "mixed",
         )
+
+    def _htf_bias_for(self, worker: StreamWorker) -> str:
+        """用更高一级周期的 EMA 排列给当前 K 定调。"""
+        nxt = {"5m": "15m", "15m": "1h", "1h": "4h"}.get(
+            worker.key.timeframe.lower()
+        )
+        if not nxt:
+            return "mixed"
+        key = str(StreamKey(worker.key.symbol, nxt, worker.key.market))
+        hw = self._workers.get(key)
+        if not hw or len(hw.series.candles) < 60:
+            return "mixed"
+        ind = compute_all(hw.series)
+        return ema_trend_bias(ind.ema.ema7, ind.ema.ema30, ind.ema.ema52)
 
     async def _btc_candles_for_regime(self, timeframe: str) -> list[Candle]:
         """构建牛熊判定用的 BTC K 线（优先复用已有 worker）。"""
@@ -1103,10 +1122,9 @@ class MonitorHub:
             return
         if worker.key.timeframe.lower() != "1h":
             return
-        raw = (settings.monitor_carry_symbols or "").strip()
-        carry_syms = [s.strip().upper() for s in raw.split(",") if s.strip()]
+        carry_syms = {s.upper() for s in settings.carry_symbols_list}
         sym = worker.key.symbol.upper()
-        if sym not in carry_syms:
+        if not carry_syms or sym not in carry_syms:
             return
 
         from analyst.compute.strategies.funding_carry import (
@@ -1271,7 +1289,7 @@ class MonitorHub:
                     **a,
                 })
 
-    async def _evaluate_oi_rules(self, worker: StreamWorker) -> None:
+    async def _evaluate_oi_rules(self, worker: StreamWorker) -> list[str]:
         """收盘后查 OI 背离（价跌OI增/价涨OI降）。REST 快照带 60s 缓存。"""
         import asyncio as _asyncio
 
@@ -1280,20 +1298,20 @@ class MonitorHub:
 
         candles = worker.series.candles
         if len(candles) < 3:
-            return
+            return []
         # 最近 4h 价格变化（按周期折算根数）
         span = max(
             1, int(4 * 3600 // max((candles[-1].timestamp - candles[-2].timestamp).total_seconds(), 1))
         )
         if len(candles) <= span:
-            return
+            return []
         base = candles[-1 - span].close
         if base <= 0:
-            return
+            return []
         price_chg = (candles[-1].close / base - 1.0) * 100
         snap = await _asyncio.to_thread(fetch_derivatives, worker.key.symbol)
         if snap is None:
-            return
+            return []
         events, st = evaluate_oi_rules(
             price=candles[-1].close,
             price_chg_pct_4h=price_chg,
@@ -1305,9 +1323,13 @@ class MonitorHub:
         worker.rule_state = st
         from analyst.monitor.rules import rule_event_to_alert
 
+        rules: list[str] = []
         for ev in events:
             ra = rule_event_to_alert(worker.key.symbol, worker.key.timeframe, ev)
             await self._emit_rule_alert(worker, ra)
+            if ev.rule not in rules:
+                rules.append(ev.rule)
+        return rules
 
     async def _evaluate_cycle_switch(self, worker: StreamWorker) -> bool:
         """配置周期收盘评估 cycle_switch（每个盯盘币对各自跑）。
@@ -1344,6 +1366,7 @@ class MonitorHub:
             worker.series,
             self._cycle_regime,
             prev_position=worker.last_cycle_position,
+            cfg=CycleSwitchConfig(min_adx=float(settings.monitor_cycle_adx_min or 0)),
         )
         worker.last_cycle_position = signal.target_position
 
@@ -1362,6 +1385,10 @@ class MonitorHub:
                 "z_score": signal.z_score,
                 "donchian_entry": signal.donchian_entry,
                 "donchian_exit": signal.donchian_exit,
+                "adx": signal.adx,
+                "chop_blocked": signal.chop_blocked,
+                "vol_scale": signal.vol_scale,
+                "suggested_size": signal.suggested_size,
             },
         )
 
@@ -1404,16 +1431,19 @@ class MonitorHub:
         worker.alerts_sent += 1
         self._alerts.append(alert)
         await self._broadcast(worker, alert, alert_also=True)
-        # 不直推 TG：等 AI 确认可交易后再走 ai_plan
+        # 不直推 TG：开仓且非震荡过滤时，才交给 AI 确认
         logger.info(
-            "cycle_switch 仓位变化仅页面+AI候选 %s %s pos %.2f→%.2f regime=%s",
+            "cycle_switch 仓位变化仅页面 %s %s pos %.2f→%.2f regime=%s adx=%.1f chop=%s",
             sym,
             worker.key.timeframe,
             signal.prev_position,
             signal.target_position,
             signal.market_regime,
+            signal.adx,
+            signal.chop_blocked,
         )
-        return True
+        opening = abs(signal.target_position) > 1e-9
+        return bool(opening and not signal.chop_blocked)
 
     async def _evaluate_cycle_outlook(self, worker: StreamWorker) -> None:
         """BTC：每天提醒一次当前周期位置（UTC 日限 1 条；与各币 cycle_switch 交易点分离）。"""
@@ -1543,12 +1573,20 @@ class MonitorHub:
         self,
         worker: StreamWorker,
         *,
-        had_candidate: bool,
         candidate_rules: list[str],
     ) -> None:
         """有规则/周期候选时调 AI；long/short 推盯盘点评（页面+TG，仅提醒）。"""
         settings = get_settings()
+        had_candidate = bool(candidate_rules)
+        if settings.monitor_ai_require_quality:
+            had_candidate = is_ai_candidate(candidate_rules)
         if not settings.monitor_ai_on_candidate or not had_candidate:
+            if candidate_rules and settings.monitor_ai_require_quality:
+                logger.debug(
+                    "AI 候选质量不够，跳过 %s rules=%s",
+                    worker.key,
+                    candidate_rules[:6],
+                )
             return
 
         from analyst.training.session import map_monitor_tf_to_ai_tf, run_monitor_ai_confirm
@@ -1718,7 +1756,6 @@ class MonitorHub:
 
     async def _evaluate_and_alert(self, worker: StreamWorker) -> None:
         settings = get_settings()
-        had_candidate = False
         candidate_rules: list[str] = []
 
         price = (
@@ -1737,11 +1774,12 @@ class MonitorHub:
         if settings.monitor_rules_enabled:
             try:
                 events, new_state = evaluate_closed_bar_rules(
-                    worker.series, worker.rule_state, self._rule_config()
+                    worker.series,
+                    worker.rule_state,
+                    self._rule_config(self._htf_bias_for(worker)),
                 )
                 worker.rule_state = new_state
                 if events:
-                    had_candidate = True
                     for e in events:
                         r = getattr(e, "rule", None) or str(e)
                         if r not in candidate_rules:
@@ -1763,14 +1801,15 @@ class MonitorHub:
             # OI 背离：需 REST 衍生品快照（60s 缓存），只在 1h 及以上收盘时查
             try:
                 if worker.key.timeframe in ("1h", "2h", "4h"):
-                    await self._evaluate_oi_rules(worker)
+                    for r in await self._evaluate_oi_rules(worker):
+                        if r not in candidate_rules:
+                            candidate_rules.append(r)
             except Exception:
                 logger.exception("oi rules failed %s", worker.key)
 
         try:
             cycle_candidate = await self._evaluate_cycle_switch(worker)
             if cycle_candidate:
-                had_candidate = True
                 if "cycle_switch" not in candidate_rules:
                     candidate_rules.append("cycle_switch")
         except Exception:
@@ -1799,7 +1838,6 @@ class MonitorHub:
         try:
             await self._maybe_ai_confirm(
                 worker,
-                had_candidate=had_candidate,
                 candidate_rules=candidate_rules,
             )
         except Exception:

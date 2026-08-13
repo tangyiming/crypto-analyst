@@ -742,9 +742,8 @@ def backtest_classic(
     timeframe: str = typer.Option("4h", "--timeframe", "-t", help="K 线周期"),
     days: int = typer.Option(1095, "--days", help="回测历史天数（自动分页拉取）"),
     strategy: str = typer.Option(
-        "donchian", "--strategy", "-s",
-        help="donchian / ema_cross / boll_mr / cycle_switch / buy_hold "
-             "/ bull_trend / bear_defense / chop_range（分相位手选腿）",
+        "cycle_switch", "--strategy", "-s",
+        help="cycle_switch / buy_hold",
     ),
     long_only: bool = typer.Option(
         True, "--long-only/--long-short",
@@ -794,9 +793,7 @@ def backtest_classic(
 
     fn = STRATEGIES[strategy]
     kwargs = {}
-    if strategy in ("donchian", "ema_cross", "boll_mr"):
-        kwargs["long_only"] = long_only
-    elif strategy == "cycle_switch":
+    if strategy == "cycle_switch":
         # 牛熊用 BTC 判定（山寨跟随 BTC beta）
         with console.status("[bold cyan]拉取 BTC 历史构建牛熊判定..."):
             btc = fetch_candles_history(
@@ -818,18 +815,7 @@ def backtest_classic(
         timeframe=timeframe, cost=cost, regime_labels=labels, funding=funding,
     )
 
-    if strategy == "cycle_switch":
-        mode = "（牛市多/熊市反弹空+破位空）"
-    elif strategy == "bull_trend":
-        mode = "（牛市腿·只多）"
-    elif strategy == "bear_defense":
-        mode = "（熊市腿·只空半仓）"
-    elif strategy == "chop_range":
-        mode = "（震荡腿·双向半仓）"
-    elif strategy == "buy_hold":
-        mode = ""
-    else:
-        mode = "（只多）" if long_only else "（多空）"
+    mode = "（牛市多/熊市反弹空+破位空）" if strategy == "cycle_switch" else ""
     t = Table(title=f"📈 {strategy}{mode} · "
                     f"{sym} {timeframe} · {candles[0].timestamp:%Y-%m-%d} → "
                     f"{candles[-1].timestamp:%Y-%m-%d}")

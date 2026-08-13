@@ -453,7 +453,7 @@ class ClassicBacktestRequest(BaseModel):
     symbol: str = "BTC/USDT"
     timeframe: str = "4h"
     days: int = Field(1095, ge=90, le=2000)
-    strategy: str = "donchian"
+    strategy: str = "cycle_switch"
     long_only: bool = True
     fee_pct: float = 0.05
     slippage_pct: float = 0.02
@@ -494,9 +494,7 @@ async def backtest_classic_api(req: ClassicBacktestRequest):
 
     fn = STRATEGIES[req.strategy]
     kwargs: dict = {}
-    if req.strategy in ("donchian", "ema_cross", "boll_mr"):
-        kwargs["long_only"] = req.long_only
-    elif req.strategy == "cycle_switch":
+    if req.strategy == "cycle_switch":
         btc = await asyncio.to_thread(
             fetch_candles_history,
             "BTC/USDT",

@@ -79,9 +79,6 @@ class Settings(BaseSettings):
     default_symbols: str = Field(
         default="BTC/USDT,ETH/USDT,BNB/USDT,UNI/USDT"
     )
-    # 遗留项（当前 Web 已固定 U 本位，代码未再读取）；保留以免旧 .env 报未知字段
-    futures_only_symbols: str = Field(default="")
-
     data_cache_dir: str = Field(default=".cache/data")
     data_cache_ttl_minutes: int = Field(default=5)
 
@@ -90,7 +87,7 @@ class Settings(BaseSettings):
     verification_delay_hours: int = Field(default=72)
     session_expire_hours: int = Field(default=168)
 
-    # 风控
+    # 风控（仅注入 AI 分析 prompt，不下单）
     max_risk_per_trade_pct: float = Field(default=1.0)
     max_leverage: int = Field(default=10)
     default_account_usd: float = Field(default=10000)
@@ -114,11 +111,19 @@ class Settings(BaseSettings):
     monitor_premium_extreme_pct: float = Field(default=0.30)
     monitor_volume_spike_ratio: float = Field(default=2.0)   # 放量告警阈值（×20 均量）
     monitor_touch_cooldown_bars: int = Field(default=12)     # 同一支撑/阻力冷却根数
+    # 趋势跟随规则：ADX 低于该值视为震荡，不报 MACD/EMA/布林（0=关闭）
+    monitor_adx_min_trend: float = Field(default=18.0)
+    # 逆更高周期 EMA 排列的趋势信号丢掉（1h 看 4h，15m 看 1h）
+    monitor_htf_filter: bool = Field(default=True)
+    # cycle_switch 新开仓 ADX 门槛；过低只上页面、不打 AI
+    monitor_cycle_adx_min: float = Field(default=20.0)
+    # AI 候选：弱规则单独命中不打；需质量规则或同根 ≥2 条
+    monitor_ai_require_quality: bool = Field(default=True)
     # 牛熊周期切换（方案 D）：4h 收盘评估仓位变化并推 TG
     monitor_cycle_switch_enabled: bool = Field(default=True)
     monitor_cycle_switch_timeframe: str = Field(default="4h")
-    # cycle_switch 评估/告警白名单；空=全部盯盘品种。默认砍弱 beta（如 AAVE）
-    monitor_cycle_symbols: str = Field(default="BTC/USDT,ETH/USDT,BNB/USDT,UNI/USDT")
+    # cycle_switch 评估/告警白名单；空=跟随盯盘品种（DEFAULT_SYMBOLS / DAEMON）
+    monitor_cycle_symbols: str = Field(default="")
     monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
     # 收盘有规则/周期候选时才调 AI；long/short → 盯盘点评（仅提醒）
     monitor_ai_on_candidate: bool = Field(default=True)
@@ -128,7 +133,7 @@ class Settings(BaseSettings):
 
     # ── 横截面动量评估告警 ──
     monitor_xs_enabled: bool = Field(default=True)
-    # 观察池；空 = 全部盯盘品种（须有 4h worker）
+    # 观察池；空 = 跟随盯盘品种（须有 4h worker）
     monitor_xs_symbols: str = Field(default="")
     monitor_xs_top_n: int = Field(default=2)
     monitor_xs_rebalance_hours: int = Field(default=168)  # 每周调仓
@@ -161,15 +166,12 @@ class Settings(BaseSettings):
 
     # ── 资金费套利信号评估 ──
     monitor_carry_enabled: bool = Field(default=True)
-    monitor_carry_symbols: str = Field(
-        default="BTC/USDT,ETH/USDT,BNB/USDT,UNI/USDT"
-    )
-    # 合计名义 = 权益 × 该比例（各币均分）
-    monitor_carry_alloc_pct: float = Field(default=0.15)
+    # 空 = 跟随盯盘品种（DEFAULT_SYMBOLS / DAEMON）
+    monitor_carry_symbols: str = Field(default="")
     # Telegram 白名单（页面仍可看到全部规则告警）。空=全部推 TG（旧行为）
     # 默认：AI 点评 + 异动类规则（金叉死叉/放量/突破等）；cycle 仓位变化仍不直推
     monitor_tg_trade_rules: str = Field(
-        default="ai_plan,macd_cross,ema_stack,volume,boll_break,funding_extreme,ratio_shift"
+        default="ai_plan,macd_cross,ema_stack,volume,boll_break,funding_extreme,ratio_shift,xs_momentum,funding_carry"
     )
     # 关网页也继续盯盘 + Telegram（Web 进程需保持运行）
     monitor_always_on: bool = Field(default=False)
@@ -197,18 +199,11 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     log_file: str = Field(default=".logs/analyst.log")
 
-    @property
-    def symbols_list(self) -> list[str]:
-        return [s.strip() for s in self.default_symbols.split(",") if s.strip()]
-
-    @property
-    def cycle_symbols_set(self) -> set[str] | None:
-        """cycle_switch 白名单。None=不限制；否则仅集合内品种评估/告警。"""
-        raw = (self.monitor_cycle_symbols or "").strip()
-        if not raw:
-            return None
-        out: set[str] = set()
-        for s in raw.split(","):
+    @staticmethod
+    def _csv_symbols(raw: str) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for s in (raw or "").split(","):
             s = s.strip().upper().replace("-", "/")
             if not s:
                 continue
@@ -217,15 +212,31 @@ class Settings(BaseSettings):
                     s = f"{s[:-4]}/USDT"
                 else:
                     s = f"{s}/USDT"
-            out.add(s.split(":")[0])
-        return out or None
+            s = s.split(":")[0]
+            if s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
+
+    @property
+    def symbols_list(self) -> list[str]:
+        return self._csv_symbols(self.default_symbols)
+
+    @property
+    def cycle_symbols_set(self) -> set[str] | None:
+        """cycle_switch 白名单。None=不限制（跟随盯盘品种）。"""
+        parsed = self._csv_symbols(self.monitor_cycle_symbols)
+        return set(parsed) or None
 
     @property
     def daemon_symbols_list(self) -> list[str]:
-        raw = (self.monitor_daemon_symbols or "").strip()
-        if raw:
-            return [s.strip() for s in raw.split(",") if s.strip()]
-        return self.symbols_list
+        parsed = self._csv_symbols(self.monitor_daemon_symbols)
+        return parsed or self.symbols_list
+
+    @property
+    def carry_symbols_list(self) -> list[str]:
+        """资金费 carry 评估品种。空则跟随盯盘品种。"""
+        return self._csv_symbols(self.monitor_carry_symbols) or self.daemon_symbols_list
 
     @property
     def daemon_timeframes_list(self) -> list[str]:
@@ -268,10 +279,6 @@ class Settings(BaseSettings):
         if not raw:
             return None
         return {x.strip().lower() for x in raw.split(",") if x.strip()}
-
-    @property
-    def futures_only_list(self) -> list[str]:
-        return [s.strip().upper() for s in self.futures_only_symbols.split(",") if s.strip()]
 
     @property
     def cache_path(self) -> Path:

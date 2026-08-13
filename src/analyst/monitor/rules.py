@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from analyst.compute.fibonacci import compute_fib
-from analyst.compute.indicators import compute_all
+from analyst.compute.indicators import compute_adx, compute_all
 from analyst.compute.plan import generate_baseline_plan
 from analyst.compute.structure import detect_structure
 from analyst.compute.volume import analyze_volume
@@ -56,6 +56,9 @@ class RuleConfig:
     boll_min_vol_ratio: float = 1.2        # 布林突破需量比确认
     boll_atr_margin: float = 0.1           # 收盘需越过轨道 0.1×ATR，滤刺破
     macd_require_context: bool = True      # 金叉需零轴上或 EMA 短多头（死叉反之）
+    # 趋势跟随规则（MACD/EMA/布林）在 ADX 过低时不报，减少震荡假突破
+    adx_min_trend: float = 18.0            # 0=关闭；数据不足 ADX=0 时不拦截
+    htf_bias: str = "mixed"                # bull/bear/mixed：逆更高周期趋势的趋势信号丢掉
     funding_extreme_pct: float = 0.05  # |funding|*100 >= 该值（%/8h）
     premium_extreme_pct: float = 0.30  # |mark-index|%
 
@@ -109,6 +112,66 @@ def _ema_stack(ema7: float, ema30: float, ema52: float) -> str:
     return "mixed"
 
 
+def ema_trend_bias(ema7: float, ema30: float, ema52: float) -> str:
+    """EMA7/30/52 排列：bull / bear / mixed。"""
+    return _ema_stack(ema7, ema30, ema52)
+
+
+def passes_trend_filters(
+    direction: str,
+    *,
+    adx: float,
+    cfg: RuleConfig,
+    adx_ready: bool = False,
+) -> bool:
+    """趋势跟随信号：ADX 过低（震荡）或逆更高周期趋势 → 不报。
+
+    ``adx_ready=False``（数据不够算出 ADX）时不因 ADX 拦截。
+    """
+    if cfg.adx_min_trend > 0 and adx_ready and adx < cfg.adx_min_trend:
+        return False
+    bias = (cfg.htf_bias or "mixed").strip().lower()
+    if bias == "bull" and direction == "short":
+        return False
+    if bias == "bear" and direction == "long":
+        return False
+    return True
+
+
+# 单独出现时不值得打 AI 的噪音规则；两条以上同根共振仍可作为候选
+AI_QUALITY_RULES = frozenset({
+    "macd_cross",
+    "ema_stack",
+    "structure_flip",
+    "boll_break",
+    "cvd_divergence",
+    "oi_divergence",
+    "cycle_switch",
+})
+
+
+def is_ai_candidate(rules: list[str]) -> bool:
+    """是否值得调 AI 做盯盘点评。弱规则单独命中不够。"""
+    rs = {str(r).strip().lower() for r in rules if r}
+    rs.discard("")
+    if rs & AI_QUALITY_RULES:
+        return True
+    return len(rs) >= 2
+
+
+def apply_confluence(events: list[RuleEvent]) -> None:
+    """同根同向 ≥2 条规则：抬高强度，标注共振。"""
+    for side in ("long", "short"):
+        group = [e for e in events if e.direction == side]
+        if len(group) < 2:
+            continue
+        note = f"同向共振 ×{len(group)}"
+        for e in group:
+            e.strength = min(0.95, e.strength + 0.08)
+            if note not in e.reasons:
+                e.reasons.append(note)
+
+
 def evaluate_closed_bar_rules(
     series: CandleSeries,
     state: dict[str, Any],
@@ -122,7 +185,6 @@ def evaluate_closed_bar_rules(
         return events, state
 
     price = float(series.candles[-1].close)
-    prev_close = float(series.candles[-2].close)
     high = float(series.candles[-1].high)
     low = float(series.candles[-1].low)
     t = _bar_unix(series)
@@ -131,11 +193,18 @@ def evaluate_closed_bar_rules(
     vol = analyze_volume(series)
     structure = detect_structure(series)
     fib = compute_fib(structure.recent_high, structure.recent_low)
+    adx_ready = len(series.candles) >= 32
+    adx = compute_adx(
+        [c.high for c in series.candles[:-1]],
+        [c.low for c in series.candles[:-1]],
+        [c.close for c in series.candles[:-1]],
+    )
 
     # ── MACD 交叉（需趋势语境：金叉在零轴上或短均线多头，死叉反之） ──
     if cfg.enable_macd and ind.macd.cross_signal:
         cross = ind.macd.cross_signal
         long = cross == "golden"
+        direction = "long" if long else "short"
         context_ok = True
         if cfg.macd_require_context:
             if long:
@@ -143,21 +212,23 @@ def evaluate_closed_bar_rules(
             else:
                 context_ok = (not ind.macd.above_zero) or ind.ema.ema7 < ind.ema.ema30
         if context_ok and state.get("macd_cross") != f"{t}:{cross}":
-            events.append(
-                RuleEvent(
-                    rule="macd_cross",
-                    title="MACD 金叉" if long else "MACD 死叉",
-                    direction="long" if long else "short",
-                    strength=0.7,
-                    price=price,
-                    reasons=[
-                        f"DIF/DEA 交叉={cross}",
-                        f"histogram={ind.macd.histogram:.6g}",
-                        f"零轴{'之上' if ind.macd.above_zero else '之下'}",
-                    ],
-                    marker_time=t,
+            if passes_trend_filters(direction, adx=adx, cfg=cfg, adx_ready=adx_ready):
+                events.append(
+                    RuleEvent(
+                        rule="macd_cross",
+                        title="MACD 金叉" if long else "MACD 死叉",
+                        direction=direction,
+                        strength=0.7,
+                        price=price,
+                        reasons=[
+                            f"DIF/DEA 交叉={cross}",
+                            f"histogram={ind.macd.histogram:.6g}",
+                            f"零轴{'之上' if ind.macd.above_zero else '之下'}",
+                            f"ADX={adx:.1f}",
+                        ],
+                        marker_time=t,
+                    )
                 )
-            )
             state["macd_cross"] = f"{t}:{cross}"
 
     # ── EMA 多空排列翻转 ──
@@ -165,20 +236,23 @@ def evaluate_closed_bar_rules(
         stack = _ema_stack(ind.ema.ema7, ind.ema.ema30, ind.ema.ema52)
         prev = state.get("ema_stack")
         if prev and stack in ("bull", "bear") and stack != prev:
-            events.append(
-                RuleEvent(
-                    rule="ema_stack",
-                    title="EMA 多头排列" if stack == "bull" else "EMA 空头排列",
-                    direction="long" if stack == "bull" else "short",
-                    strength=0.65,
-                    price=price,
-                    reasons=[
-                        f"EMA7/30/52 = {ind.ema.ema7:.6g}/{ind.ema.ema30:.6g}/{ind.ema.ema52:.6g}",
-                        f"由 {prev} → {stack}",
-                    ],
-                    marker_time=t,
+            direction = "long" if stack == "bull" else "short"
+            if passes_trend_filters(direction, adx=adx, cfg=cfg, adx_ready=adx_ready):
+                events.append(
+                    RuleEvent(
+                        rule="ema_stack",
+                        title="EMA 多头排列" if stack == "bull" else "EMA 空头排列",
+                        direction=direction,
+                        strength=0.65,
+                        price=price,
+                        reasons=[
+                            f"EMA7/30/52 = {ind.ema.ema7:.6g}/{ind.ema.ema30:.6g}/{ind.ema.ema52:.6g}",
+                            f"由 {prev} → {stack}",
+                            f"ADX={adx:.1f}",
+                        ],
+                        marker_time=t,
+                    )
                 )
-            )
         if stack != "mixed":
             state["ema_stack"] = stack
 
@@ -195,38 +269,42 @@ def evaluate_closed_bar_rules(
         key = None
         if prev_inside and now_above and vol_ok:
             key = f"{t}:above"
-            events.append(
-                RuleEvent(
-                    rule="boll_break",
-                    title="收盘突破布林上轨",
-                    direction="long",
-                    strength=0.6,
-                    price=price,
-                    reasons=[
-                        f"上轨 {b.upper:.6g} · 带宽 {b.width:.4g}",
-                        f"量比 {vol.volume_ratio:.2f}×（≥{cfg.boll_min_vol_ratio}）",
-                    ],
-                    break_level=b.upper,
-                    marker_time=t,
+            if passes_trend_filters("long", adx=adx, cfg=cfg, adx_ready=adx_ready):
+                events.append(
+                    RuleEvent(
+                        rule="boll_break",
+                        title="收盘突破布林上轨",
+                        direction="long",
+                        strength=0.6,
+                        price=price,
+                        reasons=[
+                            f"上轨 {b.upper:.6g} · 带宽 {b.width:.4g}",
+                            f"量比 {vol.volume_ratio:.2f}×（≥{cfg.boll_min_vol_ratio}）",
+                            f"ADX={adx:.1f}",
+                        ],
+                        break_level=b.upper,
+                        marker_time=t,
+                    )
                 )
-            )
         elif prev_inside and now_below and vol_ok:
             key = f"{t}:below"
-            events.append(
-                RuleEvent(
-                    rule="boll_break",
-                    title="收盘跌破布林下轨",
-                    direction="short",
-                    strength=0.6,
-                    price=price,
-                    reasons=[
-                        f"下轨 {b.lower:.6g} · 带宽 {b.width:.4g}",
-                        f"量比 {vol.volume_ratio:.2f}×（≥{cfg.boll_min_vol_ratio}）",
-                    ],
-                    break_level=b.lower,
-                    marker_time=t,
+            if passes_trend_filters("short", adx=adx, cfg=cfg, adx_ready=adx_ready):
+                events.append(
+                    RuleEvent(
+                        rule="boll_break",
+                        title="收盘跌破布林下轨",
+                        direction="short",
+                        strength=0.6,
+                        price=price,
+                        reasons=[
+                            f"下轨 {b.lower:.6g} · 带宽 {b.width:.4g}",
+                            f"量比 {vol.volume_ratio:.2f}×（≥{cfg.boll_min_vol_ratio}）",
+                            f"ADX={adx:.1f}",
+                        ],
+                        break_level=b.lower,
+                        marker_time=t,
+                    )
                 )
-            )
         if key:
             state["boll_break"] = key
 
@@ -431,6 +509,7 @@ def evaluate_closed_bar_rules(
         if plan.direction != "wait" or prev_dir is None:
             state["baseline_dir"] = plan.direction
 
+    apply_confluence(events)
     return events, state
 
 

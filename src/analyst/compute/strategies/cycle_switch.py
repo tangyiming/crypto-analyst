@@ -26,7 +26,7 @@
   · 各盯盘币对在配置周期（默认 4h）收盘评估仓位；相位用 BTC 定调
   · 仓位相对上一根 K 线变化 → 页面告警 + AI 候选（不直推 TG；可交易由 AI→ai_plan）
   · 周期位置日更见 cycle_outlook（每天 1 条）
-  · 评估品种可用 MONITOR_CYCLE_SYMBOLS 白名单（默认 BTC,ETH,SOL）
+  · 评估品种可用 MONITOR_CYCLE_SYMBOLS 白名单（空=跟随 DEFAULT_SYMBOLS）
 
   注意：减半日历边界（牛 550 天 / 熊 400 天）仅拟合 2 个完整周期，
   必须与均线双确认一起用；回测≠未来，上线前请小仓位验证。
@@ -37,7 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from analyst.compute.indicators import ema
+from analyst.compute.indicators import compute_adx, ema
 from analyst.data.fetcher import Candle, CandleSeries
 
 # BTC 减半日期（未来为预估）
@@ -64,6 +64,11 @@ class CycleSwitchConfig:
     bear_days: int = 400
     ma_period: int = 1200  # 4h × 1200 ≈ 200 日
     ma_band: float = 0.03
+    min_adx: float = 20.0  # 新开仓 ADX 门槛；0=关闭（回测仓位不受影响）
+    # 波动率目标化（建议仓位提示用）：5 年回测 MDD -45.7%→-28.0%、
+    # 最差 180 天窗口 -42.4%→-19.0%，CAGR 仅让 2pp（scripts/optimize_experiments.py）
+    vol_target: float = 0.30   # 目标年化波动；0=关闭
+    vol_lookback: int = 42     # 已实现波动率窗口（根）
 
 
 @dataclass
@@ -81,6 +86,10 @@ class CycleSwitchSignal:
     donchian_exit: float | None = None
     z_score: float | None = None
     days_since_halving: int = 0
+    adx: float = 0.0
+    chop_blocked: bool = False  # 新开仓但 ADX 过低：页面仍提示，不当交易候选
+    vol_scale: float = 1.0      # 波动率目标化缩放系数（0.15–1.0）
+    suggested_size: float = 0.0  # target_position × vol_scale（建议仓位）
 
 
 def halving_phase(
@@ -291,6 +300,41 @@ def evaluate_cycle_switch(
         else:
             reasons.append("观望：未突破唐奇安入场位")
 
+    adx = compute_adx(highs[:-1], lows[:-1], closes[:-1]) if len(closes) > 2 else 0.0
+    adx_ready = len(closes) >= 32
+    opening = abs(target) > 1e-9 and abs(prev_bar) < 1e-9
+    chop_blocked = (
+        opening
+        and cfg.min_adx > 0
+        and adx_ready
+        and adx < cfg.min_adx
+    )
+    reasons.append(f"ADX={adx:.1f}" + (
+        f"（<{cfg.min_adx:.0f} 震荡，新开仓不作为交易候选）" if chop_blocked else ""
+    ))
+
+    # 波动率目标化建议仓位（不改变信号节奏，只提示按波动缩放的大小）
+    vol_scale = 1.0
+    if cfg.vol_target > 0 and len(closes) > cfg.vol_lookback:
+        rets = [
+            closes[k] / closes[k - 1] - 1.0
+            for k in range(len(closes) - cfg.vol_lookback, len(closes))
+            if closes[k - 1] > 0
+        ]
+        mean = sum(rets) / len(rets)
+        var = sum((r - mean) ** 2 for r in rets) / len(rets)
+        span = (candles[-1].timestamp - candles[-2].timestamp).total_seconds() or 14400
+        bpy = 365 * 24 * 3600 / span
+        vol_annual = (var ** 0.5) * (bpy ** 0.5)
+        if vol_annual > 0:
+            vol_scale = max(0.15, min(1.0, cfg.vol_target / vol_annual))
+    suggested = target * vol_scale
+    if abs(target) > 1e-9:
+        reasons.append(
+            f"波动率目标化：建议仓位 {abs(suggested):.0%}"
+            f"（{_position_label(target)} × {vol_scale:.2f}）"
+        )
+
     return CycleSwitchSignal(
         market_regime=reg,
         calendar_phase=cal,
@@ -303,4 +347,8 @@ def evaluate_cycle_switch(
         donchian_exit=lx,
         z_score=z,
         days_since_halving=days_since,
+        adx=adx,
+        chop_blocked=chop_blocked,
+        vol_scale=vol_scale,
+        suggested_size=suggested,
     )

@@ -1433,13 +1433,7 @@
         <div class="bt-field">
           <label>策略</label>
           <select class="sel" id="btStrategy">
-            <option value="donchian">唐奇安通道</option>
-            <option value="ema_cross">EMA 双均线</option>
-            <option value="boll_mr">布林均值回归</option>
-            <option value="cycle_switch">牛熊周期切换</option>
-            <option value="bull_trend">牛市腿 · 唐奇安只多</option>
-            <option value="bear_defense">熊市腿 · 只空半仓</option>
-            <option value="chop_range">震荡腿 · 布林回归</option>
+            <option value="cycle_switch" selected>牛熊周期切换</option>
             <option value="buy_hold">买入持有</option>
           </select>
         </div>
@@ -2347,7 +2341,7 @@
     if (!btn || !box) return;
     const body = {
       symbol: ($('btSymbol')?.value || 'BTC').trim(),
-      strategy: $('btStrategy')?.value || 'donchian',
+      strategy: $('btStrategy')?.value || 'cycle_switch',
       timeframe: $('btTimeframe')?.value || '4h',
       days: Number($('btDays')?.value) || 1095,
       oos_days: Number($('btOos')?.value) || 0,
