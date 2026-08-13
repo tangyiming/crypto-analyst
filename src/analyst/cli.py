@@ -43,6 +43,30 @@ def _parse_period(period: str) -> int:
     return int(p)
 
 
+def _lan_ipv4() -> list[str]:
+    """本机局域网 IPv4，供手机 / APK 填写。"""
+    import socket
+
+    found: list[str] = []
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
+        if ip and not ip.startswith("127."):
+            found.append(ip)
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip not in found and not ip.startswith("127."):
+                found.append(ip)
+    except OSError:
+        pass
+    return found
+
+
 def _render_market(ctx) -> None:
     """渲染市场快照面板。"""
     m = ctx.market
@@ -1238,6 +1262,9 @@ def web(
     host: str = typer.Option("127.0.0.1", "--host", help="监听地址"),
     port: int = typer.Option(8000, "--port", help="监听端口"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="自动打开浏览器"),
+    lan: bool = typer.Option(
+        False, "--lan", help="局域网可访问（绑定 0.0.0.0，供手机浏览器 / APK 连接）"
+    ),
 ):
     """🌐 启动 Web 界面（推文流风格）"""
     try:
@@ -1249,8 +1276,14 @@ def web(
         )
         raise typer.Exit(1) from None
 
+    if lan:
+        host = "0.0.0.0"
+
     url = f"http://{host}:{port}"
     console.print(f"[bold green]🌐 Web 界面启动中: [link]{url}[/link][/bold green]")
+    if host in ("0.0.0.0", "::"):
+        for ip in _lan_ipv4():
+            console.print(f"[bold cyan]手机访问 / APK 填：http://{ip}:{port}[/bold cyan]")
     console.print(f"[dim]web.server 源码: {web_server_mod.__file__}[/dim]")
 
     if open_browser:
@@ -1260,7 +1293,7 @@ def web(
         def _open():
             import time
             time.sleep(1.0)
-            webbrowser.open(url)
+            webbrowser.open(f"http://127.0.0.1:{port}" if host in ("0.0.0.0", "::") else url)
 
         threading.Thread(target=_open, daemon=True).start()
 

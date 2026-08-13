@@ -2,11 +2,17 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Crypto Analyst</title>
   <link rel="icon" href="/favicon.ico" sizes="32x32" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
   <meta name="theme-color" content="#0b0e11" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="盯盘" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://s3.tradingview.com/tv.js"></script>
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -28,14 +34,19 @@
       background: var(--bg);
       color: var(--text);
       overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
     }
     .desk {
       height: 100vh;
+      height: 100dvh;
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
       background: var(--bg);
       overflow: hidden;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
     }
     /* ── 顶栏应用导航 ── */
     .app-nav {
@@ -138,10 +149,17 @@
     }
     @media (max-width: 960px) {
       .monitor-body {
+        min-width: 0;
         grid-template-columns: 1fr;
-        grid-template-rows: minmax(240px, 50vh) auto minmax(0, 1fr);
+        grid-template-rows: minmax(220px, 42vh) auto minmax(0, 1fr);
       }
       .monitor-left { border-right: 0; border-bottom: 1px solid var(--line); }
+      .app-brand span { display: none; }
+      .app-nav { padding-left: 8px; padding-right: 8px; }
+      .chrome-main { flex-wrap: wrap; row-gap: 8px; }
+      .chrome-group + .chrome-group { border-left: 0; }
+      .chrome-watch { flex-wrap: wrap; }
+      .app-page { padding: 12px; }
     }
     @media (min-width: 1400px) {
       .monitor-body { grid-template-columns: minmax(0, 1fr) 340px minmax(320px, calc(42vw - 200px)); }
@@ -4243,6 +4261,10 @@
     });
 
     connect({ silent: false });
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
   }
 
   init().catch(err => {

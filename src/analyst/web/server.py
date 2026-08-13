@@ -153,6 +153,33 @@ def create_app() -> FastAPI:
     def favicon_svg():
         return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
 
+    @app.get("/manifest.webmanifest")
+    def web_manifest():
+        return FileResponse(
+            STATIC_DIR / "manifest.webmanifest",
+            media_type="application/manifest+json",
+        )
+
+    @app.get("/sw.js")
+    def service_worker():
+        return FileResponse(
+            STATIC_DIR / "sw.js",
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/icon-192.png")
+    def icon_192():
+        return FileResponse(STATIC_DIR / "icon-192.png", media_type="image/png")
+
+    @app.get("/icon-512.png")
+    def icon_512():
+        return FileResponse(STATIC_DIR / "icon-512.png", media_type="image/png")
+
+    @app.get("/apple-touch-icon.png")
+    def apple_touch_icon():
+        return FileResponse(STATIC_DIR / "apple-touch-icon.png", media_type="image/png")
+
     return app
 
 

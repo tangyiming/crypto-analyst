@@ -8,7 +8,9 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "src" / "analyst" / "web" / "static" / "favicon.ico"
+STATIC = ROOT / "src" / "analyst" / "web" / "static"
+OUT = STATIC / "favicon.ico"
+ANDROID_MIPMAP = ROOT / "android" / "app" / "src" / "main" / "res" / "mipmap-xxxhdpi"
 
 BG = (11, 14, 17, 255)
 BORDER = (30, 35, 41, 255)
@@ -98,9 +100,10 @@ def render_icon(size: int) -> list[tuple[int, int, int]]:
     return px
 
 
-def _png_bytes(size: int, px: list[tuple[int, int, int]]) -> bytes:
+def _png_bytes(size: int, px: list[tuple[int, int, int]], *, top_down: bool = False) -> bytes:
     raw = bytearray()
-    for y in range(size - 1, -1, -1):
+    rows = range(size) if top_down else range(size - 1, -1, -1)
+    for y in rows:
         raw.append(0)
         for x in range(size):
             r, g, b = px[y * size + x]
@@ -155,6 +158,19 @@ def _ico_bytes(sizes: list[int]) -> bytes:
 def main() -> None:
     OUT.write_bytes(_ico_bytes([16, 32]))
     print(f"wrote {OUT}")
+    STATIC.mkdir(parents=True, exist_ok=True)
+    for size, name in ((180, "apple-touch-icon.png"), (192, "icon-192.png"), (512, "icon-512.png")):
+        path = STATIC / name
+        path.write_bytes(_png_bytes(size, render_icon(size), top_down=True))
+        print(f"wrote {path}")
+    if ANDROID_MIPMAP.parent.exists() or True:
+        ANDROID_MIPMAP.mkdir(parents=True, exist_ok=True)
+        launcher = ANDROID_MIPMAP / "ic_launcher.png"
+        launcher.write_bytes(_png_bytes(192, render_icon(192), top_down=True))
+        print(f"wrote {launcher}")
+        hdpi = ROOT / "android" / "app" / "src" / "main" / "res" / "mipmap-hdpi"
+        hdpi.mkdir(parents=True, exist_ok=True)
+        (hdpi / "ic_launcher.png").write_bytes(_png_bytes(72, render_icon(72), top_down=True))
 
 
 if __name__ == "__main__":
