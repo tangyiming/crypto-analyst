@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from analyst.compute import indicators as ind
 from analyst.compute.fibonacci import FibLevels, compute_fib
 from analyst.compute.jack_levels import JackLevels, compute_jack_levels
+from analyst.compute.jack_regime import JackRegime, compute_jack_regime
 from analyst.compute.structure import Structure, detect_structure
 from analyst.compute.volume import analyze_volume
 from analyst.config import get_settings
@@ -27,6 +28,7 @@ class SessionContext:
     fib: FibLevels
     structure: Structure
     jack: JackLevels | None = None
+    jack_regime: JackRegime | None = None
 
 
 # ─────────────────────────────────────
@@ -112,12 +114,25 @@ def create_session(
         btc_series=btc_series,
         symbol=symbol,
     )
+    jack_regime = compute_jack_regime(
+        current_price=market_snap.current_price,
+        jack=jack,
+        structure=structure,
+        primary_series=primary_series,
+        daily_series=market_snap.timeframes.get("1d"),
+        hourly_series=market_snap.timeframes.get("1h"),
+        h4_series=market_snap.timeframes.get("4h"),
+        m5_series=market_snap.timeframes.get("5m"),
+        high_24h=market_snap.high_24h,
+        low_24h=market_snap.low_24h,
+    )
 
     expire_at = datetime.utcnow() + timedelta(hours=settings.session_expire_hours)
     verify_hours = verify_after_hours or default_verify_hours(timeframe)
 
     snap_dict = market_snap.to_dict()
     snap_dict["jack_levels"] = jack.to_dict()
+    snap_dict["jack_regime"] = jack_regime.to_dict()
     snap_dict["primary_timeframe"] = timeframe
 
     db_session = repo.create_session(
@@ -136,6 +151,7 @@ def create_session(
         fib=fib,
         structure=structure,
         jack=jack,
+        jack_regime=jack_regime,
     )
 
 
@@ -147,7 +163,11 @@ def _ctx_to_market_extras(ctx: SessionContext, latency_ms: int | None = None) ->
 
     tf = ctx.db_session.timeframe
     baseline = generate_baseline_plan(
-        ctx.market.current_price, ctx.fib, ctx.structure, jack=ctx.jack
+        ctx.market.current_price,
+        ctx.fib,
+        ctx.structure,
+        jack=ctx.jack,
+        jack_regime=ctx.jack_regime,
     )
     out = {
         "current_price": ctx.market.current_price,
@@ -173,6 +193,7 @@ def _ctx_to_market_extras(ctx: SessionContext, latency_ms: int | None = None) ->
             "rebound_618": ctx.fib.rebound_618,
         },
         "jack_levels": ctx.jack.to_dict() if ctx.jack else None,
+        "jack_regime": ctx.jack_regime.to_dict() if ctx.jack_regime else None,
         "indicators": ctx.indicators.get(tf) or next(iter(ctx.indicators.values()), None),
         "baseline_plan": asdict(baseline),
     }
@@ -416,6 +437,33 @@ def run_monitor_ai_confirm(
     }
 
 
+def _series_from_snapshot_tfd(tfd: dict, default_symbol: str = "") -> CandleSeries | None:
+    """从 market_snapshot.timeframes[tf] 还原 CandleSeries。"""
+    from datetime import datetime
+
+    from analyst.data.fetcher import Candle, CandleSeries
+
+    if not tfd or not tfd.get("candles"):
+        return None
+    candles: list[Candle] = []
+    for c in tfd["candles"]:
+        ts_str = str(c["timestamp"]).replace("Z", "").split("+")[0]
+        ts = datetime.fromisoformat(ts_str)
+        candles.append(
+            Candle(
+                timestamp=ts,
+                open=float(c["open"]),
+                high=float(c["high"]),
+                low=float(c["low"]),
+                close=float(c["close"]),
+                volume=float(c.get("volume") or 0),
+            )
+        )
+    sym = tfd.get("symbol") or default_symbol
+    tf = tfd.get("timeframe") or "4h"
+    return CandleSeries(symbol=sym, timeframe=tf, candles=candles)
+
+
 def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -> dict:
     """从 DB 里存的 market_snapshot 重组结构/斐波（补跑 AI 时用）。"""
     from dataclasses import asdict
@@ -424,6 +472,7 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
 
     from analyst.compute.fibonacci import compute_fib
     from analyst.compute.jack_levels import JackLevels, compute_jack_levels
+    from analyst.compute.jack_regime import JackRegime, compute_jack_regime
     from analyst.compute.plan import generate_baseline_plan
     from analyst.compute.structure import detect_structure
     from analyst.data.fetcher import Candle, CandleSeries
@@ -438,6 +487,7 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
         "low_24h": ms.get("low_24h"),
         "indicators": indicators_all.get(tf) or next(iter(indicators_all.values()), None),
         "jack_levels": ms.get("jack_levels"),
+        "jack_regime": ms.get("jack_regime"),
     }
     if latency_ms is not None:
         base["latency_ms"] = latency_ms
@@ -482,7 +532,46 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
         )
         base["jack_levels"] = jack.to_dict()
 
-    baseline = generate_baseline_plan(price, fib, structure, jack=jack)
+    daily_tfd = (ms.get("timeframes") or {}).get("1d")
+    hourly_tfd = (ms.get("timeframes") or {}).get("1h")
+    h4_tfd = (ms.get("timeframes") or {}).get("4h")
+    m5_tfd = (ms.get("timeframes") or {}).get("5m")
+    daily_series = hourly_series = h4_series = m5_series = None
+    if daily_tfd and daily_tfd.get("candles"):
+        daily_series = _series_from_snapshot_tfd(daily_tfd, s.symbol or "")
+    if hourly_tfd and hourly_tfd.get("candles"):
+        hourly_series = _series_from_snapshot_tfd(hourly_tfd, s.symbol or "")
+    if h4_tfd and h4_tfd.get("candles"):
+        h4_series = _series_from_snapshot_tfd(h4_tfd, s.symbol or "")
+    if m5_tfd and m5_tfd.get("candles"):
+        m5_series = _series_from_snapshot_tfd(m5_tfd, s.symbol or "")
+    jack_regime = None
+    raw_regime = ms.get("jack_regime")
+    if jack is not None:
+        jack_regime = compute_jack_regime(
+            current_price=price,
+            jack=jack,
+            structure=structure,
+            primary_series=series,
+            daily_series=daily_series,
+            hourly_series=hourly_series,
+            h4_series=h4_series,
+            m5_series=m5_series,
+            high_24h=ms.get("high_24h"),
+            low_24h=ms.get("low_24h"),
+        )
+        base["jack_regime"] = jack_regime.to_dict()
+    elif isinstance(raw_regime, dict) and raw_regime.get("regime"):
+        try:
+            jack_regime = JackRegime(
+                **{k: raw_regime[k] for k in JackRegime.__dataclass_fields__ if k in raw_regime}
+            )
+        except TypeError:
+            jack_regime = None
+
+    baseline = generate_baseline_plan(
+        price, fib, structure, jack=jack, jack_regime=jack_regime
+    )
     base["structure"] = {
         "trend": structure.trend,
         "supports": structure.supports,

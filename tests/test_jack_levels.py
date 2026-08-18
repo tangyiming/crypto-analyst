@@ -112,3 +112,12 @@ def test_seed_position_none_add():
     plan = plan_seed_position(10000, add_mode="none")
     assert plan.add_margin == 0
     assert plan.total_margin == plan.seed_margin
+
+
+def test_seed_position_leverage_caps_total():
+    """25x 基准≤25%；50x 减半到 12.5%。"""
+    hi = plan_seed_position(10000, leverage=25, seed_pct=0.04, max_total_pct=0.40)
+    assert hi.max_total_pct == pytest.approx(0.25)
+    mid = plan_seed_position(10000, leverage=50, seed_pct=0.04, max_total_pct=0.18)
+    assert mid.max_total_pct == pytest.approx(0.125)
+    assert "25x" in mid.note

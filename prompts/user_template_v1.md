@@ -44,6 +44,10 @@
 
 {jack_block}
 
+# 盘面分类与 Playbook（代码预计算）
+
+{jack_regime_block}
+
 # 账户参数
 
 - 账户规模：{account_usd} USDT

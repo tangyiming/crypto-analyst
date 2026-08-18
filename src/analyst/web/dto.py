@@ -58,6 +58,9 @@ def session_to_dto(s: Session, market_extras: dict[str, Any] | None = None) -> d
         "jack_levels": (market_extras or {}).get(
             "jack_levels", market.get("jack_levels")
         ),
+        "jack_regime": (market_extras or {}).get(
+            "jack_regime", market.get("jack_regime")
+        ),
         "indicators": (market_extras or {}).get("indicators"),
         "baseline_plan": (market_extras or {}).get("baseline_plan"),
         "latency_ms": (market_extras or {}).get("latency_ms"),

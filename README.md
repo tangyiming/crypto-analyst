@@ -71,7 +71,19 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 
 参考公开交易笔记中的可复现部分：**公式在代码里算，提示词只加短纪律**，避免撑爆 Groq / LLM 上下文。
 
-### 波段锁点（`jack_levels`）
+#### 三盘分类（`jack_regime`）
+
+创建分析会话时与锁点一并预计算，注入 `{jack_regime_block}`：
+
+| 盘面 | 打法 |
+|------|------|
+| **强势盘** | 市价小头仓 + 突破近阻力/昨高加仓，新高止盈 |
+| **震荡盘** | 低多/扎针后等支撑；回踩不破补仓；当日振幅 0.50–0.618 止盈 |
+| **弱势盘** | 日线转空：反弹近阻力头仓空 + 跌破支撑加仓 |
+
+另含：防守位是否已破、12h EMA6（扎针参考）、前一日高/低、日内 TP 位；腰斩线（H×0.5）以下不追空、周线 BOLL 中轨作回调极限、4h 以下诱空、支撑虚破仍可头仓、突破加仓后「基本止盈防守」；3日/5日金叉与空心阳加速、大小周期共振市价冲、3/5日 BOLL 中轨减仓防守。头仓+补仓默认≤25%（随杠杆下调）。
+
+#### 波段锁点（`jack_levels`）
 
 创建分析会话时预计算并写入 `market_snapshot.jack_levels`，再注入 user 模板 `{jack_block}`：
 
@@ -316,6 +328,7 @@ crypto-analyst/
 │   ├── compute/cycle_theory.py       # Wolfy 日历 + 狼波
 │   ├── compute/market_schedule.py    # 时段 / 时钟 / FF 宏观日历
 │   ├── compute/jack_levels.py        # 波段锁点预计算
+│   ├── compute/jack_regime.py        # 三盘分类 + playbook
 │   ├── compute/position_sizing.py    # 头仓/补仓分层
 │   ├── monitor/schedule_reminders.py # 日程 TG 提前提醒轮询
 │   ├── web/schedule_routes.py        # GET /api/schedule

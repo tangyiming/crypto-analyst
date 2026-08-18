@@ -12,8 +12,10 @@ from analyst.compute.structure import Structure
 
 try:
     from analyst.compute.jack_levels import JackLevels
+    from analyst.compute.jack_regime import JackRegime
 except ImportError:  # pragma: no cover
     JackLevels = None  # type: ignore
+    JackRegime = None  # type: ignore
 
 
 @dataclass
@@ -64,6 +66,7 @@ def generate_baseline_plan(
     structure: Structure,
     min_rr: float = 2.0,
     jack: "JackLevels | None" = None,
+    jack_regime: "JackRegime | None" = None,
 ) -> TradePlan:
     """规则基线计划。
 
@@ -87,6 +90,10 @@ def generate_baseline_plan(
     horizon_note = ""
     if jack is not None and not jack.htf_ready:
         horizon_note = "高周期未成熟，只做短线反抽。"
+    regime_note = ""
+    if jack_regime is not None:
+        regime_note = f"{jack_regime.regime_zh}：{jack_regime.playbook_line} "
+    suffix = f"{horizon_note}{regime_note}"
 
     if bias == "up":
         entry_low = fib.retr_618
@@ -95,6 +102,11 @@ def generate_baseline_plan(
         # 下半区=超卖反弹锁点；上半区=趋势回踩，目标用结构阻力/扩展
         range_mid = (fib.high + fib.low) / 2
         bounce_mode = current_price <= range_mid
+        if jack_regime is not None and jack_regime.tp_style == "intraday_618":
+            if jack_regime.tp_intraday_618 is not None and jack_regime.tp_intraday_618 > current_price:
+                target1 = jack_regime.tp_intraday_618
+            elif jack_regime.tp_intraday_50 is not None and jack_regime.tp_intraday_50 > current_price:
+                target1 = jack_regime.tp_intraday_50
         if jack is not None and bounce_mode:
             # 已越过 0.382 则主看 0.618；仍在下方则近压 0.382
             if current_price >= jack.rebound_382:
@@ -136,12 +148,12 @@ def generate_baseline_plan(
                     rationale=(
                         f"日线偏多·反弹锁点：近目标={target1:.4f}，"
                         f"延伸={target2:.4f}；防守 {stop_loss:.4f}（R:R={rr:.2f}）。"
-                        f"{conf}{horizon_note}"
+                        f"{conf}{suffix}"
                     ),
                 )
             return _wait_plan(
                 f"反弹锁点已给出，但现价相对防守 R:R={rr:.2f} 不足；"
-                f"观察 {_fmt(target1)} / {_fmt(target2)}。{horizon_note}",
+                f"观察 {_fmt(target1)} / {_fmt(target2)}。{suffix}",
                 rr=rr,
             )
 
@@ -162,19 +174,19 @@ def generate_baseline_plan(
                         f"日线偏多，现价未回踩至 0.5-0.618；"
                         f"可用小头仓防踏空，止损 {stop_loss:.4f}，"
                         f"近压 {target1:.4f} / 主目标 {target2:.4f}（R:R={rr:.2f}）。"
-                        f"{horizon_note}"
+                        f"{horizon_note}{regime_note}"
                     ),
                 )
             return _wait_plan(
                 f"上涨定调但已离开回踩区且 R:R={rr:.2f} 不足，等待回踩 "
-                f"{entry_low:.4f}-{entry_high:.4f} 或观望。{horizon_note}",
+                f"{entry_low:.4f}-{entry_high:.4f} 或观望。{suffix}",
                 rr=rr,
             )
 
         rr = calculate_rr(entry_mid, stop_loss, target1, "long")
         if rr < min_rr:
             return _wait_plan(
-                f"上涨结构但 R:R={rr:.2f} 不足 {min_rr}，建议观望。{horizon_note}",
+                f"上涨结构但 R:R={rr:.2f} 不足 {min_rr}，建议观望。{suffix}",
                 rr=rr,
             )
 
@@ -193,11 +205,15 @@ def generate_baseline_plan(
                 f"日线偏多，回踩 0.5-0.618 低多，"
                 f"止损/防守 {stop_loss:.4f}，"
                 f"近压 {target1:.4f}、主目标 {target2:.4f}（R:R={rr:.2f}）。"
-                f"{conf}{horizon_note}"
+                f"{conf}{suffix}"
             ),
         )
 
     if bias == "down":
+        if jack_regime is not None and jack_regime.below_waist:
+            return _wait_plan(
+                f"已近腰斩线 {_fmt(jack_regime.waist_line)}，穷寇莫追，不再加空。{suffix}"
+            )
         entry_low = fib.rebound_500
         entry_high = fib.rebound_618
         stop_loss = jack.defense_level if jack is not None else fib.rebound_786
@@ -209,7 +225,7 @@ def generate_baseline_plan(
 
         if rr < min_rr:
             return _wait_plan(
-                f"下跌结构但 R:R={rr:.2f} 不足 {min_rr}，建议观望。{horizon_note}",
+                f"下跌结构但 R:R={rr:.2f} 不足 {min_rr}，建议观望。{suffix}",
                 rr=rr,
             )
 
@@ -224,7 +240,7 @@ def generate_baseline_plan(
             rationale=(
                 f"日线偏空，反弹 0.5-0.618 高空，"
                 f"止损/防守 {stop_loss:.4f}，"
-                f"目标 {target1:.4f}（R:R={rr:.2f}）。{horizon_note}"
+                f"目标 {target1:.4f}（R:R={rr:.2f}）。{suffix}"
             ),
         )
 
@@ -232,6 +248,6 @@ def generate_baseline_plan(
         return _wait_plan(
             f"震荡定调。反抽观察 {_fmt(jack.rebound_382)}，"
             f"大反弹观察 {_fmt(jack.rebound_618)}；"
-            f"上破/下破边界再动手。{horizon_note}"
+            f"上破/下破边界再动手。{suffix}"
         )
     return _wait_plan("震荡市无明确方向，建议观望。")

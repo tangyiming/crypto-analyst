@@ -112,6 +112,7 @@ PRICING: dict[str, dict[str, float]] = {
     "llama-3.3-70b-versatile": {"input": 0.0, "output": 0.0},
     "llama-3.3-70b": {"input": 0.0, "output": 0.0},
     "gpt-oss-120b": {"input": 0.0, "output": 0.0},
+    "openai/gpt-oss-120b": {"input": 0.0, "output": 0.0},
     "gemma-4-31b": {"input": 0.0, "output": 0.0},
     "zai-glm-4.7": {"input": 0.0, "output": 0.0},
     "llama-3.1-8b-instant": {"input": 0.0, "output": 0.0},
@@ -210,7 +211,7 @@ _FREE_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "model_attr": "nvidia_model",
         "base_attr": "nvidia_base_url",
         "default_base": "https://integrate.api.nvidia.com/v1",
-        "default_model": "deepseek-ai/deepseek-v4-flash",
+        "default_model": "openai/gpt-oss-120b",
     },
 }
 
@@ -805,6 +806,7 @@ def _build_user_message(
     macro_block = _format_macro_block(market.get("macro"))
     recent_lessons = _recent_ai_lessons_markdown(max_items=recent_lessons_max_items)
     jack_block = _format_jack_block(market, compact=recent_lessons_max_items <= 3)
+    regime_block = _format_jack_regime_block(market, compact=recent_lessons_max_items <= 3)
 
     # 盯盘候选确认时带上触发规则（模板尾部追加，兼容全部 prompt 版本）
     trigger_suffix = ""
@@ -871,6 +873,7 @@ def _build_user_message(
         derivatives_block=derivatives_block,
         macro_block=macro_block,
         jack_block=jack_block,
+        jack_regime_block=regime_block,
         recent_lessons=recent_lessons,
         # 账户
         account_usd=account.get("account_usd", settings.default_account_usd),
@@ -878,6 +881,19 @@ def _build_user_message(
         max_leverage=account.get("max_leverage", settings.max_leverage),
     )
     return filled + trigger_suffix
+
+
+def _format_jack_regime_block(market: dict, *, compact: bool = False) -> str:
+    raw = market.get("jack_regime")
+    if isinstance(raw, dict) and raw.get("regime"):
+        try:
+            from analyst.compute.jack_regime import JackRegime
+
+            reg = JackRegime(**{k: raw[k] for k in JackRegime.__dataclass_fields__ if k in raw})
+            return reg.prompt_block(compact=compact)
+        except Exception:
+            pass
+    return "（盘面分类数据不可用）"
 
 
 def _format_jack_block(market: dict, *, compact: bool = False) -> str:

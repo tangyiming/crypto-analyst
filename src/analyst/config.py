@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     sambanova_base_url: str = Field(default="https://api.sambanova.ai/v1")
     # 申请：https://build.nvidia.com → API Key
     nvidia_api_key: str = Field(default="")
-    nvidia_model: str = Field(default="deepseek-ai/deepseek-v4-flash")
+    nvidia_model: str = Field(default="openai/gpt-oss-120b")
     nvidia_base_url: str = Field(default="https://integrate.api.nvidia.com/v1")
     # 免费层尝试顺序（逗号分隔）；仅配置了 key 的会实际调用
     llm_free_order: str = Field(

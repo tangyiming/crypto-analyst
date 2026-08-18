@@ -40,7 +40,10 @@ class MarketSnapshot:
             "high_30d": self.high_30d,
             "low_30d": self.low_30d,
             "timeframes": {
-                tf: _series_to_dict(s, last_n=50)
+                tf: _series_to_dict(
+                    s,
+                    last_n=200 if tf == "1d" else 120 if tf in ("4h", "1h") else 50,
+                )
                 for tf, s in self.timeframes.items()
             },
             "derivatives": asdict(self.derivatives) if self.derivatives else None,

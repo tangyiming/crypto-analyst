@@ -3705,6 +3705,7 @@
     const vol = ind.volume || {};
     const fib = session.fib || {};
     const jack = session.jack_levels || {};
+    const jreg = session.jack_regime || {};
 
     const biasZh = { up: '偏多', down: '偏空', range: '震荡' }[jack.daily_bias] || (jack.daily_bias || '—');
     const horizonZh = jack.horizon === 'swing' ? '波段' : (jack.horizon === 'short' ? '短线反抽' : (jack.horizon || '—'));
@@ -3742,6 +3743,40 @@
       ${jack.summary_line ? `<div class="ai-rationale mt-2" style="max-height:none">${escapeHtml(jack.summary_line)}</div>` : ''}
     </div>` : '';
 
+    const hasRegime = jreg.regime_zh || jreg.regime;
+    const regimeSec = hasRegime ? `<div class="ai-sec">
+      <h3>盘面分类</h3>
+      <div class="ai-chips">
+        <span class="ai-chip"><b>${escapeHtml(jreg.regime_zh || jreg.regime)}</b></span>
+        <span class="ai-chip"><b>头仓</b>${escapeHtml(jreg.seed_style || '—')}</span>
+        <span class="ai-chip"><b>补仓</b>${escapeHtml(jreg.add_mode || '—')}</span>
+        <span class="ai-chip"><b>延续</b>${jreg.continuation_intact ? '完好' : '中断'}</span>
+        ${jreg.below_waist ? '<span class="ai-chip"><b>腰斩</b>不追空</span>' : ''}
+        ${jreg.sub4h_pullback_fake_short ? '<span class="ai-chip"><b>诱空</b>4h以下回踩</span>' : ''}
+        ${jreg.accel_2d ? `<span class="ai-chip"><b>2d加速</b>${escapeHtml(jreg.accel_2d_note || '')}</span>` : ''}
+        ${jreg.golden_3d ? '<span class="ai-chip"><b>3d金叉</b></span>' : ''}
+        ${jreg.golden_5d ? '<span class="ai-chip"><b>5d金叉</b></span>' : ''}
+        ${jreg.hollow_daily ? '<span class="ai-chip"><b>空心阳</b>日线加速</span>' : ''}
+        ${jreg.htf_ltf_resonance ? '<span class="ai-chip"><b>共振</b>市价冲</span>' : ''}
+        ${jreg.near_rebound_618 ? '<span class="ai-chip"><b>鱼尾</b>不加仓</span>' : ''}
+        ${jreg.second_break ? '<span class="ai-chip"><b>二次突破</b>无假突破</span>' : ''}
+        ${(jreg.macd_8h_decel || jreg.macd_12h_decel) ? '<span class="ai-chip"><b>下跌减速</b>8h/12h</span>' : ''}
+        ${jreg.weekly_macd_zero ? '<span class="ai-chip"><b>周线归零</b>不追空</span>' : ''}
+        ${jreg.wick_hold ? '<span class="ai-chip"><b>虚破</b>仍可头仓</span>' : ''}
+      </div>
+      <div class="mt-2">
+        <div class="ai-kv"><span class="k">Playbook</span><span class="v">${escapeHtml(jreg.playbook_line || '—')}</span></div>
+        <div class="ai-kv"><span class="k">日内 TP</span><span class="v">0.50 ${fmtNum(jreg.tp_intraday_50)} · 0.618 ${fmtNum(jreg.tp_intraday_618)}</span></div>
+        <div class="ai-kv"><span class="k">12h EMA6</span><span class="v">${fmtNum(jreg.ema12h_6)}</span></div>
+        <div class="ai-kv"><span class="k">昨高/低</span><span class="v">${fmtNum(jreg.prev_day_high)} / ${fmtNum(jreg.prev_day_low)}</span></div>
+        <div class="ai-kv"><span class="k">腰斩线</span><span class="v">${fmtNum(jreg.waist_line)}${jreg.below_waist ? ' · 已触及' : ''}</span></div>
+        <div class="ai-kv"><span class="k">周BOLL中</span><span class="v">${fmtNum(jreg.weekly_boll_mid)}</span></div>
+        <div class="ai-kv"><span class="k">3d/5d BOLL</span><span class="v">${fmtNum(jreg.boll_mid_3d)} / ${fmtNum(jreg.boll_mid_5d)}</span></div>
+        <div class="ai-kv"><span class="k">5d EMA6</span><span class="v">${fmtNum(jreg.ema5d_6)}</span></div>
+      </div>
+      ${jreg.summary_line ? `<div class="ai-rationale mt-2" style="max-height:none">${escapeHtml(jreg.summary_line)}</div>` : ''}
+    </div>` : '';
+
     const quant = `<div class="ai-sec">
       <h3>数据指标 · ${escapeHtml(session.timeframe || '')}</h3>
       <div class="ai-kv"><span class="k">现价</span><span class="v">${fmtNum(session.current_price, 6)}</span></div>
@@ -3776,6 +3811,7 @@
     box.innerHTML = aiHtml
       + advice
       + jackSec
+      + regimeSec
       + quant
       + planBlock('规则基线（非 AI）', session.baseline_plan, { muted: true });
   }
@@ -3822,6 +3858,7 @@
       structure: s.structure,
       fib: s.fib,
       jack_levels: s.jack_levels,
+      jack_regime: s.jack_regime,
       indicators: s.indicators,
       baseline_plan: s.baseline_plan,
       ai_plan: s.ai_plan,
