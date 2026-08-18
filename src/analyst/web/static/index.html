@@ -2736,6 +2736,8 @@
   }
 
   function decisionText(ctx) {
+    const jr = ctx?.jack_regime || {};
+    if (jr.playbook_line) return jr.playbook_line;
     const z = ctx?.zone || {};
     if (z.dip_buy && z.try_short) return '震荡分向，等确认';
     if (z.dip_buy) return '靠近低吸区，可等企稳低多';
@@ -2746,6 +2748,10 @@
   }
 
   function riskText(ctx) {
+    const jr = ctx?.jack_regime || {};
+    if (jr.below_waist) {
+      return `已近腰斩线 ${fmtNum(jr.waist_line)}，穷寇莫追，不再加空。`;
+    }
     const z = ctx?.zone || {};
     const s1 = (ctx?.supports || [])[0];
     const r1 = (ctx?.resistances || [])[0];
@@ -2770,7 +2776,10 @@
       return;
     }
     board.classList.remove('hidden');
-    if (hint) hint.textContent = `${active.split('/')[0]} · 当前选中币`;
+    const liveJr = rows[0]?.jack_regime || {};
+    if (hint) hint.textContent = liveJr.regime_zh
+      ? `${active.split('/')[0]} · ${liveJr.regime_zh}`
+      : `${active.split('/')[0]} · 当前选中币`;
     grid.innerHTML = rows.map((ctx) => {
       const sym = normalizeSymbol(ctx.symbol);
       const isActive = sym === normalizeSymbol(activeSymbol);
@@ -2779,10 +2788,17 @@
       const longZone = fib.long || {};
       const shortZone = fib.short || {};
       const cyc = cycleStore[sym] || {};
+      const jr = ctx.jack_regime || {};
       const recentAlert = alertStore.slice().reverse().find((a) => normalizeSymbol(a.symbol) === sym);
       const zCls = zoneClass(ctx);
       const reason = (z.reasons || []).slice(0, 2).join(' · ');
+      const sideZh = jr.trade_side === 'long' ? '偏多' : jr.trade_side === 'short' ? '偏空' : '';
       const chips = [
+        jr.regime_zh ? (sideZh ? `${jr.regime_zh} · ${sideZh}` : jr.regime_zh) : '',
+        jr.below_waist ? '腰斩不追空' : '',
+        jr.second_break ? '二次突破' : '',
+        jr.sub4h_pullback_fake_short ? '4h诱空' : '',
+        jr.htf_ltf_resonance ? '共振市价冲' : '',
         cyc.target_position > 0 ? `周期 多 ${Math.round(Math.abs(cyc.target_position) * 100)}%` :
           cyc.target_position < 0 ? `周期 空 ${Math.round(Math.abs(cyc.target_position) * 100)}%` : '周期 空仓',
         recentAlert?.title ? `最近: ${recentAlert.title}` : '',
@@ -2807,7 +2823,8 @@
           <div class="desc">${escapeHtml(riskText(ctx))}</div>
         </div>
         <div class="level-plan">
-          <div class="level-plan-row"><span class="k">计划</span><span class="v">${escapeHtml(z.label || '观望')}</span></div>
+          <div class="level-plan-row"><span class="k">计划</span><span class="v">${escapeHtml(jr.regime_zh || z.label || '观望')}</span></div>
+          ${jr.seed_style ? `<div class="level-plan-row"><span class="k">头仓</span><span class="v">${escapeHtml(jr.seed_style)} · ${escapeHtml(jr.add_mode || '—')}</span></div>` : ''}
           <div class="level-plan-row"><span class="k">低吸</span><span class="v">${fmtNum(longZone.low)} - ${fmtNum(longZone.high)}</span></div>
           <div class="level-plan-row"><span class="k">试空</span><span class="v">${fmtNum(shortZone.low)} - ${fmtNum(shortZone.high)}</span></div>
           <div class="level-plan-row"><span class="k">枢轴</span><span class="v">${fmtNum(ctx.key_pivot)}</span></div>

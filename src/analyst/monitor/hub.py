@@ -27,7 +27,9 @@ from analyst.data.fetcher import fetch_candles_history
 from analyst.data.ws_kline import stream_klines, stream_mark_price
 from analyst.monitor.notifier import (
     build_default_notifier,
+    claim_ai_fail_tg_alert,
     format_rule_alert_text,
+    note_ai_call_ok,
 )
 from analyst.compute.indicators import compute_all
 from analyst.monitor.rules import (
@@ -45,6 +47,7 @@ from analyst.compute.level_context import (
     tf_priority,
 )
 from analyst.monitor.serialize import candle_to_dict
+from analyst.monitor.jack_live import compute_monitor_jack
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -189,6 +192,11 @@ class MonitorHub:
         self._level_snapshots: dict[str, LevelSnapshot] = {}
         self._level_tf_rank: dict[str, int] = {}
         self._level_last_broadcast: dict[str, float] = {}
+        # Jack 三盘：按品种缓存，避免 5m/15m/1h/4h 各算一遍、各报一次
+        self._jack_live: dict[str, dict[str, Any]] = {}
+        self._jack_pair: dict[str, tuple[Any, Any]] = {}
+        self._jack_alert_state: dict[str, dict[str, Any]] = {}
+        self._jack_pair_at: dict[str, float] = {}
 
     def _daemon_state_path(self) -> Any:
         from pathlib import Path
@@ -300,6 +308,12 @@ class MonitorHub:
             return None
         ctx = compute_level_context(float(px), snap)
         ctx["symbol"] = sym
+        live = self._jack_live.get(sym)
+        if live:
+            if live.get("jack_regime"):
+                ctx["jack_regime"] = live["jack_regime"]
+            if live.get("jack_levels"):
+                ctx["jack_levels"] = live["jack_levels"]
         return ctx
 
     def levels_for_symbols(self, symbols: list[str]) -> dict[str, Any]:
@@ -550,6 +564,11 @@ class MonitorHub:
                     "message": f"已订阅 {symbol} {timeframe} ({market})",
                 }
             )
+            if get_settings().monitor_rule_jack and symbol not in self._jack_live:
+                asyncio.create_task(
+                    self._warm_jack(worker),
+                    name=f"jack-warm-{symbol}",
+                )
 
             watch_syms = [
                 _norm_symbol(raw)
@@ -981,6 +1000,7 @@ class MonitorHub:
             enable_baseline=s.monitor_rule_baseline,
             enable_funding=s.monitor_rule_funding,
             enable_premium=s.monitor_rule_premium,
+            enable_jack=s.monitor_rule_jack,
             funding_extreme_pct=s.monitor_funding_extreme_pct,
             premium_extreme_pct=s.monitor_premium_extreme_pct,
             volume_spike_ratio=s.monitor_volume_spike_ratio,
@@ -1002,6 +1022,95 @@ class MonitorHub:
             return "mixed"
         ind = compute_all(hw.series)
         return ema_trend_bias(ind.ema.ema7, ind.ema.ema30, ind.ema.ema52)
+
+    async def _htf_series(
+        self,
+        symbol: str,
+        timeframe: str,
+        market: str,
+        *,
+        min_bars: int = 40,
+        fetch_limit: int = 200,
+    ) -> CandleSeries | None:
+        """优先复用 worker 内存 K 线；没有再 REST（带 fetcher 缓存）。"""
+        w = self._workers.get(str(StreamKey(symbol, timeframe, market)))
+        if w and len(w.series.candles) >= min_bars:
+            return w.series
+        try:
+            series = await asyncio.to_thread(
+                fetch_candles, symbol, timeframe, fetch_limit, True, market
+            )
+        except Exception:
+            logger.warning("jack HTF fetch failed %s %s", symbol, timeframe)
+            return None
+        if not series or not series.candles:
+            return None
+        if len(series.candles) < min_bars:
+            return series
+        return series
+
+    async def _refresh_jack_live(
+        self, worker: StreamWorker, *, ttl: float = 20.0
+    ) -> tuple[Any, Any]:
+        """按品种缓存锁点/三盘，供规则引擎与关键位面板共用。"""
+        if not get_settings().monitor_rule_jack or not worker.series.candles:
+            return None, None
+        sym = worker.key.symbol
+        now = time.monotonic()
+        last = self._jack_pair_at.get(sym, 0.0)
+        cached = self._jack_pair.get(sym)
+        if ttl > 0 and cached and now - last < ttl:
+            return cached
+        market = worker.key.market
+        price = float(worker.series.candles[-1].close)
+        prem = worker.last_premium or {}
+        daily, hourly, h4, m5 = await asyncio.gather(
+            self._htf_series(sym, "1d", market, min_bars=30, fetch_limit=200),
+            self._htf_series(sym, "1h", market, min_bars=40, fetch_limit=300),
+            self._htf_series(sym, "4h", market, min_bars=40, fetch_limit=200),
+            self._htf_series(sym, "5m", market, min_bars=40, fetch_limit=200),
+        )
+        btc = None
+        compact = sym.upper().replace("/", "")
+        if "BTC" not in compact:
+            btc = await self._htf_series(
+                "BTC/USDT", "1d", market, min_bars=30, fetch_limit=60
+            )
+
+        def _run():
+            return compute_monitor_jack(
+                symbol=sym,
+                current_price=price,
+                worker_series=worker.series,
+                daily_series=daily,
+                hourly_series=hourly,
+                h4_series=h4,
+                m5_series=m5,
+                btc_series=btc,
+                high_24h=prem.get("high_24h"),
+                low_24h=prem.get("low_24h"),
+            )
+
+        jack, regime = await asyncio.to_thread(_run)
+        self._jack_pair[sym] = (jack, regime)
+        self._jack_pair_at[sym] = now
+        self._jack_live[sym] = {
+            "jack_levels": jack.to_dict(),
+            "jack_regime": regime.to_dict(),
+        }
+        return jack, regime
+
+    async def _warm_jack(self, worker: StreamWorker) -> None:
+        try:
+            await self._refresh_jack_live(worker, ttl=0)
+            if worker.series.candles:
+                await self._push_level_context(
+                    worker.key.symbol,
+                    float(worker.series.candles[-1].close),
+                    force=True,
+                )
+        except Exception:
+            logger.exception("jack warm failed %s", worker.key)
 
     async def _btc_candles_for_regime(self, timeframe: str) -> list[Candle]:
         """构建牛熊判定用的 BTC K 线（优先复用已有 worker）。"""
@@ -1633,6 +1742,7 @@ class MonitorHub:
             )
             return
 
+        note_ai_call_ok()
         direction = str(result.get("direction") or "wait").lower()
         if direction not in ("long", "short"):
             logger.info(
@@ -1745,13 +1855,17 @@ class MonitorHub:
             await self._broadcast(worker, alert, alert_also=True)
 
         if self._telegram_ready():
+            if not claim_ai_fail_tg_alert():
+                logger.info("AI 确认失败已提醒过 TG，跳过 %s", worker.key)
+                return
             text = (
                 f"⚠️ 免费 AI 确认失败 · {worker.key.symbol} {worker.key.timeframe}\n"
-                f"分析周期 {ai_tf} · 仅 Groq，未用付费模型\n"
+                f"分析周期 {ai_tf} · 仅免费层，未回落付费\n"
                 f"候选: {', '.join(candidate_rules[:4]) or '-'}\n"
-                f"{err}"
+                f"{err}\n"
+                f"后续同类失败不再重复推送，恢复成功后再挂才会再提醒。"
             )
-            logger.warning("AI 确认失败 → TG %s", worker.key)
+            logger.warning("AI 确认失败 → TG %s（本次故障只推一次）", worker.key)
             await self._notify_telegram_text(text)
 
     async def _evaluate_and_alert(self, worker: StreamWorker) -> None:
@@ -1770,15 +1884,34 @@ class MonitorHub:
             worker.closed_bars,
         )
 
+        jack = jack_regime = None
+        if get_settings().monitor_rule_jack:
+            try:
+                jack, jack_regime = await self._refresh_jack_live(worker)
+            except Exception:
+                logger.exception("jack live failed %s", worker.key)
+
         # 规则批次（页面全量；TG 受白名单限制，默认不含噪音规则）
         if settings.monitor_rules_enabled:
             try:
+                merged = dict(worker.rule_state)
+                hub_jack = self._jack_alert_state.get(worker.key.symbol) or {}
+                for k in ("jack_regime", "jack_side", "jack_flags"):
+                    if k in hub_jack:
+                        merged[k] = hub_jack[k]
                 events, new_state = evaluate_closed_bar_rules(
                     worker.series,
-                    worker.rule_state,
+                    merged,
                     self._rule_config(self._htf_bias_for(worker)),
+                    jack=jack,
+                    jack_regime=jack_regime,
                 )
                 worker.rule_state = new_state
+                self._jack_alert_state[worker.key.symbol] = {
+                    "jack_regime": new_state.get("jack_regime"),
+                    "jack_side": new_state.get("jack_side"),
+                    "jack_flags": new_state.get("jack_flags"),
+                }
                 if events:
                     for e in events:
                         r = getattr(e, "rule", None) or str(e)

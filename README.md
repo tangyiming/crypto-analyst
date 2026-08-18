@@ -73,7 +73,11 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 
 #### 三盘分类（`jack_regime`）
 
-创建分析会话时与锁点一并预计算，注入 `{jack_regime_block}`：
+创建分析会话、盯盘 K 线收盘时都会预计算，注入 `{jack_regime_block}`；盯盘关键位面板也会显示当前盘面。
+
+规则引擎把三盘变化写成 `jack_regime` / `jack_setup` 告警（默认只上页面；单独命中即可作为 AI 候选）。规则基线 `generate_baseline_plan` 在收盘评估时也会带上锁点与三盘（腰斩不追空、震荡用日内 0.50–0.618 止盈）。
+
+关闭：`MONITOR_RULE_JACK=false`。
 
 | 盘面 | 打法 |
 |------|------|
@@ -330,6 +334,7 @@ crypto-analyst/
 │   ├── compute/jack_levels.py        # 波段锁点预计算
 │   ├── compute/jack_regime.py        # 三盘分类 + playbook
 │   ├── compute/position_sizing.py    # 头仓/补仓分层
+│   ├── monitor/jack_live.py          # 盯盘收盘预计算三盘
 │   ├── monitor/schedule_reminders.py # 日程 TG 提前提醒轮询
 │   ├── web/schedule_routes.py        # GET /api/schedule
 │   └── compute/strategies/           # cycle_switch / xs_momentum / registry

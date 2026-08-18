@@ -63,6 +63,31 @@ class MultiNotifier:
                 logger.exception("notifier text error: %s", e)
 
 
+# 免费层连续失败时 TG 只推一次；成功调用后清掉，下次再挂才会再推。
+_ai_fail_tg_sent = False
+
+
+def claim_ai_fail_tg_alert() -> bool:
+    """本次故障是否该发 TG。已提醒过则 False。"""
+    global _ai_fail_tg_sent
+    if _ai_fail_tg_sent:
+        return False
+    _ai_fail_tg_sent = True
+    return True
+
+
+def note_ai_call_ok() -> None:
+    """LLM 调用成功：允许下一次故障再推 TG。"""
+    global _ai_fail_tg_sent
+    _ai_fail_tg_sent = False
+
+
+def reset_ai_fail_tg_alert() -> None:
+    """测试用：清掉已提醒标记。"""
+    global _ai_fail_tg_sent
+    _ai_fail_tg_sent = False
+
+
 def build_default_notifier(
     *,
     telegram_bot_token: str = "",

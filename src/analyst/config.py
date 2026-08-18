@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     monitor_rule_baseline: bool = Field(default=True)
     monitor_rule_funding: bool = Field(default=True)
     monitor_rule_premium: bool = Field(default=True)
+    monitor_rule_jack: bool = Field(default=True)
     monitor_funding_extreme_pct: float = Field(default=0.05)
     monitor_premium_extreme_pct: float = Field(default=0.30)
     monitor_volume_spike_ratio: float = Field(default=2.0)   # 放量告警阈值（×20 均量）

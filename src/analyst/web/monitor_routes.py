@@ -249,6 +249,7 @@ def monitor_chat(req: MonitorChatRequest):
                 "structure",
                 "fib",
                 "jack_levels",
+                "jack_regime",
                 "indicators",
                 "baseline_plan",
                 "ai_plan",

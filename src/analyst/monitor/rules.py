@@ -16,6 +16,13 @@ from analyst.compute.structure import detect_structure
 from analyst.compute.volume import analyze_volume
 from analyst.data.fetcher import Candle, CandleSeries
 
+try:
+    from analyst.compute.jack_levels import JackLevels
+    from analyst.compute.jack_regime import JackRegime
+except ImportError:  # pragma: no cover
+    JackLevels = None  # type: ignore
+    JackRegime = None  # type: ignore
+
 
 def _atr(candles: list[Candle], period: int) -> float:
     if len(candles) < period + 1:
@@ -47,6 +54,7 @@ class RuleConfig:
     enable_baseline: bool = True
     enable_funding: bool = True
     enable_premium: bool = True
+    enable_jack: bool = True
 
     volume_spike_ratio: float = 2.0        # 放量阈值（曾 1.5×，噪音过多）
     volume_min_body_atr: float = 0.3       # 放量还需实体 ≥ 0.3×ATR 才算有方向
@@ -147,6 +155,8 @@ AI_QUALITY_RULES = frozenset({
     "cvd_divergence",
     "oi_divergence",
     "cycle_switch",
+    "jack_regime",
+    "jack_setup",
 })
 
 
@@ -172,10 +182,110 @@ def apply_confluence(events: list[RuleEvent]) -> None:
                 e.reasons.append(note)
 
 
+_JACK_FLAG_LABELS: tuple[tuple[str, str], ...] = (
+    ("below_waist", "腰斩线附近，穷寇莫追"),
+    ("second_break", "二次突破（无假突破）"),
+    ("sub4h_pullback_fake_short", "4h 以下回踩诱空"),
+    ("accel_2d", "2日线加速"),
+    ("golden_3d", "3日金叉"),
+    ("golden_5d", "5日金叉"),
+    ("htf_ltf_resonance", "大小周期共振，可市价冲"),
+    ("macd_8h_decel", "8h MACD 归零减速"),
+    ("macd_12h_decel", "12h MACD 归零减速"),
+    ("weekly_macd_zero", "周线 MACD 归零，大回调将尽"),
+    ("wick_hold", "虚破仍站稳，可头仓"),
+    ("hollow_daily", "日线空心阳加速"),
+)
+
+
+def _jack_active_flags(reg: "JackRegime") -> list[str]:
+    return [key for key, _ in _JACK_FLAG_LABELS if bool(getattr(reg, key, False))]
+
+
+def _jack_rule_events(
+    reg: "JackRegime",
+    state: dict[str, Any],
+    *,
+    price: float,
+    marker_time: int,
+) -> list[RuleEvent]:
+    """三盘/打法变化才告警；首轮只建基线，避免重启刷屏。"""
+    events: list[RuleEvent] = []
+    prev_regime = state.get("jack_regime")
+    prev_side = state.get("jack_side")
+    prev_flags = [str(x) for x in (state.get("jack_flags") or [])]
+    new_flags = _jack_active_flags(reg)
+    direction = reg.trade_side if reg.trade_side in ("long", "short") else "wait"
+    extras = {
+        "jack_regime": {
+            "regime": reg.regime,
+            "regime_zh": reg.regime_zh,
+            "trade_side": reg.trade_side,
+            "seed_style": reg.seed_style,
+            "add_mode": reg.add_mode,
+            "playbook_line": reg.playbook_line,
+        }
+    }
+
+    if prev_regime is None:
+        state["jack_regime"] = reg.regime
+        state["jack_side"] = reg.trade_side
+        state["jack_flags"] = new_flags
+        return events
+
+    if reg.regime != prev_regime or reg.trade_side != prev_side:
+        events.append(
+            RuleEvent(
+                rule="jack_regime",
+                title=f"三盘 → {reg.regime_zh}",
+                direction=direction,
+                strength=0.72,
+                price=price,
+                reasons=[
+                    x
+                    for x in (
+                        f"方向 {reg.trade_side}",
+                        reg.playbook_line,
+                        (reg.summary_line or "")[:140],
+                    )
+                    if x
+                ],
+                marker_time=marker_time,
+                extras=extras,
+            )
+        )
+
+    appeared = [flag for flag in new_flags if flag not in prev_flags]
+    if appeared:
+        labels = [
+            label for key, label in _JACK_FLAG_LABELS if key in appeared
+        ]
+        events.append(
+            RuleEvent(
+                rule="jack_setup",
+                title="Jack 打法提示",
+                direction=direction,
+                strength=0.7,
+                price=price,
+                reasons=labels[:4] or appeared,
+                marker_time=marker_time,
+                extras={**extras, "flags": appeared},
+            )
+        )
+
+    state["jack_regime"] = reg.regime
+    state["jack_side"] = reg.trade_side
+    state["jack_flags"] = new_flags
+    return events
+
+
 def evaluate_closed_bar_rules(
     series: CandleSeries,
     state: dict[str, Any],
     cfg: RuleConfig | None = None,
+    *,
+    jack: "JackLevels | None" = None,
+    jack_regime: "JackRegime | None" = None,
 ) -> tuple[list[RuleEvent], dict[str, Any]]:
     """对刚收盘的 K 线评估一批规则；返回 (事件, 新状态)。"""
     cfg = cfg or RuleConfig()
@@ -474,9 +584,11 @@ def evaluate_closed_bar_rules(
             )
         state["in_fib_zone"] = inside
 
-    # ── 规则基线计划变向 ──
+    # ── 规则基线计划变向（有 Jack 时日线定调 / 腰斩不追空优先生效）──
     if cfg.enable_baseline:
-        plan = generate_baseline_plan(price, fib, structure)
+        plan = generate_baseline_plan(
+            price, fib, structure, jack=jack, jack_regime=jack_regime
+        )
         prev_dir = state.get("baseline_dir")
         if prev_dir and plan.direction != prev_dir and plan.direction != "wait":
             events.append(
@@ -508,6 +620,13 @@ def evaluate_closed_bar_rules(
             )
         if plan.direction != "wait" or prev_dir is None:
             state["baseline_dir"] = plan.direction
+
+    if cfg.enable_jack and jack_regime is not None:
+        events.extend(
+            _jack_rule_events(
+                jack_regime, state, price=price, marker_time=t
+            )
+        )
 
     apply_confluence(events)
     return events, state
