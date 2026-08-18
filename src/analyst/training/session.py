@@ -15,6 +15,7 @@ from analyst.compute.jack_regime import JackRegime, compute_jack_regime
 from analyst.compute.structure import Structure, detect_structure
 from analyst.compute.volume import analyze_volume
 from analyst.config import get_settings
+from analyst.data.fetcher import Candle, CandleSeries
 from analyst.data.snapshot import MarketSnapshot, build_snapshot
 from analyst.storage import repo
 from analyst.storage.models import Session
@@ -442,10 +443,6 @@ def run_monitor_ai_confirm(
 
 def _series_from_snapshot_tfd(tfd: dict, default_symbol: str = "") -> CandleSeries | None:
     """从 market_snapshot.timeframes[tf] 还原 CandleSeries。"""
-    from datetime import datetime
-
-    from analyst.data.fetcher import Candle, CandleSeries
-
     if not tfd or not tfd.get("candles"):
         return None
     candles: list[Candle] = []
