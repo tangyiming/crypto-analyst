@@ -4,10 +4,10 @@
 - deepseek (默认，OpenAI 兼容)
 - openai (GPT / 兼容网关)
 - anthropic (Claude 系列)
-- 可选链路：**Groq**（短 prompt）→ **b.ai**（BAI_* 完整 v1 prompt）→ **LLM_PROVIDER**（常为 DeepSeek）
-  - 不配 Groq 时：b.ai → LLM_PROVIDER
+- 可选链路：**b.ai**（BAI_* 完整 v1 prompt，默认 deepseek-v4-flash）→ **免费层**（短 prompt）→ **LLM_PROVIDER**（常为 DeepSeek 官方）
+  - 未配 BAI_API_KEY 时：免费层 → LLM_PROVIDER
 
-通过 settings.llm_provider 确定主线路；Groq / b.ai 为附加前置层。所有线路均走 tool calling 输出
+通过 settings.llm_provider 确定主线路；b.ai / 免费层为附加前置层。所有线路均走 tool calling 输出
 结构化结果，避免解析失败。
 """
 
@@ -132,7 +132,7 @@ PRICING: dict[str, dict[str, float]] = {
     "deepseek-reasoner": {"input": 0.55, "output": 2.19},
     # b.ai 聚合网关（注意 model id 用横杠）
     "deepseek-v4-pro": {"input": 0.435, "output": 0.87},
-    "deepseek-v4-flash": {"input": 0.14, "output": 0.28},
+    "deepseek-v4-flash": {"input": 0.0, "output": 0.0},  # 限时无限免费
     "minimax-m2.5": {"input": 0.30, "output": 1.20},
     "kimi-k2.5": {"input": 0.23, "output": 3.00},
     "glm-5": {"input": 0.30, "output": 2.55},
@@ -215,6 +215,22 @@ _FREE_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 
+def bai_endpoint(settings=None) -> dict[str, Any] | None:
+    """已配置则返回 b.ai 线路（最先尝试）。"""
+    settings = settings or get_settings()
+    key = (getattr(settings, "bai_api_key", "") or "").strip()
+    model = (getattr(settings, "bai_model", "") or "").strip()
+    if not (key and model and getattr(settings, "llm_try_bai_after_groq", True)):
+        return None
+    base = (getattr(settings, "bai_base_url", "") or "").strip() or "https://api.b.ai/v1"
+    return {
+        "name": "b.ai",
+        "api_key": key,
+        "model": model,
+        "base_url": base,
+    }
+
+
 def list_free_endpoints(settings=None) -> list[dict[str, Any]]:
     """返回已配置 key 的免费线路（按 LLM_FREE_ORDER）。"""
     settings = settings or get_settings()
@@ -261,19 +277,22 @@ def analyze_market(
     """让 AI 分析市场并给出交易计划。
 
     Args:
-        free_only: True 时只走免费前置层（Groq/Cerebras/Gemini/OpenRouter/SambaNova），
-                   失败不回落 b.ai / DeepSeek 等付费线路。盯盘自动「候选确认」应开启。
+        free_only: True 时只走 b.ai（限时免费）和其它免费前置层，
+                   失败不回落 DeepSeek / Anthropic 等付费线路。盯盘自动「候选确认」应开启。
     """
     settings = get_settings()
     provider = settings.llm_provider.lower()
     free_eps = list_free_endpoints(settings)
+    bai = bai_endpoint(settings)
 
-    if free_only and not free_eps:
+    if free_only and not free_eps and not bai:
         raise RuntimeError(
-            "盯盘 AI 确认仅用免费模型：请至少配置 GROQ_API_KEY / CEREBRAS_API_KEY / "
-            "GEMINI_API_KEY / OPENROUTER_API_KEY / SAMBANOVA_API_KEY / NVIDIA_API_KEY 之一"
-            "（且 LLM_TRY_GROQ_FIRST=true 才会启用 Groq），"
-            "不会回落 DeepSeek / b.ai / Anthropic 等付费线路"
+            "盯盘 AI 确认仅用免费模型：请至少配置 BAI_API_KEY / GROQ_API_KEY / "
+            "CEREBRAS_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY / "
+            "SAMBANOVA_API_KEY / NVIDIA_API_KEY 之一"
+            "（且 LLM_TRY_BAI_AFTER_GROQ=true 才会启用 b.ai，"
+            "LLM_TRY_GROQ_FIRST=true 才会启用 Groq），"
+            "不会回落 DeepSeek / Anthropic 等付费线路"
         )
 
     system = load_system_prompt(settings.llm_prompt_version)
@@ -290,6 +309,26 @@ def analyze_market(
         )
 
     free_errors: list[str] = []
+    if bai:
+        try:
+            b_max = max(1024, min(int(settings.llm_max_tokens or 4000), 8192))
+            return _call_openai_compatible(
+                system,
+                user_msg,
+                settings,
+                override_api_key=bai["api_key"],
+                override_base_url=bai["base_url"],
+                override_model=bai["model"],
+                override_max_tokens=b_max,
+                routing_provider="openai",
+                skip_deepseek_extras=True,
+                prompt_version_for_response=settings.llm_prompt_version,
+            )
+        except Exception as exc:
+            msg = f"b.ai({bai['model']}): {exc}"
+            free_errors.append(msg)
+            _log.warning("b.ai 请求失败，尝试后续线路: %s", msg)
+
     if free_eps:
         sys_g = load_system_prompt("groq")
         tpl_g = load_user_template("groq")
@@ -330,31 +369,11 @@ def analyze_market(
             )
 
     if free_only:
-        raise RuntimeError("盯盘 AI 确认 free_only=True，拒绝付费回落")
-
-    bai_key = (getattr(settings, "bai_api_key", "") or "").strip()
-    bai_model = (getattr(settings, "bai_model", "") or "").strip()
-    if (
-        bai_key
-        and bai_model
-        and getattr(settings, "llm_try_bai_after_groq", True)
-    ):
-        try:
-            b_max = max(1024, min(int(settings.llm_max_tokens or 4000), 8192))
-            return _call_openai_compatible(
-                system,
-                user_msg,
-                settings,
-                override_api_key=bai_key,
-                override_base_url=settings.bai_base_url or "https://api.b.ai/v1",
-                override_model=bai_model,
-                override_max_tokens=b_max,
-                routing_provider="openai",
-                skip_deepseek_extras=True,
-                prompt_version_for_response=settings.llm_prompt_version,
+        if free_errors:
+            raise RuntimeError(
+                "盯盘 AI 确认仅用免费线路，全部失败: " + " | ".join(free_errors)
             )
-        except Exception as exc:
-            _log.warning("b.ai 请求失败，采用主线路 %s: %s", provider, exc)
+        raise RuntimeError("盯盘 AI 确认 free_only=True，拒绝付费回落")
 
     return _fallback()
 

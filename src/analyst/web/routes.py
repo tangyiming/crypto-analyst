@@ -77,16 +77,15 @@ def health():
 
 
 def _llm_chain_summary(s) -> str:
-    """免费层 → b.ai → 主线路（仅展示已启用段）。"""
-    from analyst.llm.analyst import list_free_endpoints
+    """b.ai → 免费层 → 主线路（仅展示已启用段）。"""
+    from analyst.llm.analyst import bai_endpoint, list_free_endpoints
 
     parts: list[str] = []
+    bai = bai_endpoint(s)
+    if bai:
+        parts.append(f"b.ai「{bai['model']}」")
     for ep in list_free_endpoints(s):
         parts.append(f"{ep['name']}「{ep['model']}」")
-    bk = (getattr(s, "bai_api_key", "") or "").strip()
-    bm = (getattr(s, "bai_model", "") or "").strip()
-    if bk and bm and getattr(s, "llm_try_bai_after_groq", True):
-        parts.append(f"b.ai「{bm}」")
     parts.append(f"{(s.llm_provider or 'deepseek').capitalize()}「{s.llm_model}」")
     return " → ".join(parts)
 

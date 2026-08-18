@@ -62,11 +62,11 @@ class Settings(BaseSettings):
     llm_free_order: str = Field(
         default="nvidia,groq,cerebras,openrouter,sambanova,gemini"
     )
-    # b.ai：免费层失败后的第二段（完整 prompt，tool 为 auto）；再失败走 LLM_PROVIDER。
-    # 未配任何免费 key 时，b.ai 仍会先于主线路执行（即 b.ai → DeepSeek）。
+    # b.ai：最先尝试（限时无限免费 DeepSeek-V4-Flash）；失败再走免费层 → LLM_PROVIDER。
+    # LLM_TRY_BAI_AFTER_GROQ=false 可关掉这一跳。
     bai_api_key: str = Field(default="")
     bai_base_url: str = Field(default="https://api.b.ai/v1")
-    bai_model: str = Field(default="")
+    bai_model: str = Field(default="deepseek-v4-flash")
     llm_try_bai_after_groq: bool = Field(default=True)
 
     # DeepSeek V4：OpenAI SDK 文档中的 thinking / reasoning_effort

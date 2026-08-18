@@ -44,6 +44,8 @@ def test_analyze_market_free_only_requires_any_free_key(monkeypatch):
         llm_try_groq_first=True,
         llm_free_order="nvidia,groq,cerebras,openrouter,sambanova,gemini",
         nvidia_api_key="",
+        bai_api_key="",
+        bai_model="",
         llm_provider="deepseek",
         deepseek_api_key="sk-paid",
     )
@@ -53,6 +55,61 @@ def test_analyze_market_free_only_requires_any_free_key(monkeypatch):
         raise AssertionError("expected RuntimeError")
     except RuntimeError as e:
         assert "免费" in str(e)
+
+
+def test_bai_endpoint_ready():
+    from analyst.config import Settings
+    import analyst.llm.analyst as mod
+
+    s = Settings.model_construct(
+        bai_api_key="sk-bai",
+        bai_model="deepseek-v4-flash",
+        bai_base_url="https://api.b.ai/v1",
+        llm_try_bai_after_groq=True,
+    )
+    ep = mod.bai_endpoint(s)
+    assert ep is not None
+    assert ep["model"] == "deepseek-v4-flash"
+    assert ep["name"] == "b.ai"
+
+
+def test_analyze_market_free_only_accepts_bai_only(monkeypatch):
+    from analyst.config import Settings
+    import analyst.llm.analyst as mod
+
+    s = Settings.model_construct(
+        groq_api_key="",
+        cerebras_api_key="",
+        gemini_api_key="",
+        openrouter_api_key="",
+        sambanova_api_key="",
+        nvidia_api_key="",
+        bai_api_key="sk-bai",
+        bai_model="deepseek-v4-flash",
+        llm_try_bai_after_groq=True,
+        llm_try_groq_first=True,
+        llm_free_order="nvidia,groq",
+        llm_provider="deepseek",
+        deepseek_api_key="sk-paid",
+    )
+    monkeypatch.setattr(mod, "get_settings", lambda: s)
+    monkeypatch.setattr(mod, "load_system_prompt", lambda *_a, **_k: "sys")
+    monkeypatch.setattr(mod, "load_user_template", lambda *_a, **_k: "tpl")
+    monkeypatch.setattr(mod, "_build_user_message", lambda *_a, **_k: "user")
+
+    called = {}
+
+    def fake_call(*_a, **kw):
+        called["model"] = kw.get("override_model")
+        raise RuntimeError("b.ai fake fail")
+
+    monkeypatch.setattr(mod, "_call_openai_compatible", fake_call)
+    try:
+        mod.analyze_market({}, {}, free_only=True)
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as e:
+        assert "免费" in str(e)
+    assert called.get("model") == "deepseek-v4-flash"
 
 
 def test_list_free_endpoints_order(monkeypatch):

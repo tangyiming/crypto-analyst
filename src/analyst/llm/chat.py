@@ -26,8 +26,13 @@ def _resolve_openai_client(settings):
     from analyst.llm.analyst import (
         DEFAULT_BASE_URLS,
         _free_provider_headers,
+        bai_endpoint,
         list_free_endpoints,
     )
+
+    bai = bai_endpoint(settings)
+    if bai:
+        return OpenAI(api_key=bai["api_key"], base_url=bai["base_url"]), bai["model"], "b.ai"
 
     free_eps = list_free_endpoints(settings)
     if free_eps:
@@ -64,16 +69,26 @@ def _resolve_openai_client(settings):
 
 
 def _iter_chat_clients(settings):
-    """免费线路按序 + 最后主线路（若与免费不同）。"""
+    """b.ai → 免费线路按序 → 最后主线路（若与前面不同）。"""
     from openai import OpenAI
 
     from analyst.llm.analyst import (
         DEFAULT_BASE_URLS,
         _free_provider_headers,
+        bai_endpoint,
         list_free_endpoints,
     )
 
     seen: set[tuple[str, str]] = set()
+    bai = bai_endpoint(settings)
+    if bai:
+        seen.add(("b.ai", bai["model"]))
+        yield OpenAI(
+            api_key=bai["api_key"],
+            base_url=bai["base_url"],
+            timeout=30.0,
+            max_retries=0,
+        ), bai["model"], "b.ai"
     for ep in list_free_endpoints(settings):
         key = (ep["name"], ep["model"])
         if key in seen:

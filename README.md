@@ -175,7 +175,7 @@ analyst config test-llm
 | `MONITOR_CYCLE_OUTLOOK_ENABLED` | `true`：每天提醒一次当前周期位置（BTC，**UTC 每天最多 1 条**） |
 | `MONITOR_AI_ON_CANDIDATE` | `true`：收盘有合格候选时才调 AI；`long`/`short` 推「盯盘点评」（仅提醒） |
 | `MONITOR_AI_REQUIRE_QUALITY` | `true`：单条放量/触及不够；需质量规则或同根 ≥2 条 |
-| `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认**只用免费层**（Groq/Cerebras/Gemini/OpenRouter/SambaNova），失败不回落付费 |
+| `MONITOR_AI_FREE_ONLY` | `true`：盯盘自动确认只用 **b.ai + 免费层**，失败不回落 DeepSeek / Anthropic 官方付费 |
 | `LLM_FREE_ORDER` | 免费层顺序，默认 `nvidia,groq,cerebras,openrouter,sambanova,gemini`（有 key 才实际调用） |
 | `CEREBRAS_API_KEY` / `NVIDIA_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY` / `SAMBANOVA_API_KEY` | 额外免费线路；任选配置即可 failover |
 | `MONITOR_AI_COOLDOWN_MINUTES` | 同品种+AI 周期冷却（默认 240），防候选刷屏 |
