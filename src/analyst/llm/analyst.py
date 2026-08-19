@@ -312,7 +312,7 @@ def analyze_market(
     free_errors: list[str] = []
     if bai:
         try:
-            b_max = max(1024, min(int(settings.llm_max_tokens or 4000), 8192))
+            b_max = max(4096, min(int(settings.llm_max_tokens or 4000), 8192))
             return _call_openai_compatible(
                 system,
                 user_msg,
@@ -689,6 +689,10 @@ def _call_openai_compatible(
     }
     if not skip_deepseek_extras:
         req.update(_deepseek_v4_request_extras(settings))
+    elif _is_bai_gateway(base_url) and str(model).lower().startswith("deepseek-v4"):
+        # Flash 默认会把输出额度花在 thinking 上，满 4000 就被 length 截断，
+        # 来不及调用 submit_analysis。显式关掉思考，才能稳定出 tool_calls。
+        req["extra_body"] = {"thinking": {"type": "disabled"}}
     response = client.chat.completions.create(**req)
     latency_ms = int((time.time() - start) * 1000)
 

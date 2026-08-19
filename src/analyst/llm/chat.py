@@ -205,12 +205,15 @@ def ask_monitor_question(
     last_err: Exception | None = None
     for client, model, prov in _iter_chat_clients(settings):
         try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=min(0.5, float(settings.llm_temperature or 0.3)),
-                max_tokens=max_tokens,
-            )
+            create_kw: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": min(0.5, float(settings.llm_temperature or 0.3)),
+                "max_tokens": max_tokens,
+            }
+            if prov == "b.ai" and str(model).lower().startswith("deepseek-v4"):
+                create_kw["extra_body"] = {"thinking": {"type": "disabled"}}
+            resp = client.chat.completions.create(**create_kw)
             latency_ms = int((time.time() - start) * 1000)
             msg = resp.choices[0].message
             reply = (getattr(msg, "content", None) or "").strip()
