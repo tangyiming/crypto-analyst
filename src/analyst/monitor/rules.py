@@ -55,6 +55,12 @@ class RuleConfig:
     enable_funding: bool = True
     enable_premium: bool = True
     enable_jack: bool = True
+    # CycleStudies（百萬Eric）风格：RSI 超卖/超买 + 背离 + EMA 目标
+    enable_eric: bool = True
+    eric_rsi_oversold: float = 30.0
+    eric_rsi_overbought: float = 70.0
+    eric_cooldown_bars: int = 8
+    eric_min_buff: int = 4  # Buff 达标才发 rebound/fade；EMA 回踩略低一档
 
     volume_spike_ratio: float = 2.0        # 放量阈值（曾 1.5×，噪音过多）
     volume_min_body_atr: float = 0.3       # 放量还需实体 ≥ 0.3×ATR 才算有方向
@@ -157,6 +163,14 @@ AI_QUALITY_RULES = frozenset({
     "cycle_switch",
     "jack_regime",
     "jack_setup",
+    "eric_oversold",
+    "eric_overbought",
+    "eric_rebound",
+    "eric_fade",
+    "eric_divergence",
+    "eric_ema_pullback",
+    "eric_ema_reject",
+    "eric_mtf",
 })
 
 
@@ -286,6 +300,7 @@ def evaluate_closed_bar_rules(
     *,
     jack: "JackLevels | None" = None,
     jack_regime: "JackRegime | None" = None,
+    htf_series: CandleSeries | None = None,
 ) -> tuple[list[RuleEvent], dict[str, Any]]:
     """对刚收盘的 K 线评估一批规则；返回 (事件, 新状态)。"""
     cfg = cfg or RuleConfig()
@@ -628,8 +643,123 @@ def evaluate_closed_bar_rules(
             )
         )
 
+    if cfg.enable_eric and _eric_scope_ok(series):
+        events.extend(
+            _eric_rule_events(
+                series,
+                state,
+                cfg=cfg,
+                price=price,
+                atr=atr,
+                structure=structure,
+                marker_time=t,
+                htf_series=htf_series,
+            )
+        )
+
     apply_confluence(events)
     return events, state
+
+
+_ERIC_KIND_META: dict[str, tuple[str, str, str]] = {
+    # kind -> (rule, title, direction)
+    "oversold": ("eric_oversold", "Eric 超卖（反弹）", "long"),
+    "overbought": ("eric_overbought", "Eric 超买（回落/止盈）", "short"),
+    "rebound_long": ("eric_rebound", "Eric Buff 达标反弹", "long"),
+    "fade_short": ("eric_fade", "Eric Buff 达标做空", "short"),
+    "bull_div": ("eric_divergence", "Eric 底背离", "long"),
+    "bear_div": ("eric_divergence", "Eric 顶背离", "short"),
+    "ema_pullback": ("eric_ema_pullback", "Eric EMA 回踩+超卖", "long"),
+    "ema_reject": ("eric_ema_reject", "Eric EMA 拒绝+超买", "short"),
+    "mtf_align": ("eric_mtf", "Eric 多周期共振", "long"),  # direction overwritten below
+}
+
+
+def _eric_rule_events(
+    series: CandleSeries,
+    state: dict[str, Any],
+    *,
+    cfg: RuleConfig,
+    price: float,
+    atr: float,
+    structure: Any,
+    marker_time: int,
+    htf_series: CandleSeries | None = None,
+) -> list[RuleEvent]:
+    """CycleStudies 风格：过滤器 + Buff/EMA/MTF；边沿触发 + 冷却。"""
+    from analyst.compute.eric_signals import evaluate_eric
+
+    resist = structure.resistances[0] if getattr(structure, "resistances", None) else None
+    support = structure.supports[0] if getattr(structure, "supports", None) else None
+    signals = evaluate_eric(
+        series,
+        oversold=cfg.eric_rsi_oversold,
+        overbought=cfg.eric_rsi_overbought,
+        structure_resist=float(resist) if resist is not None else None,
+        structure_support=float(support) if support is not None else None,
+        atr=atr,
+        htf_series=htf_series,
+        htf_bias=cfg.htf_bias,
+        min_buff=int(cfg.eric_min_buff or 4),
+    )
+    if not signals:
+        return []
+
+    span = _bar_span_sec(series)
+    cool_sec = max(1, cfg.eric_cooldown_bars) * span
+    cooldown: dict[str, int] = dict(state.get("eric_cooldown") or {})
+    events: list[RuleEvent] = []
+    for sig in signals:
+        meta = _ERIC_KIND_META.get(sig.kind)
+        if not meta:
+            continue
+        rule, title, direction = meta
+        # mtf 方向看 reasons / buff_tags
+        if sig.kind == "mtf_align":
+            direction = "short" if any("超买" in t for t in sig.buff_tags) else "long"
+            title = "Eric 多周期超买共振" if direction == "short" else "Eric 多周期超卖共振"
+        last = cooldown.get(sig.kind)
+        if last is not None and marker_time - last < cool_sec:
+            continue
+        cooldown[sig.kind] = marker_time
+        extras: dict[str, Any] = {
+            "eric": {
+                "kind": sig.kind,
+                "rsi": round(sig.rsi, 2),
+                "filter": round(sig.filter_value, 2) if sig.filter_value is not None else None,
+                "buff": sig.buff,
+                "buff_tags": list(sig.buff_tags),
+                "target": sig.target,
+                "stop_hint": sig.stop_hint,
+                "source": "CycleStudies Buff/EMA/MTF + 波段过滤器近似 Stoch(HLC3,14,5)−50",
+            }
+        }
+        events.append(
+            RuleEvent(
+                rule=rule,
+                title=title,
+                direction=direction,
+                strength=sig.strength,
+                price=price,
+                reasons=list(sig.reasons),
+                break_level=sig.target,
+                marker_time=marker_time,
+                extras=extras,
+            )
+        )
+    if len(cooldown) > 20:
+        cooldown = dict(sorted(cooldown.items(), key=lambda kv: kv[1])[-12:])
+    state["eric_cooldown"] = cooldown
+    for ev in events:
+        ev.extras.setdefault("eric", {})["scope"] = "BTC/ETH × 1d/1w（已验证）"
+    return events
+
+
+def _eric_scope_ok(series: CandleSeries) -> bool:
+    """Eric 规则只对 BTC/ETH 的日线、周线评估（其他品种/周期回测无优势或证伪）。"""
+    from analyst.compute.band_filter import eric_scope_ok
+
+    return eric_scope_ok(getattr(series, "symbol", None), getattr(series, "timeframe", None))
 
 
 def evaluate_premium_rules(

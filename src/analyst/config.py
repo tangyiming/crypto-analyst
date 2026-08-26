@@ -108,6 +108,17 @@ class Settings(BaseSettings):
     monitor_rule_funding: bool = Field(default=True)
     monitor_rule_premium: bool = Field(default=True)
     monitor_rule_jack: bool = Field(default=True)
+    # CycleStudies / 百萬Eric：RSI 超卖超买 + 背离（反弹≠反转）
+    monitor_rule_eric: bool = Field(default=True)
+    monitor_eric_rsi_oversold: float = Field(default=30.0)
+    monitor_eric_rsi_overbought: float = Field(default=70.0)
+    monitor_eric_cooldown_bars: int = Field(default=8)
+    monitor_eric_min_buff: int = Field(default=4)
+    # Eric 周线超卖波段计划（开仓/第一半止盈/第二半止盈/止损 提醒）
+    monitor_rule_eric_swing: bool = Field(default=True)
+    monitor_eric_swing_risk_pct: float = Field(default=2.0)
+    # 只对这些品种运行波段计划（回测只有 BTC/ETH 成立；BNB/SOL 证伪）
+    monitor_eric_swing_symbols: str = Field(default="BTC/USDT,ETH/USDT")
     monitor_funding_extreme_pct: float = Field(default=0.05)
     monitor_premium_extreme_pct: float = Field(default=0.30)
     monitor_volume_spike_ratio: float = Field(default=2.0)   # 放量告警阈值（×20 均量）
@@ -153,6 +164,8 @@ class Settings(BaseSettings):
     )
     square_post_timeframes: str = Field(default="1h,4h")
     square_post_cooldown_hours: float = Field(default=4.0)
+    # Eric 超卖信号（仅 BTC/ETH 日线/周线）也发广场短文
+    square_post_eric_enabled: bool = Field(default=True)
 
     # ── 新闻事件风控哨兵 ──
     monitor_news_enabled: bool = Field(default=True)

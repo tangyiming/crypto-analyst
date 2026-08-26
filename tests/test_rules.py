@@ -38,6 +38,9 @@ def _only_volume_cfg() -> RuleConfig:
         enable_structure_flip=False,
         enable_fib_zone=False,
         enable_baseline=False,
+        enable_eric=False,
+        enable_jack=False,
+        enable_cvd=False,
     )
 
 
@@ -99,6 +102,7 @@ def test_htf_bear_filters_bull_boll_break():
         enable_fib_zone=False,
         enable_baseline=False,
         enable_cvd=False,
+        enable_eric=False,
         adx_min_trend=0,
         htf_bias="bear",
         boll_min_vol_ratio=0.5,

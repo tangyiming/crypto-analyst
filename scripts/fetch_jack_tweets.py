@@ -45,7 +45,7 @@ import httpx
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / ".cache" / "jack_tweets"
+OUT_DIR = ROOT / ".cache" / "jack_tweets"  # 运行时可由 --out-dir / username 覆盖
 API_BASE = "https://api.x.com/2"
 NITTER_RSS = [
     "https://nitter.net/{username}/rss",

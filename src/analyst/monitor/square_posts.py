@@ -293,3 +293,145 @@ def maybe_post_jack_regime(
         result.get("shareLink"),
     )
     return {"text": text, "result": result, "symbol": sym, "timeframe": tf}
+
+
+# ── Eric 超卖信号（BTC/ETH × 日线/周线）→ 广场短文 ──
+
+_ERIC_HOOK = {
+    "weekly_watch": "周线超卖来了，这是 {tag} 过去几年最值钱的信号之一",
+    "weekly_entry": "{tag} 周线超卖后拐头确认，反弹窗口打开",
+    "weekly_entry_half": "{tag} 周线超卖叠上支撑/背离，先进半仓等拐头",
+    "daily_oversold": "{tag} 日线进入超卖区，先看反弹，不赌反转",
+    "weekly_tp1": "{tag} 周线超卖多单到第一目标，机械止盈一半",
+    "weekly_tp2": "{tag} 余仓离场，这一轮周线超卖反弹交卷",
+    "weekly_stop": "{tag} 周线超卖多单止损，认错不扛单",
+}
+
+
+def compose_eric_square_post(
+    *,
+    symbol: str,
+    kind: str,
+    price: float,
+    bf_value: float | None,
+    reasons: list[str] | None = None,
+    plan: dict[str, Any] | None = None,
+) -> str:
+    """Eric 波段过滤器超卖短文：钩子 + 读数 + 计划点位 + 定性 + 免责 + 标签。"""
+    tag = _cashtag(symbol)
+    hook = _ERIC_HOOK.get(kind, "{tag} 波段过滤器触发超卖").format(tag=tag)
+    lines = [
+        hook,
+        f"现价 {_fmt_price(price)}"
+        + (f" · 过滤器读数 {bf_value:+.0f}（≤-40 为超卖）" if bf_value is not None else ""),
+    ]
+    plan = plan or {}
+    if kind == "weekly_watch":
+        lines.append("历史上周线超卖后 8 周中位涨幅约 +20%，但首根就买 45% 会先被止损打掉——等读数拐头再进。")
+        if plan.get("episode_low"):
+            lines.append(f"预备止损：段最低 {_fmt_price(plan['episode_low'])} 下方 3%。")
+    elif kind == "weekly_entry":
+        if plan.get("stop") is not None and plan.get("tp1") is not None:
+            lines.append(
+                f"计划｜止损 {_fmt_price(plan['stop'])} · 一半止盈 {_fmt_price(plan['tp1'])}"
+                "（或日线超买/周EMA21）· 余仓从高点回撤 20% 离场"
+            )
+        lines.append("仓位按止损距离反推：每笔只拿权益 2% 去亏。")
+    elif kind == "weekly_entry_half":
+        lines.append(
+            f"Buff 叠够（{plan.get('buff', '—')} 分）但读数还没拐头：先进一半，止损 {_fmt_price(plan.get('stop'))}，拐头再加另一半。"
+        )
+        lines.append("超卖 + 前低支撑 + 底背离，是 Eric 真正的组合进场，不是看到超卖就买。")
+    elif kind == "weekly_tp1":
+        pnl = plan.get("pnl_pct")
+        lines.append(
+            "卖出 1/2"
+            + (f"，这一半 {pnl:+.1f}%" if pnl is not None else "")
+            + f"；止损上移到成本 {_fmt_price(plan.get('stop'))}，余仓从最高价回撤 20% 再走。"
+        )
+        lines.append("止盈不是看顶，是把利润锁一半、让另一半免费跑。")
+    elif kind == "weekly_tp2":
+        pnl = plan.get("pnl_pct")
+        first = plan.get("tp1_pnl_pct")
+        seg = []
+        if first is not None:
+            seg.append(f"第一半 {first:+.1f}%")
+        if pnl is not None:
+            seg.append(f"余仓 {pnl:+.1f}%")
+        lines.append("全部离场" + ("：" + " · ".join(seg) if seg else "") + "。反弹目标达成，不猜后面是继续涨还是拐头。")
+        lines.append("下一次周线超卖，我们再见。")
+    elif kind == "weekly_stop":
+        pnl = plan.get("pnl_pct")
+        lines.append(
+            "跌破止损"
+            + (f"，本笔 {pnl:+.1f}%" if pnl is not None else "")
+            + "。计划内的亏损，等下一次信号。"
+        )
+    else:
+        lines.append("日线超卖 = 技术性反弹机会，目标看 EMA21/前高；结构破位后的超卖参考价值打折。")
+    for r in (reasons or [])[:1]:
+        if r and "过滤器" not in r and len(r) < 60:
+            lines.append(r)
+    lines.append("做反弹，不赌反转。")
+    lines.append(DISCLAIMER)
+    lines.append(_tag_line(symbol))
+    text = "\n".join(lines)
+    if len(text) > 900:
+        text = text[:897] + "…"
+    return text
+
+
+def maybe_post_eric_signal(
+    *,
+    symbol: str,
+    kind: str,
+    price: float,
+    bf_value: float | None,
+    marker_time: int | None,
+    reasons: list[str] | None = None,
+    plan: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Eric 超卖信号发广场。仅 BTC/ETH；同一根 K 只发一次；受 square_post_enabled 与 key 约束。"""
+    from analyst.compute.band_filter import eric_symbol_validated
+
+    settings = get_settings()
+    if not getattr(settings, "square_post_enabled", False):
+        return None
+    if not getattr(settings, "square_post_eric_enabled", True):
+        return None
+    key = (getattr(settings, "binance_square_openapi_key", "") or "").strip()
+    if not key:
+        logger.warning("Square 已启用但未配置 BINANCE_SQUARE_OPENAPI_KEY，跳过 Eric 短文")
+        return None
+    sym = _norm_symbol(symbol)
+    if not eric_symbol_validated(sym):
+        return None
+    if kind not in _ERIC_HOOK:
+        return None
+    cool_key = f"eric|{sym}|{kind}"
+    state = _load_cooldown()
+    bar = float(marker_time or 0)
+    if bar > 0 and state.get(cool_key) == bar:
+        return None
+    # 同一品种同类信号至少间隔 20 小时（日线一根一次；周线 watch/entry 各一次）
+    last_at = state.get(cool_key + "|at")
+    now = time.time()
+    if last_at is not None and now - last_at < 20 * 3600:
+        return None
+    text = compose_eric_square_post(
+        symbol=sym, kind=kind, price=price, bf_value=bf_value, reasons=reasons, plan=plan
+    )
+    try:
+        result = post_text(key, text)
+    except SquareApiError as e:
+        logger.error(
+            "Square Eric 发帖失败 code=%s msg=%s key=%s %s", e.code, e.message, mask_key(key), cool_key
+        )
+        raise
+    state[cool_key] = bar
+    state[cool_key + "|at"] = now
+    _save_cooldown(state)
+    logger.info(
+        "Square 已发 Eric 短文 %s id=%s link=%s", cool_key, result.get("id"), result.get("shareLink")
+    )
+    return {"text": text, "result": result, "symbol": sym, "kind": kind}

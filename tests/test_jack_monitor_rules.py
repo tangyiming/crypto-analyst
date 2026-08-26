@@ -45,6 +45,7 @@ def _quiet_cfg() -> RuleConfig:
         enable_fib_zone=False,
         enable_baseline=False,
         enable_cvd=False,
+        enable_eric=False,
         enable_jack=True,
     )
 

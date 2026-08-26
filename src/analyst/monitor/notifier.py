@@ -126,6 +126,8 @@ def format_rule_alert_text(symbol: str, timeframe: str, alert: dict) -> str:
         )
     if rule == "ai_plan":
         lines.append("AI 盯盘点评 · 仅提醒 · 不开仓")
+    elif rule.startswith("eric_swing"):
+        lines.append("Eric 周线波段计划 · 人工执行 · 仓位按风险定")
     else:
         lines.append("规则提醒 only，不下单 / 非开仓信号")
     return "\n".join(lines)

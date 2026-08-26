@@ -39,6 +39,7 @@ from analyst.monitor.rules import (
     evaluate_premium_rules,
     is_ai_candidate,
     rule_event_to_alert,
+    RuleEvent,
 )
 from analyst.compute.level_context import (
     LevelSnapshot,
@@ -197,6 +198,8 @@ class MonitorHub:
         self._jack_pair: dict[str, tuple[Any, Any]] = {}
         self._jack_alert_state: dict[str, dict[str, Any]] = {}
         self._jack_pair_at: dict[str, float] = {}
+        # Eric 周线超卖波段计划：按品种持久化状态（跨重启保留持仓阶段）
+        self._eric_swing_state: dict[str, dict[str, Any]] | None = None
 
     def _daemon_state_path(self) -> Any:
         from pathlib import Path
@@ -890,6 +893,10 @@ class MonitorHub:
                         await self._push_level_context(key.symbol, float(mark))
                     except Exception:
                         logger.exception("level context push failed %s", key.symbol)
+                    try:
+                        await self._eric_swing_mark_check(worker, float(mark))
+                    except Exception:
+                        logger.exception("eric swing mark check failed %s", key.symbol)
                 settings = get_settings()
                 if settings.monitor_rules_enabled:
                     # funding/溢价与 K 线周期无关：只由挂 mark 的那条 worker 告警
@@ -1001,6 +1008,11 @@ class MonitorHub:
             enable_funding=s.monitor_rule_funding,
             enable_premium=s.monitor_rule_premium,
             enable_jack=s.monitor_rule_jack,
+            enable_eric=s.monitor_rule_eric,
+            eric_rsi_oversold=float(s.monitor_eric_rsi_oversold or 30),
+            eric_rsi_overbought=float(s.monitor_eric_rsi_overbought or 70),
+            eric_cooldown_bars=int(s.monitor_eric_cooldown_bars or 8),
+            eric_min_buff=int(getattr(s, "monitor_eric_min_buff", None) or 4),
             funding_extreme_pct=s.monitor_funding_extreme_pct,
             premium_extreme_pct=s.monitor_premium_extreme_pct,
             volume_spike_ratio=s.monitor_volume_spike_ratio,
@@ -1008,6 +1020,19 @@ class MonitorHub:
             adx_min_trend=float(s.monitor_adx_min_trend or 0),
             htf_bias=htf_bias if s.monitor_htf_filter else "mixed",
         )
+
+    def _htf_series_for(self, worker: StreamWorker):
+        """更高一级周期的 K 线序列（供 Eric MTF 共振）。"""
+        nxt = {"5m": "15m", "15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w"}.get(
+            worker.key.timeframe.lower()
+        )
+        if not nxt:
+            return None
+        key = str(StreamKey(worker.key.symbol, nxt, worker.key.market))
+        hw = self._workers.get(key)
+        if not hw or len(hw.series.candles) < 60:
+            return None
+        return hw.series
 
     def _htf_bias_for(self, worker: StreamWorker) -> str:
         """用更高一级周期的 EMA 排列给当前 K 定调。"""
@@ -1048,6 +1073,314 @@ class MonitorHub:
         if len(series.candles) < min_bars:
             return series
         return series
+
+    # ── Eric 周线超卖波段计划 ──
+    def _eric_swing_state_path(self) -> Path:
+        return Path(get_settings().data_cache_dir) / "eric_swing_state.json"
+
+    def _load_eric_swing_state(self) -> dict[str, dict[str, Any]]:
+        if self._eric_swing_state is not None:
+            return self._eric_swing_state
+        path = self._eric_swing_state_path()
+        data: dict[str, dict[str, Any]] = {}
+        try:
+            if path.is_file():
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    data = {str(k): dict(v) for k, v in raw.items() if isinstance(v, dict)}
+        except Exception as e:
+            logger.warning("load eric swing state failed: %s", e)
+        self._eric_swing_state = data
+        return data
+
+    def _save_eric_swing_state(self) -> None:
+        if self._eric_swing_state is None:
+            return
+        path = self._eric_swing_state_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(self._eric_swing_state, ensure_ascii=False, indent=1),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("save eric swing state failed: %s", e)
+
+    @staticmethod
+    def _closed_only(series: CandleSeries | None, timeframe: str) -> CandleSeries | None:
+        """REST 拉到的最后一根通常是未收盘 K，按周期秒数裁掉。"""
+        if not series or not series.candles:
+            return None
+        span = {"1d": 86400, "1w": 7 * 86400, "1M": 31 * 86400}.get(timeframe, _tf_seconds(timeframe))
+        last = series.candles[-1].timestamp
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        if last.timestamp() + span > datetime.now(timezone.utc).timestamp():
+            return CandleSeries(series.symbol, series.timeframe, list(series.candles[:-1]))
+        return series
+
+    async def _evaluate_eric_swing(self, worker: StreamWorker) -> None:
+        """周线超卖 → 拐头开多 → 一半止盈 → 余仓回撤离场；只在 4h/1d/1w 收盘时评估，按品种去重。"""
+        s = get_settings()
+        if not getattr(s, "monitor_rule_eric_swing", True):
+            return
+        tf = worker.key.timeframe.lower()
+        if tf not in ("4h", "1d", "1w"):
+            return
+        sym, market = worker.key.symbol, worker.key.market
+        allowed = {
+            _norm_symbol(x) for x in str(getattr(s, "monitor_eric_swing_symbols", "") or "").split(",") if x.strip()
+        }
+        if allowed and _norm_symbol(sym) not in allowed:
+            return
+        # 同品种若有 1d worker，只由 1d 评估；否则由 4h 评估（fetch 有缓存，日/周线 REST 很便宜）
+        if tf == "4h" and str(StreamKey(sym, "1d", market)) in self._workers:
+            return
+        from analyst.compute.eric_swing import advance
+
+        weekly = self._closed_only(
+            await self._htf_series(sym, "1w", market, min_bars=80, fetch_limit=300), "1w"
+        )
+        daily = self._closed_only(
+            await self._htf_series(sym, "1d", market, min_bars=40, fetch_limit=300), "1d"
+        )
+        monthly = self._closed_only(
+            await self._htf_series(sym, "1M", market, min_bars=25, fetch_limit=120), "1M"
+        )
+        if weekly is None or len(weekly.candles) < 60:
+            return
+        states = self._load_eric_swing_state()
+        # Eric 日线/周线规则（超卖/超买/Buff/EMA/MTF）：没有对应 worker 时，用这里的 REST 序列评估，每根新 K 一次
+        try:
+            await self._evaluate_eric_htf_rules(worker, states, sym, market, daily=daily, weekly=weekly, monthly=monthly)
+        except Exception:
+            logger.exception("eric htf rules failed %s", sym)
+        prev = states.get(sym)
+        if prev is None:
+            # 冷启动：回放历史得到当前阶段（不发历史事件），避免错过已在进行中的持仓阶段
+            from analyst.compute.eric_swing import replay
+
+            prev = replay(weekly, daily)
+            states[sym] = prev
+            self._save_eric_swing_state()
+            logger.info("eric swing 冷启动回放 %s → phase=%s", sym, prev.get("phase"))
+        events, new_state = advance(
+            prev, weekly, daily, monthly=monthly,
+            risk_pct=float(getattr(s, "monitor_eric_swing_risk_pct", 2.0) or 2.0),
+        )
+        if new_state != prev:
+            states[sym] = new_state
+            self._save_eric_swing_state()
+        for ev in events:
+            plan = dict(ev.plan)
+            if ev.kind == "entry":
+                plan.update(
+                    entry_low=ev.plan.get("entry"),
+                    entry_high=ev.plan.get("entry"),
+                    stop_loss=ev.plan.get("stop"),
+                    take_profit_1=ev.plan.get("tp1"),
+                )
+            re = RuleEvent(
+                rule=f"eric_swing_{ev.kind}",
+                title=ev.title,
+                direction=ev.direction if ev.direction in ("long", "short") else "long",
+                strength=0.9 if ev.kind in ("entry", "entry_half", "stop", "near") else (0.4 if ev.kind == "status" else 0.75),
+                price=ev.price,
+                reasons=list(ev.reasons),
+                break_level=ev.plan.get("stop"),
+                marker_time=ev.marker_time,
+                extras={"plan": plan, "eric_swing": {"kind": ev.kind, "phase": new_state.get("phase")}},
+            )
+            ra = rule_event_to_alert(sym, "1w" if ev.kind in ("watch", "entry", "entry_half") else "1d", re)
+            await self._emit_rule_alert(worker, ra)
+            # 观察/开仓/止盈一半/余仓离场/止损 都发广场（Eric 每次止盈也公开说）；心跳/预警只走 TG/页面
+            if ev.kind in ("watch", "entry", "entry_half", "tp1", "tp2", "stop"):
+                sq_plan = dict(ev.plan)
+                if ev.kind == "tp1" and prev.get("entry"):
+                    sq_plan["pnl_pct"] = (float(ev.price) / float(prev["entry"]) - 1) * 100
+                if ev.kind == "tp2" and prev.get("entry") and prev.get("tp1_price"):
+                    sq_plan["tp1_pnl_pct"] = (float(prev["tp1_price"]) / float(prev["entry"]) - 1) * 100
+                await self._maybe_square_eric_post(
+                    worker,
+                    symbol=sym,
+                    timeframe="1w" if ev.kind in ("watch", "entry") else "1d",
+                    kind=f"weekly_{ev.kind}",
+                    price=float(ev.price),
+                    bf_value=None,
+                    marker_time=ev.marker_time,
+                    reasons=list(ev.reasons),
+                    plan=sq_plan,
+                )
+
+    async def _eric_swing_mark_check(self, worker: StreamWorker, mark: float) -> None:
+        """持仓中按实时标记价检查止损（止盈仍按日线收盘）。"""
+        s = get_settings()
+        if not getattr(s, "monitor_rule_eric_swing", True):
+            return
+        sym = worker.key.symbol
+        from analyst.compute.band_filter import eric_symbol_validated
+
+        if not eric_symbol_validated(sym):
+            return
+        states = self._eric_swing_state
+        if not states:
+            return
+        st = states.get(sym)
+        if not st or st.get("phase") not in ("long", "runner"):
+            return
+        from analyst.compute.eric_swing import check_mark_stop
+
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        events, new_state = check_mark_stop(st, mark, now_ts)
+        if not events:
+            return
+        states[sym] = new_state
+        self._save_eric_swing_state()
+        for ev in events:
+            re = RuleEvent(
+                rule="eric_swing_stop",
+                title=ev.title,
+                direction="short",
+                strength=0.9,
+                price=ev.price,
+                reasons=list(ev.reasons),
+                break_level=st.get("stop"),
+                marker_time=ev.marker_time,
+                extras={"plan": dict(ev.plan), "eric_swing": {"kind": "stop", "phase": "flat", "source": "mark"}},
+            )
+            await self._emit_rule_alert(worker, rule_event_to_alert(sym, "1d", re))
+            sq_plan = dict(ev.plan)
+            await self._maybe_square_eric_post(
+                worker, symbol=sym, timeframe="1d", kind="weekly_stop", price=float(ev.price),
+                bf_value=None, marker_time=ev.marker_time, reasons=list(ev.reasons), plan=sq_plan,
+            )
+
+    async def _maybe_square_eric_post(
+        self,
+        worker: StreamWorker,
+        *,
+        symbol: str,
+        timeframe: str,
+        kind: str,
+        price: float,
+        bf_value: float | None,
+        marker_time: int | None,
+        reasons: list[str] | None = None,
+        plan: dict[str, Any] | None = None,
+    ) -> None:
+        """Eric 超卖信号 → 币安广场短文（受 square_post_enabled / SQUARE_POST_ERIC_ENABLED 约束）。"""
+        if not getattr(get_settings(), "square_post_enabled", False):
+            return
+        from analyst.monitor.square_posts import maybe_post_eric_signal
+
+        try:
+            out = await asyncio.to_thread(
+                maybe_post_eric_signal,
+                symbol=symbol,
+                kind=kind,
+                price=price,
+                bf_value=bf_value,
+                marker_time=marker_time,
+                reasons=reasons,
+                plan=plan,
+            )
+        except Exception:
+            logger.exception("square eric post failed %s %s", symbol, kind)
+            return
+        if not out:
+            return
+        result = out.get("result") or {}
+        await self._emit_rule_alert(
+            worker,
+            {
+                "type": "alert",
+                "rule": "square_post",
+                "title": "币安广场已发 Eric 短文",
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "direction": "info",
+                "strength": 0.55,
+                "price": price,
+                "pattern": "square_post",
+                "break_level": None,
+                "reasons": [
+                    f"{kind} · id={result.get('id') or '—'}",
+                    str(result.get("shareLink") or "—")[:180],
+                ],
+                "filters_passed": ["square_post", f"eric_{kind}"],
+                "marker_time": int(datetime.now(timezone.utc).timestamp()),
+                "plan": None,
+                "kelly": None,
+                "trail_note": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "demo": False,
+            },
+        )
+
+    @staticmethod
+    def _bias_from_series(series: CandleSeries | None) -> str:
+        if series is None or len(series.candles) < 60:
+            return "mixed"
+        try:
+            ind = compute_all(series)
+            return ema_trend_bias(ind.ema.ema7, ind.ema.ema30, ind.ema.ema52)
+        except Exception:
+            return "mixed"
+
+    async def _evaluate_eric_htf_rules(
+        self,
+        worker: StreamWorker,
+        states: dict[str, dict[str, Any]],
+        sym: str,
+        market: str,
+        *,
+        daily: CandleSeries | None,
+        weekly: CandleSeries | None,
+        monthly: CandleSeries | None,
+    ) -> None:
+        """BTC/ETH 的日线、周线 Eric 规则；按最后一根已收盘 K 的时间戳去重。"""
+        s = get_settings()
+        if not s.monitor_rules_enabled or not s.monitor_rule_eric:
+            return
+        meta = states.setdefault(f"{sym}__eric_rules", {})
+        for tf, ser, htf in (("1d", daily, weekly), ("1w", weekly, monthly)):
+            if ser is None or len(ser.candles) < 60:
+                continue
+            if str(StreamKey(sym, tf, market)) in self._workers:
+                continue  # 有实时 worker 时由其收盘评估负责
+            last_ts = int(ser.candles[-1].timestamp.replace(tzinfo=timezone.utc).timestamp()) if ser.candles[-1].timestamp.tzinfo is None else int(ser.candles[-1].timestamp.timestamp())
+            if meta.get(f"ts_{tf}") == last_ts:
+                continue
+            meta[f"ts_{tf}"] = last_ts
+            cfg = RuleConfig(
+                enable_macd=False, enable_ema_stack=False, enable_boll=False, enable_volume=False,
+                enable_structure_touch=False, enable_structure_flip=False, enable_fib_zone=False,
+                enable_baseline=False, enable_cvd=False, enable_jack=False, enable_eric=True,
+                eric_rsi_oversold=float(s.monitor_eric_rsi_oversold or 30),
+                eric_rsi_overbought=float(s.monitor_eric_rsi_overbought or 70),
+                eric_cooldown_bars=int(s.monitor_eric_cooldown_bars or 8),
+                eric_min_buff=int(getattr(s, "monitor_eric_min_buff", None) or 4),
+                htf_bias=self._bias_from_series(htf),
+            )
+            rule_state = dict(meta.get(f"state_{tf}") or {})
+            events, rule_state = evaluate_closed_bar_rules(ser, rule_state, cfg, htf_series=htf)
+            meta[f"state_{tf}"] = {k: v for k, v in rule_state.items() if k == "eric_cooldown"}
+            self._save_eric_swing_state()
+            for ev in events:
+                if not str(ev.rule).startswith("eric_"):
+                    continue
+                await self._emit_rule_alert(worker, rule_event_to_alert(sym, tf, ev))
+                if ev.rule == "eric_oversold" and tf == "1d":
+                    await self._maybe_square_eric_post(
+                        worker,
+                        symbol=sym,
+                        timeframe=tf,
+                        kind="daily_oversold",
+                        price=float(ev.price),
+                        bf_value=(ev.extras or {}).get("eric", {}).get("filter"),
+                        marker_time=ev.marker_time,
+                        reasons=list(ev.reasons),
+                    )
 
     async def _refresh_jack_live(
         self, worker: StreamWorker, *, ttl: float = 20.0
@@ -1966,6 +2299,7 @@ class MonitorHub:
                     self._rule_config(self._htf_bias_for(worker)),
                     jack=jack,
                     jack_regime=jack_regime,
+                    htf_series=self._htf_series_for(worker),
                 )
                 worker.rule_state = new_state
                 self._jack_alert_state[worker.key.symbol] = {
@@ -1989,6 +2323,17 @@ class MonitorHub:
                         worker.key.symbol, worker.key.timeframe, ev
                     )
                     await self._emit_rule_alert(worker, ra)
+                    if ev.rule == "eric_oversold" and worker.key.timeframe.lower() == "1d":
+                        await self._maybe_square_eric_post(
+                            worker,
+                            symbol=worker.key.symbol,
+                            timeframe="1d",
+                            kind="daily_oversold",
+                            price=float(ev.price),
+                            bf_value=(ev.extras or {}).get("eric", {}).get("filter"),
+                            marker_time=ev.marker_time,
+                            reasons=list(ev.reasons),
+                        )
                 # Jack 三盘变化 → 币安广场短评（仅 jack_regime，白名单品种/周期）
                 try:
                     await self._maybe_square_jack_posts(
@@ -2035,6 +2380,11 @@ class MonitorHub:
             await self._evaluate_ratio_pairs(worker)
         except Exception:
             logger.exception("ratio pairs evaluate failed %s", worker.key)
+
+        try:
+            await self._evaluate_eric_swing(worker)
+        except Exception:
+            logger.exception("eric swing evaluate failed %s", worker.key)
 
         try:
             await self._maybe_ai_confirm(
