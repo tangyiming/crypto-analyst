@@ -1075,11 +1075,94 @@ def digest(
             telegram_bot_token=s.telegram_bot_token,
             telegram_chat_id=s.telegram_chat_id,
         )
-        try:
-            n.send_text(out.get("text", ""))
-            console.print("[green]已推送 Telegram[/green]")
-        except Exception as e:
-            console.print(f"[yellow]TG 发送失败：{e}[/yellow]")
+        n.send_text(out.get("text") or "")
+        console.print("[green]已推送 Telegram[/green]")
+
+
+@app.command("square-post")
+def square_post_cmd(
+    text: str = typer.Option("", "--text", help="直接发这段文案（测试用）"),
+    symbol: str = typer.Option("BTC/USDT", "--symbol", help="预览用品种"),
+    timeframe: str = typer.Option("4h", "--timeframe", "-t"),
+    publish: bool = typer.Option(
+        False, "--publish", help="真发到币安广场（默认只预览文案）"
+    ),
+):
+    """广场短评：预览 Jack 文案，或用 --publish / --text 真发。"""
+    from analyst.config import get_settings
+    from analyst.integrations.binance_square import mask_key, post_text
+    from analyst.monitor.square_posts import compose_jack_square_post
+
+    s = get_settings()
+    body = (text or "").strip()
+    if not body:
+        # 最小可预览：用假锁点结构拼一版示意（真链路走盯盘 jack_regime）
+        from analyst.compute.jack_levels import JackLevels
+        from analyst.compute.jack_regime import JackRegime
+
+        jack = JackLevels(
+            swing_high=70000,
+            swing_low=60000,
+            rebound_382=63820,
+            rebound_500=65000,
+            rebound_618=66180,
+            retr_382=66180,
+            retr_618=63820,
+            boll_mid=64000,
+            confluence_382=False,
+            confluence_618=False,
+            daily_bias="up",
+            defense_level=62000,
+            htf_ready=True,
+            horizon="swing",
+            touch_level=67000,
+            touch_count=1,
+            rs_note="—",
+            summary_line="预览",
+        )
+        reg = JackRegime(
+            regime="strong_trend",
+            regime_zh="强势盘",
+            trade_side="long",
+            seed_style="market",
+            add_mode="breakout",
+            tp_style="new_high",
+            defense_broken=False,
+            continuation_intact=True,
+            nearest_support=62000,
+            nearest_resistance=67000,
+            prev_day_high=None,
+            prev_day_low=None,
+            intraday_high=None,
+            intraday_low=None,
+            tp_intraday_50=None,
+            tp_intraday_618=None,
+            ema12h_6=None,
+            spike_stop_recent=False,
+            playbook_line="市价小头仓 + 突破近阻力加仓",
+            summary_line="预览短评",
+        )
+        body = compose_jack_square_post(
+            symbol=symbol, timeframe=timeframe, price=65000.0, jack=jack, regime=reg
+        )
+        console.print("[dim]（示意文案；真发帖由盯盘 jack_regime 触发）[/dim]\n")
+
+    console.print(body)
+    if not publish and not text:
+        console.print("\n[yellow]加 --publish --text '...' 才会真发[/yellow]")
+        return
+    if not publish:
+        console.print("\n[yellow]未加 --publish，只预览[/yellow]")
+        return
+    key = (s.binance_square_openapi_key or "").strip()
+    if not key:
+        console.print("[red]未配置 BINANCE_SQUARE_OPENAPI_KEY[/red]")
+        raise typer.Exit(1)
+    with console.status(f"[bold cyan]发帖中 key={mask_key(key)}..."):
+        result = post_text(key, body)
+    console.print(
+        f"[green]已发[/green] id={result.get('id')} link={result.get('shareLink')}"
+    )
 
 
 @app.command("research-ideas")

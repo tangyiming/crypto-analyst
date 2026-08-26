@@ -1868,6 +1868,67 @@ class MonitorHub:
             logger.warning("AI 确认失败 → TG %s（本次故障只推一次）", worker.key)
             await self._notify_telegram_text(text)
 
+    async def _maybe_square_jack_posts(
+        self,
+        worker: StreamWorker,
+        events: list[Any],
+        *,
+        jack: Any,
+        jack_regime: Any,
+    ) -> None:
+        """仅 jack_regime 事件：发币安广场短评（真发，受白名单与冷却约束）。"""
+        if jack_regime is None:
+            return
+        hits = [e for e in events if getattr(e, "rule", None) == "jack_regime"]
+        if not hits:
+            return
+        settings = get_settings()
+        if not getattr(settings, "square_post_enabled", False):
+            return
+        price = float(hits[0].price) if hits[0].price else (
+            float(worker.series.candles[-1].close) if worker.series.candles else 0.0
+        )
+        from analyst.monitor.square_posts import maybe_post_jack_regime
+
+        out = await asyncio.to_thread(
+            maybe_post_jack_regime,
+            symbol=worker.key.symbol,
+            timeframe=worker.key.timeframe,
+            price=price,
+            jack=jack,
+            regime=jack_regime,
+        )
+        if not out:
+            return
+        result = out.get("result") or {}
+        link = result.get("shareLink") or "—"
+        pid = result.get("id") or "—"
+        # 页面+可选 TG：告知已发广场
+        alert = {
+            "type": "alert",
+            "rule": "square_post",
+            "title": "币安广场已发帖",
+            "symbol": worker.key.symbol,
+            "timeframe": worker.key.timeframe,
+            "direction": "info",
+            "strength": 0.55,
+            "price": price,
+            "pattern": "square_post",
+            "break_level": None,
+            "reasons": [
+                f"三盘短评已发 · id={pid}",
+                str(link)[:180],
+            ],
+            "filters_passed": ["square_post", "jack_regime"],
+            "marker_time": int(datetime.now(timezone.utc).timestamp()),
+            "plan": None,
+            "kelly": None,
+            "trail_note": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "demo": False,
+        }
+        await self._emit_rule_alert(worker, alert)
+
     async def _evaluate_and_alert(self, worker: StreamWorker) -> None:
         settings = get_settings()
         candidate_rules: list[str] = []
@@ -1928,6 +1989,13 @@ class MonitorHub:
                         worker.key.symbol, worker.key.timeframe, ev
                     )
                     await self._emit_rule_alert(worker, ra)
+                # Jack 三盘变化 → 币安广场短评（仅 jack_regime，白名单品种/周期）
+                try:
+                    await self._maybe_square_jack_posts(
+                        worker, events, jack=jack, jack_regime=jack_regime
+                    )
+                except Exception:
+                    logger.exception("square jack post failed %s", worker.key)
             except Exception:
                 logger.exception("rule evaluate failed %s", worker.key)
 

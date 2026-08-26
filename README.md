@@ -79,6 +79,8 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 
 关闭：`MONITOR_RULE_JACK=false`。
 
+**币安广场**：`SQUARE_POST_ENABLED=true` 且配置 `BINANCE_SQUARE_OPENAPI_KEY` 后，盯盘 1h/4h 上 `jack_regime`（三盘/方向变化）会自动发短评（看涨/看跌钩子 + 点位预测 + `$币种/#标签` + 免责声明）。默认品种 `BTC,ETH,BNB,SOL,AAVE`，同币同周期冷却 4h。预览：`analyst square-post`；试发：`analyst square-post --publish --text '...'`。
+
 | 盘面 | 打法 |
 |------|------|
 | **强势盘** | 市价小头仓 + 突破近阻力/昨高加仓，新高止盈 |
@@ -333,7 +335,8 @@ crypto-analyst/
 │   ├── compute/market_schedule.py    # 时段 / 时钟 / FF 宏观日历
 │   ├── compute/jack_levels.py        # 波段锁点预计算
 │   ├── compute/jack_regime.py        # 三盘分类 + playbook
-│   ├── compute/position_sizing.py    # 头仓/补仓分层
+│   ├── integrations/binance_square.py # 币安广场 OpenAPI 发帖
+│   ├── monitor/square_posts.py       # Jack → 广场短评
 │   ├── monitor/jack_live.py          # 盯盘收盘预计算三盘
 │   ├── monitor/schedule_reminders.py # 日程 TG 提前提醒轮询
 │   ├── web/schedule_routes.py        # GET /api/schedule

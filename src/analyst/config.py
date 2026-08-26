@@ -144,6 +144,16 @@ class Settings(BaseSettings):
     monitor_digest_enabled: bool = Field(default=True)
     monitor_digest_utc_hour: int = Field(default=5)  # UTC 5 点 = 迪拜早 9 点
 
+    # 币安广场：Jack 三盘变化时自动发短评（真发；需 OpenAPI Key）
+    # 申请：https://www.binance.com/square/creator-center/home
+    binance_square_openapi_key: str = Field(default="")
+    square_post_enabled: bool = Field(default=False)
+    square_post_symbols: str = Field(
+        default="BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,AAVE/USDT"
+    )
+    square_post_timeframes: str = Field(default="1h,4h")
+    square_post_cooldown_hours: float = Field(default=4.0)
+
     # ── 新闻事件风控哨兵 ──
     monitor_news_enabled: bool = Field(default=True)
     monitor_news_interval_min: int = Field(default=30)
