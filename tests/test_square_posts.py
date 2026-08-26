@@ -63,13 +63,14 @@ def test_compose_jack_square_post_has_direction_and_levels():
     assert "$BTC" in text
     assert "#BTC" in text
     assert "#Bitcoin" in text
+    assert "#crypto" not in text
+    assert "#合约" not in text
     assert "看涨" in text
     assert "预测" in text
     assert "强势盘" in text
     assert "偏多" in text
     assert "62000" in text or "62000.00" in text
     assert "非投资建议" in text
-    assert "#crypto" in text
 
 
 def test_compose_short_prediction_and_tags():
@@ -88,6 +89,7 @@ def test_compose_short_prediction_and_tags():
     assert "$ETH" in text
     assert "#ETH" in text
     assert "#Ethereum" in text
+    assert "#crypto" not in text
     assert "预测" in text
 
 

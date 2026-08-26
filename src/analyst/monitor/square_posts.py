@@ -20,15 +20,14 @@ logger = logging.getLogger(__name__)
 
 DISCLAIMER = "⚠️ 非投资建议，仅供参考，盈亏自负。"
 
-# 广场标签：cashtag + hashtag，方便搜索与话题页曝光
+# 引流优先：cashtag 进币种页（高意向），再补 1～2 个币种话题；少堆通用标签
 _COIN_TAGS: dict[str, tuple[str, ...]] = {
-    "BTC": ("$BTC", "#BTC", "#Bitcoin", "#BTCUSDT"),
-    "ETH": ("$ETH", "#ETH", "#Ethereum", "#ETHUSDT"),
-    "BNB": ("$BNB", "#BNB", "#BNBUSDT"),
-    "SOL": ("$SOL", "#SOL", "#Solana", "#SOLUSDT"),
-    "AAVE": ("$AAVE", "#AAVE", "#AAVEUSDT"),
+    "BTC": ("$BTC", "#BTC", "#Bitcoin"),
+    "ETH": ("$ETH", "#ETH", "#Ethereum"),
+    "BNB": ("$BNB", "#BNB"),
+    "SOL": ("$SOL", "#SOL", "#Solana"),
+    "AAVE": ("$AAVE", "#AAVE"),
 }
-_COMMON_TAGS = ("#crypto", "#Binance", "#合约", "#行情分析")
 
 
 def _norm_symbol(symbol: str) -> str:
@@ -50,12 +49,12 @@ def _cashtag(symbol: str) -> str:
 
 
 def _tag_line(symbol: str) -> str:
+    """只留 cashtag + 币种话题，进币种页/话题流；不堆通用标签。"""
     base = _base_asset(symbol)
-    coin = _COIN_TAGS.get(base, (f"${base}", f"#{base}", f"#{base}USDT"))
-    # 去重保序
+    tags = _COIN_TAGS.get(base, (f"${base}", f"#{base}"))
     seen: set[str] = set()
     out: list[str] = []
-    for t in (*coin, *_COMMON_TAGS):
+    for t in tags:
         if t not in seen:
             seen.add(t)
             out.append(t)
