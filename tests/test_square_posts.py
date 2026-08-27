@@ -62,7 +62,6 @@ def test_compose_jack_square_post_has_direction_and_levels():
     )
     assert "$BTC" in text
     assert "$BTC" in text  # 标签行已按用户要求去掉，只保留首行 cashtag
-    assert "#Bitcoin" in text
     assert "#crypto" not in text
     assert "#合约" not in text
     assert "看涨" in text
@@ -88,7 +87,6 @@ def test_compose_short_prediction_and_tags():
     assert "看跌" in text
     assert "$ETH" in text
     assert "$ETH" in text
-    assert "#Ethereum" in text
     assert "#crypto" not in text
     assert "预测" in text
 
