@@ -66,10 +66,10 @@ def _fmt_price(x: float | None) -> str:
     if x is None:
         return "—"
     ax = abs(float(x))
-    if ax >= 1000:
-        return f"{x:.2f}"
+    if ax >= 10:
+        return f"{x:.2f}"  # Jack 写法：SOL 106.75 / BNB 812.34 / BTC 63750.00
     if ax >= 1:
-        return f"{x:.4f}"
+        return f"{x:.3f}"
     return f"{x:.6f}"
 
 
@@ -265,6 +265,28 @@ def _numbers(text: str) -> set[str]:
     return out
 
 
+
+def _missing_numbers(want: set[str], got: set[str], rel_tol: float = 1e-3) -> set[str]:
+    """原文数字在润色稿里找不到的集合；允许 ±0.1% 的四舍五入（101.5747 → 101.57 视为保留）。"""
+    if not want:
+        return set()
+    got_vals = []
+    for g in got:
+        try:
+            got_vals.append(float(g))
+        except ValueError:
+            continue
+    missing: set[str] = set()
+    for w in want - got:
+        try:
+            wv = float(w)
+        except ValueError:
+            continue
+        tol = max(abs(wv) * rel_tol, 1e-9)
+        if not any(abs(gv - wv) <= tol for gv in got_vals):
+            missing.add(w)
+    return missing
+
 def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
     """LLM 润色广场短评。返回 (最终文本, 来源 'llm:<provider>' | 'template:<原因>')。
 
@@ -285,21 +307,28 @@ def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
         if _time.time() - start > 60:
             break
         try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "system", "content": POLISH_SYSTEM}, {"role": "user", "content": text}],
-                temperature=0.7,
-                max_tokens=700,
-            )
-            out = (resp.choices[0].message.content or "").strip()
+            create_kw: dict = {
+                "model": model,
+                "messages": [{"role": "system", "content": POLISH_SYSTEM}, {"role": "user", "content": text}],
+                "temperature": 0.7,
+                # 帖子最长 1500 字，中文≈1 字 1 token，留足余量，否则被 length 截成空正文
+                "max_tokens": 2000,
+            }
+            if prov == "b.ai" and str(model).lower().startswith("deepseek-v4"):
+                # Flash 默认把输出额度花在 thinking 上，长帖会截成空 content
+                create_kw["extra_body"] = {"thinking": {"type": "disabled"}}
+            resp = client.chat.completions.create(**create_kw)
+            choice = resp.choices[0]
+            out = (choice.message.content or "").strip()
         except Exception as e:  # noqa: BLE001
             logger.warning("square polish %s 失败：%s", prov, e)
             continue
         if not out:
+            logger.warning("square polish %s 空回复（finish=%s），换下一条", prov, getattr(choice, "finish_reason", None))
             continue
         out = out.strip("`").strip()
         got = _numbers(out)
-        missing = want_nums - got
+        missing = _missing_numbers(want_nums, got)
         if missing:
             logger.warning("square polish %s 丢了数字 %s，回退模板", prov, sorted(missing)[:6])
             continue

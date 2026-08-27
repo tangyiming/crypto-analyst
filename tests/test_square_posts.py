@@ -108,3 +108,17 @@ def test_round_barrier_far_from_price_is_skipped():
     assert not _round_near(reg, 102.0, 0.15)
     assert _round_near(SimpleNamespace(round_level=100.0), 97.0, 0.08)
     assert not _round_near(SimpleNamespace(round_level=None), 97.0, 0.08)
+
+
+def test_polish_number_check_tolerates_rounding():
+    from analyst.monitor.square_posts import _fmt_price, _missing_numbers, _numbers
+
+    assert _fmt_price(106.7532) == "106.75"
+    assert _fmt_price(2420.0) == "2420.00"
+    assert _fmt_price(1.23456) == "1.235"
+    assert _fmt_price(0.123456) == "0.123456"
+    want = _numbers("上轨 101.5747；近阻力 106.7532；现价 102.05")
+    got = _numbers("上轨 101.57，近阻力 106.75，现价 102.05")
+    assert _missing_numbers(want, got) == set()
+    got_bad = _numbers("上轨 101.57，现价 102.05")
+    assert _missing_numbers(want, got_bad) == {"106.753"}
