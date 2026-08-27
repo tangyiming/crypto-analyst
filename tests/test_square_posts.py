@@ -69,7 +69,7 @@ def test_compose_jack_square_post_has_direction_and_levels():
     assert "强势盘" in text
     assert "偏多" in text
     assert "62000" in text or "62000.00" in text
-    assert "非投资建议" in text
+    assert "非投资建议" not in text  # 已按用户要求去掉免责声明
 
 
 def test_compose_short_prediction_and_tags():
