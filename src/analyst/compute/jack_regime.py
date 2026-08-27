@@ -480,15 +480,19 @@ def _extension_targets(hourly: CandleSeries | None, used_low: float | None, *, b
 
 
 def _round_barriers(price: float) -> tuple[float | None, tuple[float, float] | None, tuple[float, float] | None]:
-    """最近的整数关口（1/2/5 × 10^k 网格里高于现价的第一个）及其屏障区：下方 2–4%，上方 4–6%。"""
+    """最近的整数关口（高于现价的第一个）及其屏障区：下方 2–4%，上方 4–6%。
+
+    网格 = 半个数量级：ETH 2420 → 2500（Jack「站稳 2500」），BTC 78k → 80000（8w），SOL 97 → 100。
+    """
     if price <= 0:
         return None, None, None
     import math
 
     mag = 10 ** math.floor(math.log10(price))
-    grid = [m * mag for m in (1, 2, 5, 10)]
-    above = [g for g in grid if g > price * 1.001]
-    level = above[0] if above else grid[-1]
+    step = mag / 2  # 半个数量级：63088 → 5000 → 65000；78746 → 80000；2420 → 2500；97 → 100；101 → 150
+    level = math.floor(price / step) * step + step
+    if level <= price * 1.001:
+        level += step
     return level, (level * 0.96, level * 0.98), (level * 1.04, level * 1.06)
 
 
@@ -727,6 +731,10 @@ def compute_jack_regime(
     b1_lo, b1_mid, b1_up = _boll_4h(hourly_series)
     b12_lo, b12_mid, b12_up = _boll_4h(h12)
     piv_sup, piv_res = _pivot_levels(h4_series or primary_series, current_price)
+    # 多月级结构位（Jack：BTC 5 月高 82800、7 月初低 60455/60666、SOL 87）：日线枢轴 250 天，与 4h 枢轴合并
+    d_sup, d_res = _pivot_levels(daily_series, current_price, k=3, lookback=250, n=4)
+    piv_sup = tuple(sorted(set(piv_sup) | set(d_sup), reverse=True)[:5])
+    piv_res = tuple(sorted(set(piv_res) | set(d_res))[:5])
     ext150, ext1618 = _extension_targets(hourly_series, pb_low)
     # 结构识别常滞后（SOL 8/22 价格 99 时近支仍 76.6、近阻 79.6 在现价之下）：
     # 近支/近阻必须夹住现价；优先 4h 枢轴，其次回踩位/4h BOLL/24h 高/周 BOLL 上轨/整数关口。

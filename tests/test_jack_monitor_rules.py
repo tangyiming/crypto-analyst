@@ -233,7 +233,9 @@ def test_jack_level_formulas_from_tweets():
     # 整数关口：SOL 97 → 关口 100，屏障 96–98，首压 104–106；BTC 78,746 → 100,000
     lvl, below, above = _round_barriers(97.0)
     assert lvl == 100 and abs(below[0] - 96) < 1e-9 and abs(above[1] - 106) < 1e-9
-    assert _round_barriers(78746.0)[0] == 100000
+    assert _round_barriers(78746.0)[0] == 80000  # 半量级网格：8w 关口
+    assert _round_barriers(2420.0)[0] == 2500  # Jack「站稳 2500」
+    assert _round_barriers(63088.0)[0] == 65000
 
 
 def test_jack_4h_boll_pivots_extension():
