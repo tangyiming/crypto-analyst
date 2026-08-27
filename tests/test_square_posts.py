@@ -137,3 +137,13 @@ def test_post_levels_filtered_by_price_side():
     assert d == 2566.0 and n == 2431.0 and t == 2350.0
     assert _clip_sentence("第一句。第二句；第三句没完", 12) == "第一句。第二句；"
     assert _numbers("卖出 1/2，第2次，0.50–0.618，止损 2004.53，+25.0%") == {"2004.53", "25"}
+
+
+def test_waist_note_distinguishes_below_and_near():
+    from types import SimpleNamespace
+    from analyst.monitor.square_posts import _waist_note
+
+    reg = SimpleNamespace(waist_line=2478.84, below_waist=True)
+    assert "贴着" in _waist_note(reg, 2505.66)
+    assert "在其下" in _waist_note(reg, 2400.0)
+    assert _waist_note(SimpleNamespace(waist_line=2478.84, below_waist=False), 2600.0) == ""

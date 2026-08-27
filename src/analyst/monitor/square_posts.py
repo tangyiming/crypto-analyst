@@ -216,6 +216,16 @@ def _round_near(regime, price: float, max_dist: float) -> bool:
         return False
     return abs(lv / price - 1.0) <= max_dist
 
+
+def _waist_note(regime, price: float) -> str:
+    """腰斩线备注：below_waist 带 2% 缓冲，措辞要按真实位置区分「在其下」和「贴着」。"""
+    wl = getattr(regime, "waist_line", None)
+    if not wl or not getattr(regime, "below_waist", False):
+        return ""
+    if price and price < wl:
+        return "（现价在其下，只低吸不追空）"
+    return "（现价贴着腰斩线，只低吸不追空）"
+
 def indicator_block(regime: JackRegime, jack: JackLevels | None, eric_readings: list[str] | None = None, price: float = 0.0) -> list[str]:
     """指标分析段：多周期 BOLL / MACD 动能 / 均线 / 关键位 / 大周期，给读者「为什么这么看」。"""
     f = _fmt_price
@@ -255,7 +265,7 @@ def indicator_block(regime: JackRegime, jack: JackLevels | None, eric_readings: 
     out.append("点位：" + "；".join(lv) + "。")
     big = []
     if regime.waist_line is not None:
-        big.append(f"腰斩线 {f(regime.waist_line)}" + ("（现价在其下，只低吸不追空）" if regime.below_waist else ""))
+        big.append(f"腰斩线 {f(regime.waist_line)}" + _waist_note(regime, price))
     if regime.cycle_382 is not None:
         big.append(f"大周期 {f(regime.cycle_low)}→{f(regime.cycle_high)} 反转梯子 {f(regime.cycle_382)} / {f(regime.cycle_500)} / {f(regime.cycle_618)}")
     if regime.monthly_boll_mid is not None:
@@ -277,6 +287,7 @@ POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交�
 - 不改变原文的方向判断和操作建议；不要编造原文没有的理由。
 - 篇幅可以比原文长一些：把「指标怎么看」那段展开成交易员的推理（为什么这些位置重要、破了/守住分别怎么办），但只能用原文给出的指标和数字，不要新增数字。
 - 不要加免责声明、不要加话题标签、不要加「仅供参考」之类的套话。
+- 不要出现「原文」「模板」「系统」这类字眼，不要对原文做点评或加括号注释；若原文某句自相矛盾或看不懂，直接略过那句，不要解释。
 - 总长度不超过 1300 字。只输出改写后的正文，不要解释。"""
 
 _NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
@@ -682,7 +693,8 @@ def compose_move_square_post(
             lines.append(ext + "。")
     else:
         if regime.below_waist:
-            lines.append(f"已经在腰斩线 {f(regime.waist_line)} 之下，这里不追空，只等止跌信号低吸。")
+            where = "之下" if (regime.waist_line and price < regime.waist_line) else "边上"
+            lines.append(f"已经在腰斩线 {f(regime.waist_line)} {where}，这里不追空，只等止跌信号低吸。")
         else:
             lines.append(f"急跌先看近支撑 {f(regime.nearest_support)} 能不能接住；反弹到 {f(regime.nearest_resistance)} 附近是短空位，破 {f(regime.nearest_support)} 再看下一档。")
     play = (regime.playbook_line or "").strip()
