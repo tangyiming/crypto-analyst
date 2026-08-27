@@ -1398,7 +1398,7 @@ class MonitorHub:
         price = float(worker.series.candles[-1].close)
         prem = worker.last_premium or {}
         daily, hourly, h4, m5 = await asyncio.gather(
-            self._htf_series(sym, "1d", market, min_bars=30, fetch_limit=200),
+            self._htf_series(sym, "1d", market, min_bars=30, fetch_limit=400),  # 腰斩线需覆盖周期高点
             self._htf_series(sym, "1h", market, min_bars=40, fetch_limit=300),
             self._htf_series(sym, "4h", market, min_bars=40, fetch_limit=200),
             self._htf_series(sym, "5m", market, min_bars=40, fetch_limit=200),

@@ -148,3 +148,39 @@ def test_compute_monitor_jack_returns_regime():
     assert jack.swing_high > 0
     assert reg.regime_zh
     assert reg.playbook_line
+
+
+def test_jack_waist_uses_cycle_high_and_hist_decel():
+    """腰斩线 = 周期最高点×0.5（非最近波段高点）；MACD 归零减速 = 柱缩短。"""
+    from datetime import datetime, timedelta
+
+    from analyst.compute.jack_regime import _macd_decel_to_zero, compute_jack_regime
+    from analyst.compute.jack_levels import compute_jack_levels
+    from analyst.compute.structure import detect_structure
+    from analyst.data.fetcher import Candle, CandleSeries
+
+    def c(i, close, tf_hours=24):
+        return Candle(
+            timestamp=datetime(2025, 8, 1) + timedelta(hours=i * tf_hours),
+            open=close, high=close * 1.01, low=close * 0.99, close=close, volume=1.0,
+        )
+
+    # 日线：前 100 根冲到 126000 的周期顶，之后跌到 63000 附近横盘
+    closes = [60000 + i * 660 for i in range(100)] + [126000 - i * 630 for i in range(100)] + [63000 + (i % 3) * 200 for i in range(60)]
+    daily = CandleSeries("BTC/USDT", "1d", [c(i, x) for i, x in enumerate(closes)])
+    h4 = CandleSeries("BTC/USDT", "4h", [c(i, 63000 + (i % 5) * 100, 4) for i in range(200)])
+    structure = detect_structure(h4)
+    jack = compute_jack_levels(current_price=63030.0, structure=structure, primary_series=h4, symbol="BTC/USDT")
+    reg = compute_jack_regime(current_price=63030.0, jack=jack, structure=structure, primary_series=h4, daily_series=daily, h4_series=h4)
+    assert reg.waist_line is not None and abs(reg.waist_line - 126000 * 1.01 / 2) < 1
+    assert reg.below_waist
+
+    # 柱缩短：急跌后横住，负柱开始向零收敛 → 归零减速（DIF 可能仍在零下）
+    down = [70000 - i * 300 for i in range(60)] + [52000] * 10
+    cands = [c(i, x, 8) for i, x in enumerate(down)]
+    # 横住前后几根里必有一根：柱为负且较前一根缩短
+    assert any(_macd_decel_to_zero(CandleSeries("BTC/USDT", "8h", cands[:n])) for n in range(56, 71))
+    # 加速下跌：负柱持续放大，不应判为减速
+    accel = [70000 - (i * i) * 6 for i in range(70)]
+    still = CandleSeries("BTC/USDT", "8h", [c(i, x, 8) for i, x in enumerate(accel)])
+    assert not _macd_decel_to_zero(still)

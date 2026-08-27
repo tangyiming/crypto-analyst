@@ -94,7 +94,7 @@ class JackRegime:
             f"- 当日振幅 TP：0.50={_fmt(self.tp_intraday_50)} · 0.618={_fmt(self.tp_intraday_618)}\n"
             f"- 12h EMA6（扎针参考）：{_fmt(self.ema12h_6)}\n"
             f"- 近根扎针止损：{self.spike_stop_recent} · 虚破仍站稳：{self.wick_hold}\n"
-            f"- 腰斩线（H×0.5）：{_fmt(self.waist_line)} · 已跌破：{self.below_waist}\n"
+            f"- 腰斩线（周期高点×0.5）：{_fmt(self.waist_line)} · 已跌破：{self.below_waist}\n"
             f"- 周线 BOLL 中轨（强势回调极限，非空目标）：{_fmt(self.weekly_boll_mid)}\n"
             f"- 1h/4h 顶背离：{self.htf_top_div} · 4h以下回踩诱空：{self.sub4h_pullback_fake_short}\n"
             f"- 2日线加速：{self.accel_2d} {self.accel_2d_note}\n"
@@ -424,13 +424,17 @@ def _daily_momentum_fade(daily: CandleSeries | None) -> bool:
 
 
 def _macd_decel_to_zero(series: CandleSeries | None) -> bool:
-    """DIF 仍在零下但抬升 ≈ MACD 归零、下跌减速。"""
+    """「MACD 归零、下跌减速」= MACD 柱在零下开始缩短（向零轴收敛）。
+
+    Jack 看的是柱线而不是 DIF 拐头：2026-08 BTC 对照，柱缩短法在 8h(8/13)、12h(8/15)、
+    日线(8/17) 与他推文时间一一吻合；DIF 抬升法要晚 1–2 天。
+    """
     if not series or len(series.candles) < 35:
         return False
-    macd = compute_macd(series)
-    if len(macd.series_dif) < 3:
+    hists = _hist_series(series)
+    if len(hists) < 3:
         return False
-    prev, now = macd.series_dif[-2], macd.series_dif[-1]
+    prev, now = hists[-2], hists[-1]
     return now < 0 and now > prev
 
 
@@ -470,7 +474,15 @@ def compute_jack_regime(
         tp618 = intra_low + rng * 0.618
 
     ema12 = _ema12h_6(hourly_series)
-    waist = jack.swing_high * 0.5 if jack.swing_high > 0 else None
+    # 腰斩线 = 周期最高点 × 0.5（Jack：「63000 是 btc 腰斩的位置，这之下不追空只低吸」，126k/2）。
+    # 用手头日线里的最高 high（需 ≥200 根，hub 拉 400 根）；不够长才退回最近波段高点。
+    cycle_high = (
+        max(c.high for c in daily_series.candles)
+        if daily_series and len(daily_series.candles) >= 200
+        else None
+    )
+    waist_src = cycle_high if cycle_high else (jack.swing_high if jack.swing_high > 0 else None)
+    waist = waist_src * 0.5 if waist_src else None
     below_waist = bool(waist and current_price <= waist * 1.02)
     weekly_mid = _weekly_boll_mid(daily_series)
     boll_3d = _nd_boll_mid(daily_series, 3)
