@@ -167,12 +167,68 @@ def compose_jack_square_post(
         lines.append("想跟单先看防守是否守住，别追在鱼尾。")
     elif regime.trade_side == "short" and not regime.below_waist:
         lines.append("想开空等反弹靠近阻力，别贴着支撑追空。")
-    lines.append(DISCLAIMER)
-    lines.append(_tag_line(symbol))
+    lines.append("")
+    lines.extend(indicator_block(regime, jack))
     text = "\n".join(lines)
-    if len(text) > 900:
-        text = text[:897] + "…"
+    if len(text) > MAX_POST_LEN:
+        text = text[: MAX_POST_LEN - 1] + "…"
     return text
+
+
+MAX_POST_LEN = 1500
+
+
+def indicator_block(regime: JackRegime, jack: JackLevels | None, eric_readings: list[str] | None = None) -> list[str]:
+    """指标分析段：多周期 BOLL / MACD 动能 / 均线 / 关键位 / 大周期，给读者「为什么这么看」。"""
+    f = _fmt_price
+    out: list[str] = ["指标怎么看："]
+    macd_bits = []
+    if regime.macd_8h_decel or regime.macd_12h_decel:
+        macd_bits.append("8h/12h MACD 柱在零下缩短，下跌动能减弱" if regime.trade_side != "long" else "8h/12h MACD 归零，回调动能在衰减")
+    if regime.weekly_macd_zero:
+        macd_bits.append("周线 MACD 归零轴，大级别回调接近尾声")
+    if regime.accel_2d:
+        macd_bits.append("2 日线 MACD 触零加速")
+    if regime.golden_3d or regime.golden_5d:
+        macd_bits.append(f"{'3日' if regime.golden_3d else ''}{'/' if regime.golden_3d and regime.golden_5d else ''}{'5日' if regime.golden_5d else ''}线金叉在形成")
+    if regime.hollow_daily:
+        macd_bits.append("日线空心阳加速")
+    if macd_bits:
+        out.append("动能：" + "；".join(macd_bits) + "。")
+    if regime.boll_4h_mid is not None:
+        out.append(f"4h BOLL：下轨 {f(regime.boll_4h_lower)} / 中轨 {f(regime.boll_4h_mid)} / 上轨 {f(regime.boll_4h_upper)}；12h 中轨 {f(regime.boll_12h_mid)}。")
+    ma_bits = []
+    if regime.ema12h_6 is not None:
+        ma_bits.append(f"12h EMA6 {f(regime.ema12h_6)}（扎针参考）")
+    if regime.boll_mid_3d is not None or regime.boll_mid_5d is not None:
+        ma_bits.append(f"3日/5日 BOLL 中轨 {f(regime.boll_mid_3d)} / {f(regime.boll_mid_5d)}（强势盘减仓防守）")
+    if regime.ema5d_6 is not None:
+        ma_bits.append(f"5日 EMA6 {f(regime.ema5d_6)}")
+    if ma_bits:
+        out.append("均线：" + "；".join(ma_bits) + "。")
+    lv = []
+    if regime.pullback_618 is not None:
+        lv.append(f"回踩做多位 {f(regime.pullback_50)} / {f(regime.pullback_618)}")
+    lv.append(f"近支撑 {f(regime.nearest_support)} · 近阻力 {f(regime.nearest_resistance)}")
+    if regime.ext_150 is not None:
+        lv.append(f"本波延伸目标 {f(regime.ext_150)} / {f(regime.ext_1618)}")
+    if regime.round_level is not None and regime.barrier_below and regime.barrier_above:
+        lv.append(f"整数关口 {f(regime.round_level)}（下方屏障 {f(regime.barrier_below[0])}-{f(regime.barrier_below[1])}，上方首压 {f(regime.barrier_above[0])}-{f(regime.barrier_above[1])}）")
+    out.append("点位：" + "；".join(lv) + "。")
+    big = []
+    if regime.waist_line is not None:
+        big.append(f"腰斩线 {f(regime.waist_line)}" + ("（现价在其下，只低吸不追空）" if regime.below_waist else ""))
+    if regime.cycle_382 is not None:
+        big.append(f"大周期 {f(regime.cycle_low)}→{f(regime.cycle_high)} 反转梯子 {f(regime.cycle_382)} / {f(regime.cycle_500)} / {f(regime.cycle_618)}")
+    if regime.monthly_boll_mid is not None:
+        big.append(f"月线 BOLL 中轨 {f(regime.monthly_boll_mid)}（突破即大方向反转）")
+    if regime.weekly_boll_upper is not None:
+        big.append(f"周线 BOLL 上轨 {f(regime.weekly_boll_upper)}")
+    if big:
+        out.append("大周期：" + "；".join(big) + "。")
+    if eric_readings:
+        out.append("波段过滤器：" + "；".join(eric_readings) + "。")
+    return out
 
 
 POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交易员，多年合约实盘，说话像人不像机器。
@@ -181,8 +237,9 @@ POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交�
 - 把「我们的系统/引擎/指标读数」这类机器表述换成交易员会说的话（比如「日线超卖了」「回踩位在 xxx」）。
 - 所有价格、点位、百分比、倍数、日期、币种标签（$BTC #BTC 这种）必须原样保留，一个数字都不能改、不能删、不能新增。
 - 不改变原文的方向判断和操作建议；不要编造原文没有的理由。
-- 最后两行原样保留：免责声明那一行、标签那一行。
-- 总长度不超过原文的 1.3 倍，且不超过 800 字。只输出改写后的正文，不要解释。"""
+- 篇幅可以比原文长一些：把「指标怎么看」那段展开成交易员的推理（为什么这些位置重要、破了/守住分别怎么办），但只能用原文给出的指标和数字，不要新增数字。
+- 不要加免责声明、不要加话题标签、不要加「仅供参考」之类的套话。
+- 总长度不超过 1300 字。只输出改写后的正文，不要解释。"""
 
 _NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
 
@@ -203,7 +260,7 @@ def _numbers(text: str) -> set[str]:
 def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
     """LLM 润色广场短评。返回 (最终文本, 来源 'llm:<provider>' | 'template:<原因>')。
 
-    校验：原文里的每个数字必须在润色稿里出现；免责声明与标签行保留；长度 ≤ 900。任一不满足回退原文。
+    校验：原文里的每个数字必须在润色稿里出现；长度 ≤ MAX_POST_LEN。任一不满足回退原文。
     """
     import time as _time
 
@@ -215,8 +272,6 @@ def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
     except Exception as e:  # noqa: BLE001
         return text, f"template:import({e})"
     want_nums = _numbers(text)
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    tail = lines[-2:] if len(lines) >= 2 else lines
     start = _time.time()
     for client, model, prov in _iter_chat_clients(s):
         if _time.time() - start > 60:
@@ -240,13 +295,7 @@ def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
         if missing:
             logger.warning("square polish %s 丢了数字 %s，回退模板", prov, sorted(missing)[:6])
             continue
-        if any(t not in out for t in tail):
-            # 免责声明/标签行被改写 → 把原尾部补回去
-            body = out
-            for t in tail:
-                body = body.replace(t, "").rstrip()
-            out = body.rstrip() + "\n" + "\n".join(tail)
-        if len(out) > 900 or len(out) > int(len(text) * 1.5) + 80:
+        if len(out) > MAX_POST_LEN:
             logger.warning("square polish %s 过长 %d，回退模板", prov, len(out))
             continue
         return out, f"llm:{prov}"
@@ -455,11 +504,9 @@ def compose_eric_square_post(
         if r and "过滤器" not in r and len(r) < 60:
             lines.append(r)
     lines.append("做反弹，不赌反转。")
-    lines.append(DISCLAIMER)
-    lines.append(_tag_line(symbol))
     text = "\n".join(lines)
-    if len(text) > 900:
-        text = text[:897] + "…"
+    if len(text) > MAX_POST_LEN:
+        text = text[: MAX_POST_LEN - 1] + "…"
     return text
 
 
@@ -519,3 +566,103 @@ def maybe_post_eric_signal(
         "Square 已发 Eric 短文 %s id=%s link=%s", cool_key, result.get("id"), result.get("shareLink")
     )
     return {"text": text, "result": result, "symbol": sym, "kind": kind}
+
+
+# ── 加速行情（单边急涨/急跌）→ 广场短文 ──
+
+_MOVE_COOLDOWN_H = 8.0
+
+
+def compose_move_square_post(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    change_pct: float,
+    vol_ratio: float,
+    jack: JackLevels | None,
+    regime: JackRegime,
+    eric_readings: list[str] | None = None,
+) -> str:
+    """加速行情短文：发生了什么 → 我怎么看 → 指标分析 → 接下来盯什么。"""
+    tag = _cashtag(symbol)
+    tf = (timeframe or "4h").lower()
+    up = change_pct > 0
+    f = _fmt_price
+    hook = (
+        f"{tag} 这根 {tf} 直接拉了 {change_pct:+.1f}%，量放到平时的 {vol_ratio:.1f} 倍，加速了"
+        if up
+        else f"{tag} 这根 {tf} 直接砸了 {change_pct:+.1f}%，量放到平时的 {vol_ratio:.1f} 倍，加速下跌"
+    )
+    lines = [hook, f"现价 {f(price)}，盘面 {regime.regime_zh}，方向 {_side_zh(regime.trade_side)}。"]
+    if up:
+        if regime.regime == "strong_trend" and regime.trade_side == "long":
+            lines.append(
+                f"单边加速不等回踩，一味挂低多只会踏空；要追就追突破，突破近阻力 {f(regime.nearest_resistance)} 再补，"
+                f"回踩位 {f(regime.pullback_618)} 附近是低多位，跌破 {f(regime.nearest_support)} 就先出来。"
+            )
+        else:
+            lines.append(f"日线还没转强，这种拉升先当反弹看：近阻力 {f(regime.nearest_resistance)} 附近先减一部分，回踩 {f(regime.pullback_618)} 不破再拿。")
+        if regime.ext_150 is not None:
+            lines.append(f"这波如果延续，看 {f(regime.ext_150)} / {f(regime.ext_1618)}；整数关口 {f(regime.round_level)} 上方 {f(regime.barrier_above[0]) if regime.barrier_above else '—'} 附近是首个压力，首次冲关一般站不稳，先止盈一部分。")
+    else:
+        if regime.below_waist:
+            lines.append(f"已经在腰斩线 {f(regime.waist_line)} 之下，这里不追空，只等止跌信号低吸。")
+        else:
+            lines.append(f"急跌先看近支撑 {f(regime.nearest_support)} 能不能接住；反弹到 {f(regime.nearest_resistance)} 附近是短空位，破 {f(regime.nearest_support)} 再看下一档。")
+    play = (regime.playbook_line or "").strip()
+    if play:
+        lines.append(f"打法：{play[:160]}")
+    lines.append("")
+    lines.extend(indicator_block(regime, jack, eric_readings))
+    text = "\n".join(lines)
+    if len(text) > MAX_POST_LEN:
+        text = text[: MAX_POST_LEN - 1] + "…"
+    return text
+
+
+def maybe_post_market_move(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    change_pct: float,
+    vol_ratio: float,
+    jack: JackLevels | None,
+    regime: JackRegime,
+    eric_readings: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """加速行情发帖：受 square_post_enabled / 品种白名单 / 8h 冷却约束。"""
+    settings = get_settings()
+    if not getattr(settings, "square_post_enabled", False):
+        return None
+    if not getattr(settings, "square_post_move_enabled", True):
+        return None
+    key = (getattr(settings, "binance_square_openapi_key", "") or "").strip()
+    if not key:
+        return None
+    sym = _norm_symbol(symbol)
+    if sym not in square_symbols_set(settings):
+        return None
+    cool_key = f"move|{sym}"
+    state = _load_cooldown()
+    now = time.time()
+    last = state.get(cool_key)
+    cool_h = float(getattr(settings, "square_move_cooldown_hours", _MOVE_COOLDOWN_H) or _MOVE_COOLDOWN_H)
+    if last is not None and now - last < cool_h * 3600:
+        return None
+    text = compose_move_square_post(
+        symbol=sym, timeframe=timeframe, price=price, change_pct=change_pct, vol_ratio=vol_ratio,
+        jack=jack, regime=regime, eric_readings=eric_readings,
+    )
+    text, polish_src = polish_square_text(text, settings=settings)
+    logger.info("Square 加速行情文案来源 %s（%s %+.1f%%）", polish_src, cool_key, change_pct)
+    try:
+        result = post_text(key, text)
+    except SquareApiError as e:
+        logger.error("Square move 发帖失败 code=%s msg=%s key=%s %s", e.code, e.message, mask_key(key), cool_key)
+        raise
+    state[cool_key] = now
+    _save_cooldown(state)
+    logger.info("Square 已发加速行情 %s id=%s link=%s", cool_key, result.get("id"), result.get("shareLink"))
+    return {"text": text, "result": result, "symbol": sym, "kind": "move"}

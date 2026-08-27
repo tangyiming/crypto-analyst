@@ -1346,6 +1346,66 @@ class MonitorHub:
                 bf_value=None, marker_time=ev.marker_time, reasons=list(ev.reasons), plan=sq_plan,
             )
 
+    async def _maybe_square_move_post(self, worker: StreamWorker, jack: Any, regime: Any) -> None:
+        """4h 收盘：单根涨跌幅/放量达阈值 → 加速行情广场帖（含完整指标分析）。"""
+        s = get_settings()
+        if not getattr(s, "square_post_enabled", False) or not getattr(s, "square_post_move_enabled", True):
+            return
+        if worker.key.timeframe.lower() != "4h" or regime is None or len(worker.series.candles) < 25:
+            return
+        bar = worker.series.candles[-1]
+        if bar.open <= 0:
+            return
+        chg = (bar.close / bar.open - 1) * 100
+        vols = [c.volume for c in worker.series.candles[-25:-1]]
+        avg = sum(vols) / len(vols) if vols else 0.0
+        vol_ratio = bar.volume / avg if avg > 0 else 1.0
+        sym = worker.key.symbol
+        major = _norm_symbol(sym) in ("BTC/USDT", "ETH/USDT")
+        thr = float(s.square_move_pct_major if major else s.square_move_pct_alt)
+        hit = abs(chg) >= thr or (vol_ratio >= float(s.square_move_vol_ratio) and abs(chg) >= thr * 0.6)
+        if not hit:
+            return
+        readings: list[str] = []
+        from analyst.compute.band_filter import eric_symbol_validated
+
+        if eric_symbol_validated(sym):
+            try:
+                from analyst.compute.eric_swing import band_readings
+
+                daily = self._closed_only(await self._htf_series(sym, "1d", worker.key.market, min_bars=40, fetch_limit=400), "1d")
+                weekly = self._closed_only(await self._htf_series(sym, "1w", worker.key.market, min_bars=60, fetch_limit=300), "1w")
+                readings = band_readings({"1d": daily, "1w": weekly})
+            except Exception:
+                logger.exception("eric readings for move post failed %s", sym)
+        from analyst.monitor.square_posts import maybe_post_market_move
+
+        try:
+            out = await asyncio.to_thread(
+                maybe_post_market_move,
+                symbol=sym, timeframe=worker.key.timeframe, price=float(bar.close), change_pct=chg,
+                vol_ratio=vol_ratio, jack=jack, regime=regime, eric_readings=readings,
+            )
+        except Exception:
+            logger.exception("square move post failed %s", sym)
+            return
+        if not out:
+            return
+        result = out.get("result") or {}
+        await self._emit_rule_alert(
+            worker,
+            {
+                "type": "alert", "rule": "square_post", "title": "币安广场已发加速行情",
+                "symbol": sym, "timeframe": worker.key.timeframe, "direction": "long" if chg > 0 else "short",
+                "strength": 0.6, "price": float(bar.close), "pattern": "square_post", "break_level": None,
+                "reasons": [f"4h {chg:+.1f}% · 量 {vol_ratio:.1f}× · id={result.get('id') or '—'}", str(result.get("shareLink") or "—")[:180]],
+                "filters_passed": ["square_post", "market_move"],
+                "marker_time": int(datetime.now(timezone.utc).timestamp()),
+                "plan": None, "kelly": None, "trail_note": None,
+                "created_at": datetime.now(timezone.utc).isoformat(), "demo": False,
+            },
+        )
+
     async def _maybe_square_eric_post(
         self,
         worker: StreamWorker,
@@ -2481,6 +2541,11 @@ class MonitorHub:
             await self._evaluate_paper(worker, jack, jack_regime)
         except Exception:
             logger.exception("paper evaluate failed %s", worker.key)
+
+        try:
+            await self._maybe_square_move_post(worker, jack, jack_regime)
+        except Exception:
+            logger.exception("square move post failed %s", worker.key)
 
         try:
             await self._maybe_ai_confirm(

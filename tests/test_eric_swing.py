@@ -180,8 +180,8 @@ def test_eric_square_post_text():
     )
     assert "$BTC" in t.splitlines()[0]
     assert "止损 60000" in t and "79687" in t
-    assert DISCLAIMER in t and "$BTC" in t.splitlines()[-1]
-    assert len(t) <= 900
+    assert DISCLAIMER not in t and "#BTC" not in t  # 用户要求：不带免责声明与标签行
+    assert len(t) <= 1500
     t2 = compose_eric_square_post(symbol="ETH/USDT", kind="daily_oversold", price=1800.0, bf_value=-45.0)
     assert "日线" in t2 and "$ETH" in t2
     t3 = compose_eric_square_post(
@@ -195,7 +195,7 @@ def test_eric_square_post_text():
     )
     assert "第一半 +14.5%" in t4 and "余仓 +2.0%" in t4
     t5 = compose_eric_square_post(symbol="ETH/USDT", kind="weekly_stop", price=1700.0, bf_value=None, plan={"pnl_pct": -12.3})
-    assert "止损" in t5 and "-12.3%" in t5 and DISCLAIMER in t5
+    assert "止损" in t5 and "-12.3%" in t5 and DISCLAIMER not in t5
 
 
 def test_square_polish_keeps_numbers_or_falls_back(monkeypatch):
@@ -231,7 +231,7 @@ def test_square_polish_keeps_numbers_or_falls_back(monkeypatch):
     import analyst.llm.chat as chat
     monkeypatch.setattr(chat, "_iter_chat_clients", lambda s: iter([(_Client(good), "m", "fake")]))
     out, src = polish_square_text(original, settings=_S())
-    assert src == "llm:fake" and "63750" in out and "79687.5" in out and DISCLAIMER in out and out.splitlines()[-1].startswith("$BTC")
+    assert src == "llm:fake" and "63750" in out and "79687.5" in out and out.startswith("兄弟们")
     # 2) 润色稿丢了一个数字 → 回退模板原文
     bad = good.replace("60000", "六万")
     monkeypatch.setattr(chat, "_iter_chat_clients", lambda s: iter([(_Client(bad), "m", "fake")]))
@@ -241,3 +241,21 @@ def test_square_polish_keeps_numbers_or_falls_back(monkeypatch):
     class _Off:
         square_post_ai_polish = False
     assert polish_square_text(original, settings=_Off()) == (original, "template:disabled")
+
+
+def test_move_post_composer_has_indicator_block():
+    from analyst.compute.jack_regime import JackRegime
+    from analyst.monitor.square_posts import DISCLAIMER, compose_move_square_post
+
+    reg = JackRegime(
+        regime="strong_trend", regime_zh="强势盘", trade_side="long", seed_style="market", add_mode="breakout", tp_style="new_high",
+        defense_broken=False, continuation_intact=True, nearest_support=96.6, nearest_resistance=102.84, prev_day_high=None, prev_day_low=None,
+        intraday_high=None, intraday_low=None, tp_intraday_50=None, tp_intraday_618=None, ema12h_6=96.6, spike_stop_recent=False,
+        pullback_618=98.6, pullback_50=99.3, boll_4h_lower=93.0, boll_4h_mid=97.5, boll_4h_upper=102.1, ext_150=105.5, ext_1618=106.3,
+        round_level=150.0, barrier_below=(144.0, 147.0), barrier_above=(156.0, 159.0), waist_line=127.8, below_waist=True,
+        cycle_low=60.03, cycle_high=253.49, cycle_382=133.9, cycle_500=156.8, cycle_618=179.6, macd_12h_decel=True, playbook_line="强势盘：突破补仓。",
+    )
+    t = compose_move_square_post(symbol="SOL/USDT", timeframe="4h", price=101.06, change_pct=5.5, vol_ratio=1.5, jack=None, regime=reg, eric_readings=["日线 BF +49.5（超买）"])
+    assert t.startswith("$SOL") and "+5.5%" in t and "指标怎么看" in t
+    assert "4h BOLL" in t and "腰斩线 127.8" in t and "波段过滤器" in t and "133.9" in t
+    assert DISCLAIMER not in t and "#SOL" not in t and len(t) <= 1500
