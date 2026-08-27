@@ -252,6 +252,150 @@ class PaperBroker:
         return events
 
     # ── 汇总 ──
+    def report(self, marks: dict[str, float] | None = None, *, journal_n: int = 100, closed_n: int = 100, now: datetime | None = None) -> dict[str, Any]:
+        """页面用完整视图：权益/当日盈亏/熔断、持仓（含浮盈）、挂单（含距离）、已平仓、统计、日志。"""
+        marks = marks or {}
+        now = now or datetime.now(timezone.utc)
+        equity0 = float(self.state["equity0"])
+        day_start = float(self.state.get("day_start_equity") or equity0)
+
+        positions = []
+        unrealized_total = 0.0
+        for sym, p in self.state["positions"].items():
+            mark = marks.get(sym)
+            qty = float(p["qty"])
+            entry = float(p["entry"])
+            unreal = qty * (mark - entry) if mark is not None else None
+            if unreal is not None:
+                unrealized_total += unreal
+            try:
+                held_h = (now - datetime.fromisoformat(p["opened_at"])).total_seconds() / 3600
+            except Exception:  # noqa: BLE001
+                held_h = None
+            positions.append({
+                "symbol": sym,
+                "side": p.get("side", "long"),
+                "qty": qty,
+                "qty0": float(p.get("qty0") or qty),
+                "entry": entry,
+                "stop": float(p["stop"]),
+                "tp1": float(p["tp1"]),
+                "tp1_done": bool(p.get("tp1_done")),
+                "mark": mark,
+                "unrealized": unreal,
+                "unrealized_pct": ((mark / entry - 1) * 100) if mark else None,
+                "realized": float(p.get("realized") or 0.0),
+                "fees": float(p.get("fees") or 0.0),
+                "notional": qty * (mark or entry),
+                "stop_dist_pct": ((mark / float(p["stop"]) - 1) * 100) if mark else None,
+                "tp1_dist_pct": ((float(p["tp1"]) / mark - 1) * 100) if mark else None,
+                "peak": p.get("peak"),
+                "opened_at": p.get("opened_at"),
+                "held_hours": held_h,
+                "max_hold_hours": int(self.cfg.max_hold_bars) * 4,
+                "reasons": list((p.get("plan") or {}).get("reasons") or []),
+            })
+
+        pending = []
+        for sym, d in self.state["pending"].items():
+            mark = marks.get(sym)
+            entry = float(d["entry"])
+            pending.append({
+                "symbol": sym,
+                "side": d.get("side", "long"),
+                "entry": entry,
+                "stop": float(d["stop"]),
+                "tp1": float(d["tp1"]),
+                "qty": float(d.get("qty") or 0.0),
+                "notional": float(d.get("qty") or 0.0) * entry,
+                "mark": mark,
+                "dist_pct": ((mark / entry - 1) * 100) if mark else None,
+                "stop_pct": abs(entry - float(d["stop"])) / entry * 100,
+                "rr": (float(d["tp1"]) - entry) / max(entry - float(d["stop"]), 1e-9),
+                "created_at": d.get("created_at"),
+                "expires_at": d.get("expires_at"),
+                "regime": d.get("regime"),
+                "ref_price": d.get("ref_price"),
+                "reasons": list(d.get("reasons") or []),
+            })
+
+        closed = list(self.state["closed"])
+        nets = [float(c.get("net") or 0.0) for c in closed]
+        wins = [n for n in nets if n > 0]
+        losses = [-n for n in nets if n <= 0]
+        gross_win = sum(wins)
+        gross_loss = sum(losses)
+        stats = {
+            "closed_n": len(closed),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": (len(wins) / len(closed)) if closed else None,
+            "profit_factor": (gross_win / gross_loss) if gross_loss > 0 else (None if not wins else float("inf")),
+            "net_total": sum(nets),
+            "avg_net": (sum(nets) / len(nets)) if nets else None,
+            "avg_win": (gross_win / len(wins)) if wins else None,
+            "avg_loss": (-gross_loss / len(losses)) if losses else None,
+            "fees_total": sum(float(c.get("fees") or 0.0) for c in closed),
+            "by_reason": {},
+        }
+        for c in closed:
+            r = str(c.get("reason") or "?")
+            stats["by_reason"][r] = stats["by_reason"].get(r, 0) + 1
+        if stats["profit_factor"] == float("inf"):
+            stats["profit_factor"] = None
+
+        closed_view = []
+        for c in closed[-closed_n:][::-1]:
+            entry = float(c.get("entry") or 0.0)
+            closed_view.append({
+                "symbol": c.get("symbol"),
+                "side": c.get("side", "long"),
+                "qty0": float(c.get("qty0") or c.get("qty") or 0.0),
+                "entry": entry,
+                "exit": float(c.get("exit") or 0.0),
+                "exit_pct": ((float(c.get("exit") or 0.0) / entry - 1) * 100) if entry else None,
+                "net": float(c.get("net") or 0.0),
+                "fees": float(c.get("fees") or 0.0),
+                "reason": c.get("reason"),
+                "tp1_done": bool(c.get("tp1_done")),
+                "opened_at": c.get("opened_at"),
+                "closed_at": c.get("closed_at"),
+            })
+
+        equity = self.equity
+        paused_until = self.state.get("paused_until")
+        paused = bool(paused_until) and now < datetime.fromisoformat(paused_until)
+        return {
+            "generated_at": _now_iso(now),
+            "equity": equity,
+            "equity0": equity0,
+            "return_pct": (equity / equity0 - 1) * 100,
+            "unrealized": unrealized_total,
+            "equity_mtm": equity + unrealized_total,
+            "day": self.state.get("day"),
+            "day_start_equity": day_start,
+            "day_pnl": equity + unrealized_total - day_start,
+            "day_pnl_pct": ((equity + unrealized_total) / day_start - 1) * 100 if day_start else 0.0,
+            "fuse": {"daily_pct": self.daily_fuse_pct, "paused": paused, "paused_until": paused_until},
+            "limits": {"max_positions": self.max_positions, "open": len(positions), "pending": len(pending)},
+            "cfg": {
+                "risk_pct": self.cfg.risk_pct,
+                "max_leverage": self.cfg.max_leverage,
+                "entry_pref": self.cfg.entry_pref,
+                "exit_rule": self.cfg.exit_rule,
+                "min_rr": self.cfg.min_rr,
+                "min_stop_pct": self.cfg.min_stop_pct,
+                "tp1_frac": self.cfg.tp1_frac,
+                "order_ttl_bars": self.cfg.order_ttl_bars,
+                "max_hold_bars": self.cfg.max_hold_bars,
+            },
+            "positions": positions,
+            "pending": pending,
+            "closed": closed_view,
+            "stats": stats,
+            "journal": list(self.state["journal"])[-journal_n:][::-1],
+        }
+
     def summary(self) -> dict[str, Any]:
         closed = self.state["closed"]
         wins = [c for c in closed if c["net"] > 0]

@@ -82,3 +82,27 @@ def test_build_plan_only_in_strong_long_regime():
     assert build_plan("SOL/USDT", 100.0, jack, replace(base, trade_side="wait"), now) is None
     # 回踩位太近（<0.4%）且近支撑太远（>4%）→ 不出计划
     assert build_plan("SOL/USDT", 100.0, jack, replace(base, pullback_618=99.8, nearest_support=90.0), now) is None
+
+
+def test_report_view_fields(tmp_path):
+    b = PaperBroker(tmp_path / "s.json", equity0=10_000, cfg=JackPullbackConfig(risk_pct=1.0), daily_fuse_pct=3.0)
+    t0 = datetime(2026, 8, 27, 4, tzinfo=timezone.utc)
+    b.submit(_plan(100, 97, 106, now=t0), t0)
+    b.submit(_plan(2000, 1950, 2200, sym="ETH/USDT", now=t0), t0)
+    b.on_mark("SOL/USDT", 99.5, t0 + timedelta(hours=2))  # 成交
+    rep = b.report({"SOL/USDT": 102.0, "ETH/USDT": 2050.0}, now=t0 + timedelta(hours=6))
+    assert rep["limits"] == {"max_positions": 2, "open": 1, "pending": 1}
+    pos = rep["positions"][0]
+    assert pos["symbol"] == "SOL/USDT" and pos["mark"] == 102.0
+    assert abs(pos["unrealized"] - pos["qty"] * 2.0) < 1e-9 and abs(pos["unrealized_pct"] - 2.0) < 1e-9
+    assert pos["held_hours"] == 4 and pos["stop_dist_pct"] > 0 and pos["tp1_dist_pct"] > 0
+    pend = rep["pending"][0]
+    assert pend["symbol"] == "ETH/USDT" and abs(pend["dist_pct"] - 2.5) < 1e-9 and abs(pend["rr"] - 4.0) < 1e-9
+    assert rep["equity_mtm"] == rep["equity"] + rep["unrealized"]
+    assert rep["stats"]["closed_n"] == 0 and rep["stats"]["win_rate"] is None
+    assert rep["journal"][0]["kind"] == "fill"  # 倒序，最新在前
+    # 平仓后统计
+    b.on_mark("SOL/USDT", 96.0, t0 + timedelta(hours=8))
+    rep2 = b.report({}, now=t0 + timedelta(hours=9))
+    assert rep2["stats"]["closed_n"] == 1 and rep2["stats"]["losses"] == 1 and rep2["stats"]["by_reason"] == {"stop": 1}
+    assert rep2["closed"][0]["reason"] == "stop" and rep2["closed"][0]["net"] < 0

@@ -650,3 +650,44 @@ async def monitor_research_ideas(refresh: bool = Query(default=False)):
     if not out.get("text"):
         raise HTTPException(502, out.get("error") or "无可用 LLM 线路")
     return {"research": out}
+
+
+@router.get("/api/paper/summary")
+def paper_summary(journal: int = Query(default=100, ge=1, le=500), closed: int = Query(default=100, ge=1, le=300)):
+    """纸面交易视图：权益/持仓/挂单/已平仓/统计/日志；标记价取自盯盘 worker（无则用最新收盘）。"""
+    s = get_settings()
+    hub = get_monitor_hub()
+    broker = hub._paper_broker()  # noqa: SLF001
+    if broker is None:
+        return {"enabled": False, "symbols": [], "report": None}
+    symbols = sorted(hub._paper_symbols())  # noqa: SLF001
+    marks: dict[str, float] = {}
+    for w in hub._workers.values():  # noqa: SLF001
+        sym = w.key.symbol
+        prem = w.last_premium or {}
+        mark = prem.get("mark_price")
+        if mark is not None:
+            marks[sym] = float(mark)
+        elif sym not in marks and w.series.candles:
+            marks[sym] = float(w.series.candles[-1].close)
+    # 持仓/挂单里的币若没在盯盘，退化用 REST 最新收盘
+    need = [sym for sym in list(broker.state["positions"]) + list(broker.state["pending"]) if sym not in marks]
+    if need:
+        from analyst.data.fetcher import fetch_candles
+
+        for sym in need:
+            try:
+                ser = fetch_candles(sym, "1m", 2, False, "futures")
+                if ser.candles:
+                    marks[sym] = float(ser.candles[-1].close)
+            except Exception:  # noqa: BLE001
+                pass
+    rep = broker.report(marks, journal_n=journal, closed_n=closed)
+    return {
+        "enabled": True,
+        "symbols": symbols,
+        "marks": {k: v for k, v in marks.items() if k in symbols or k in broker.state["positions"] or k in broker.state["pending"]},
+        "state_path": str(broker.path),
+        "strategy": "jack_pullback（强势盘回踩 0.618 低多）",
+        "report": rep,
+    }

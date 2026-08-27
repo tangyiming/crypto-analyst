@@ -288,6 +288,37 @@
       margin-right: 4px;
       vertical-align: -1px;
     }
+    /* 纸面交易页 */
+    .paper-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .paper-stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+    .paper-stat .k { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .paper-stat .v { font-size: 18px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .paper-stat .s { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .paper-fuse { border: 1px solid var(--red); color: var(--red); background: rgba(246,70,93,.08); border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 14px; }
+    .paper-sec { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+    .paper-sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+    .paper-sec-head h2 { font-size: 14px; font-weight: 600; margin: 0; }
+    .paper-tbl-wrap { overflow-x: auto; }
+    .paper-tbl { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+    .paper-tbl th, .paper-tbl td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--line); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .paper-tbl th:first-child, .paper-tbl td:first-child { text-align: left; font-family: inherit; }
+    .paper-tbl th { color: var(--muted); font-weight: 500; font-size: 11px; }
+    .paper-tbl tr:last-child td { border-bottom: 0; }
+    .paper-tbl .reasons { text-align: left; white-space: normal; max-width: 360px; font-family: inherit; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .pos { color: var(--green); } .neg { color: var(--red); }
+    .paper-tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); margin-left: 6px; vertical-align: 1px; }
+    .paper-tag.ok { color: var(--green); border-color: rgba(14,203,129,.4); }
+    .paper-journal { font-size: 12px; max-height: 420px; overflow-y: auto; }
+    .paper-ev { display: grid; grid-template-columns: 118px 60px 78px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+    .paper-ev:last-child { border-bottom: 0; }
+    .paper-ev .t { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+    .paper-ev .k { font-weight: 600; font-size: 11px; }
+    .paper-ev .k.fill, .paper-ev .k.tp1, .paper-ev .k.exit { color: var(--green); }
+    .paper-ev .k.stop, .paper-ev .k.fuse, .paper-ev .k.reject { color: var(--red); }
+    .paper-ev .k.submit, .paper-ev .k.expire { color: var(--muted); }
+    .paper-ev .x { white-space: normal; line-height: 1.5; }
+    .paper-cfg { font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+    @media (max-width: 720px) { .paper-ev { grid-template-columns: 1fr; gap: 2px; } }
     .bt-result table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .bt-result th, .bt-result td {
       padding: 10px 14px;
@@ -1213,6 +1244,7 @@
       <button type="button" class="app-nav-link" data-app="schedule">日程</button>
       <button type="button" class="app-nav-link" data-app="strategies">策略库</button>
       <button type="button" class="app-nav-link" data-app="backtest">回测</button>
+      <button type="button" class="app-nav-link" data-app="paper">纸面交易</button>
       <button type="button" class="app-nav-link" data-app="ai">AI 助手</button>
     </div>
     <div class="app-nav-status">
@@ -1491,6 +1523,59 @@
         <span style="color:var(--muted)">白线=权益（起点 1.0，虚线基准）· 涨跌超 10 倍自动对数轴</span>
       </div>
       <div id="btResult" class="bt-result hidden"></div>
+    </div>
+  </div>
+
+  <div id="viewPaper" class="app-view hidden">
+    <div class="app-page">
+      <div class="app-page-inner" style="max-width:1200px">
+        <div class="app-page-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <h1>纸面交易 · Jack 强势盘低多</h1>
+            <p id="paperSubline">4h 收盘评估 → 回踩 0.618 挂限价多 → 标记价撮合；止损/一半止盈/保本/BOLL 中轨离场全部按实盘费率模拟。</p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="paperUpdated" class="muted" style="font-size:11px"></span>
+            <button type="button" class="btn-analyze" id="btnPaperRefresh" style="font-size:11px;padding:3px 10px;">刷新</button>
+          </div>
+        </div>
+        <div id="paperStats" class="paper-stats"></div>
+        <div id="paperFuse" class="paper-fuse hidden"></div>
+
+        <div class="paper-sec">
+          <div class="paper-sec-head"><h2>持仓</h2><span id="paperPosCount" class="muted"></span></div>
+          <div class="paper-tbl-wrap"><table class="paper-tbl" id="paperPosTbl">
+            <thead><tr><th>合约</th><th>数量</th><th>开仓价</th><th>标记价</th><th>浮盈</th><th>止损</th><th>一半止盈</th><th>已实现</th><th>持有</th><th>开仓时间</th></tr></thead>
+            <tbody><tr><td colspan="10" class="muted">加载中…</td></tr></tbody>
+          </table></div>
+        </div>
+
+        <div class="paper-sec">
+          <div class="paper-sec-head"><h2>挂单</h2><span id="paperPendCount" class="muted"></span></div>
+          <div class="paper-tbl-wrap"><table class="paper-tbl" id="paperPendTbl">
+            <thead><tr><th>合约</th><th>限价</th><th>标记价 / 距离</th><th>数量 · 名义</th><th>止损</th><th>一半止盈</th><th>RR</th><th>有效至</th><th>依据</th></tr></thead>
+            <tbody><tr><td colspan="9" class="muted">—</td></tr></tbody>
+          </table></div>
+        </div>
+
+        <div class="paper-sec">
+          <div class="paper-sec-head"><h2>已平仓</h2><span id="paperClosedMeta" class="muted"></span></div>
+          <div class="paper-tbl-wrap"><table class="paper-tbl" id="paperClosedTbl">
+            <thead><tr><th>合约</th><th>数量</th><th>开仓</th><th>平仓</th><th>幅度</th><th>净盈亏</th><th>手续费</th><th>原因</th><th>开仓时间</th><th>平仓时间</th></tr></thead>
+            <tbody><tr><td colspan="10" class="muted">—</td></tr></tbody>
+          </table></div>
+        </div>
+
+        <div class="paper-sec">
+          <div class="paper-sec-head"><h2>事件日志</h2><span class="muted">最近 100 条 · 最新在前</span></div>
+          <div id="paperJournal" class="paper-journal"></div>
+        </div>
+
+        <div class="paper-sec">
+          <div class="paper-sec-head"><h2>参数</h2></div>
+          <div id="paperCfg" class="paper-cfg muted"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -2174,11 +2259,13 @@
       backtest: 'viewBacktest',
       cycle: 'viewCycle',
       schedule: 'viewSchedule',
+      paper: 'viewPaper',
       ai: 'viewAI',
     };
     if (!views[name]) return;
     if (name !== 'cycle') stopCyclePageRefresh();
     if (name !== 'schedule') stopSchedulePageRefresh();
+    if (name !== 'paper') stopPaperPageRefresh();
     activeAppView = name;
     try { localStorage.setItem('monitor.appView', name); } catch (_) {}
     Object.entries(views).forEach(([k, id]) => {
@@ -2191,6 +2278,7 @@
     if (name === 'cycle') startCyclePageRefresh();
     if (name === 'schedule') startSchedulePageRefresh();
     if (name === 'ai') loadAiPage();
+    if (name === 'paper') startPaperPageRefresh();
     if (name === 'monitor') {
       requestAnimationFrame(() => {
         if (chartMode === 'native') ensureChart();
@@ -2198,6 +2286,120 @@
       });
     }
   }
+
+  // ── 纸面交易页 ──
+  let paperTimer = null;
+  function stopPaperPageRefresh() { if (paperTimer) { clearInterval(paperTimer); paperTimer = null; } }
+  function startPaperPageRefresh() {
+    stopPaperPageRefresh();
+    loadPaperPage();
+    paperTimer = setInterval(loadPaperPage, 30000);
+  }
+  const _pf = (n, d = 2) => (n === null || n === undefined || !Number.isFinite(Number(n))) ? '—' : Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const _px = (n) => { const v = Number(n); if (!Number.isFinite(v)) return '—'; return v >= 1000 ? _pf(v, 2) : v >= 10 ? _pf(v, 2) : v >= 1 ? _pf(v, 3) : _pf(v, 6); };
+  const _usd = (n) => { const v = Number(n); if (!Number.isFinite(v)) return '—'; return (v >= 0 ? '+' : '−') + _pf(Math.abs(v), 1) + 'U'; };
+  const _cls = (n) => Number(n) > 0 ? 'pos' : Number(n) < 0 ? 'neg' : '';
+  const _ts = (iso) => { if (!iso) return '—'; const d = new Date(iso); if (isNaN(d)) return iso; return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }); };
+  const _esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const _sym = (s) => String(s || '').replace('/USDT', '');
+  const REASON_ZH = { stop: '止损', be_stop: '保本止损', trail_boll_mid: '破 BOLL 中轨', trail_ema12h: '破 12h EMA6', timeout: '超时', fuse: '熔断' };
+  const KIND_ZH = { submit: '挂单', fill: '成交', tp1: '一半止盈', stop: '止损', exit: '离场', expire: '过期', reject: '拒单', fuse: '熔断' };
+
+  async function loadPaperPage() {
+    let data;
+    try {
+      const r = await fetch('/api/paper/summary?journal=100&closed=100');
+      data = await r.json();
+    } catch (e) {
+      $('paperStats').innerHTML = `<div class="paper-stat"><div class="k">加载失败</div><div class="s">${_esc(e)}</div></div>`;
+      return;
+    }
+    $('paperUpdated').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    if (!data.enabled || !data.report) {
+      $('paperStats').innerHTML = '<div class="paper-stat"><div class="k">纸面交易未启用</div><div class="s">PAPER_ENABLED=false</div></div>';
+      return;
+    }
+    const rep = data.report; const st = rep.stats || {};
+    $('paperSubline').textContent = `${data.strategy} · 币种 ${(data.symbols || []).map(_sym).join(' / ')} · 起始 ${_pf(rep.equity0, 0)}U · 状态文件 ${data.state_path}`;
+    const pf = st.profit_factor === null || st.profit_factor === undefined ? '—' : _pf(st.profit_factor, 2);
+    $('paperStats').innerHTML = [
+      ['权益（含浮盈）', `<span class="${_cls(rep.equity_mtm - rep.equity0)}">${_pf(rep.equity_mtm, 0)}U</span>`, `已实现 ${_pf(rep.equity, 0)}U · 浮盈 <span class="${_cls(rep.unrealized)}">${_usd(rep.unrealized)}</span>`],
+      ['累计收益', `<span class="${_cls(rep.return_pct)}">${fmtPct(rep.return_pct, 2)}</span>`, `净盈亏 ${_usd(st.net_total)} · 手续费 ${_pf(st.fees_total, 1)}U`],
+      ['今日盈亏', `<span class="${_cls(rep.day_pnl)}">${_usd(rep.day_pnl)}</span>`, `${fmtPct(rep.day_pnl_pct, 2)} · 熔断线 −${_pf(rep.fuse.daily_pct, 1)}%`],
+      ['已平仓', `${st.closed_n ?? 0} 笔`, `胜率 ${st.win_rate === null || st.win_rate === undefined ? '—' : _pf(st.win_rate * 100, 0) + '%'} · PF ${pf}`],
+      ['均盈 / 均亏', `<span class="pos">${st.avg_win == null ? '—' : _usd(st.avg_win)}</span> / <span class="neg">${st.avg_loss == null ? '—' : _usd(st.avg_loss)}</span>`, `均笔 ${st.avg_net == null ? '—' : _usd(st.avg_net)}`],
+      ['仓位', `${rep.limits.open} / ${rep.limits.max_positions}`, `挂单 ${rep.limits.pending} · 单笔风险 ${_pf(rep.cfg.risk_pct, 1)}% · 杠杆上限 ${_pf(rep.cfg.max_leverage, 0)}x`],
+    ].map(([k, v, s]) => `<div class="paper-stat"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join('');
+
+    const fuse = $('paperFuse');
+    if (rep.fuse.paused) { fuse.classList.remove('hidden'); fuse.textContent = `⚠ 当日回撤触发熔断，已清仓并暂停开新仓，至 ${_ts(rep.fuse.paused_until)}`; }
+    else fuse.classList.add('hidden');
+
+    const posBody = $('paperPosTbl').querySelector('tbody');
+    $('paperPosCount').textContent = rep.positions.length ? `${rep.positions.length} 个` : '';
+    posBody.innerHTML = rep.positions.length ? rep.positions.map((p) => `
+      <tr>
+        <td>${_sym(p.symbol)} <span class="paper-tag">${p.side === 'long' ? '多' : '空'}</span>${p.tp1_done ? '<span class="paper-tag ok">已止盈一半 · 保本</span>' : ''}</td>
+        <td>${_pf(p.qty, 4)}<div class="muted" style="font-size:10px">名义 ${_pf(p.notional, 0)}U</div></td>
+        <td>${_px(p.entry)}</td>
+        <td>${_px(p.mark)}</td>
+        <td class="${_cls(p.unrealized)}">${_usd(p.unrealized)}<div style="font-size:10px">${fmtPct(p.unrealized_pct, 2)}</div></td>
+        <td>${_px(p.stop)}<div class="muted" style="font-size:10px">距 ${p.stop_dist_pct == null ? '—' : _pf(p.stop_dist_pct, 1) + '%'}</div></td>
+        <td>${p.tp1_done ? '<span class="muted">已完成</span>' : `${_px(p.tp1)}<div class="muted" style="font-size:10px">差 ${p.tp1_dist_pct == null ? '—' : _pf(p.tp1_dist_pct, 1) + '%'}</div>`}</td>
+        <td class="${_cls(p.realized)}">${_usd(p.realized)}</td>
+        <td>${p.held_hours == null ? '—' : _pf(p.held_hours, 0) + 'h'}<div class="muted" style="font-size:10px">上限 ${p.max_hold_hours}h</div></td>
+        <td class="muted">${_ts(p.opened_at)}</td>
+      </tr>`).join('') : '<tr><td colspan="10" class="muted">当前无持仓</td></tr>';
+
+    const pendBody = $('paperPendTbl').querySelector('tbody');
+    $('paperPendCount').textContent = rep.pending.length ? `${rep.pending.length} 个 · 限价未触及则等待，到期自动撤销` : '';
+    pendBody.innerHTML = rep.pending.length ? rep.pending.map((o) => `
+      <tr>
+        <td>${_sym(o.symbol)} <span class="paper-tag">限价${o.side === 'long' ? '多' : '空'}</span></td>
+        <td>${_px(o.entry)}</td>
+        <td>${_px(o.mark)}<div class="muted" style="font-size:10px">${o.dist_pct == null ? '' : (o.dist_pct >= 0 ? '还差回踩 ' : '已低于 ') + _pf(Math.abs(o.dist_pct), 2) + '%'}</div></td>
+        <td>${_pf(o.qty, 4)}<div class="muted" style="font-size:10px">${_pf(o.notional, 0)}U</div></td>
+        <td>${_px(o.stop)}<div class="muted" style="font-size:10px">${_pf(o.stop_pct, 1)}%</div></td>
+        <td>${_px(o.tp1)}</td>
+        <td>${_pf(o.rr, 1)}</td>
+        <td class="muted">${_ts(o.expires_at)}</td>
+        <td class="reasons">${(o.reasons || []).map(_esc).join('<br>')}</td>
+      </tr>`).join('') : '<tr><td colspan="9" class="muted">当前无挂单</td></tr>';
+
+    const clBody = $('paperClosedTbl').querySelector('tbody');
+    const byReason = Object.entries(st.by_reason || {}).map(([k, v]) => `${REASON_ZH[k] || k} ${v}`).join(' · ');
+    $('paperClosedMeta').textContent = st.closed_n ? `${st.closed_n} 笔 · ${byReason}` : '';
+    clBody.innerHTML = rep.closed.length ? rep.closed.map((c) => `
+      <tr>
+        <td>${_sym(c.symbol)}${c.tp1_done ? '<span class="paper-tag ok">TP1</span>' : ''}</td>
+        <td>${_pf(c.qty0, 4)}</td>
+        <td>${_px(c.entry)}</td>
+        <td>${_px(c.exit)}</td>
+        <td class="${_cls(c.exit_pct)}">${fmtPct(c.exit_pct, 2)}</td>
+        <td class="${_cls(c.net)}">${_usd(c.net)}</td>
+        <td class="muted">${_pf(c.fees, 2)}</td>
+        <td>${REASON_ZH[c.reason] || _esc(c.reason)}</td>
+        <td class="muted">${_ts(c.opened_at)}</td>
+        <td class="muted">${_ts(c.closed_at)}</td>
+      </tr>`).join('') : '<tr><td colspan="10" class="muted">尚无平仓记录</td></tr>';
+
+    $('paperJournal').innerHTML = rep.journal.length ? rep.journal.map((ev) => `
+      <div class="paper-ev">
+        <span class="t">${_ts(ev.ts)}</span>
+        <span class="k ${_esc(ev.kind)}">${KIND_ZH[ev.kind] || _esc(ev.kind)}</span>
+        <span>${_sym(ev.symbol)}</span>
+        <span class="x">${_esc(ev.text)}${ev.pnl_usd != null ? ` <b class="${_cls(ev.pnl_usd)}">${_usd(ev.pnl_usd)}</b>` : ''}</span>
+      </div>`).join('') : '<div class="muted" style="font-size:12px">还没有事件</div>';
+
+    const c = rep.cfg;
+    $('paperCfg').innerHTML = [
+      ['单笔风险', `${c.risk_pct}% 权益`], ['杠杆上限', `${c.max_leverage}x`], ['入场', `回踩 ${c.entry_pref}`],
+      ['最小止损', `${_pf(c.min_stop_pct * 100, 1)}%`], ['最小 RR', c.min_rr], ['一半止盈比例', `${_pf(c.tp1_frac * 100, 0)}%`],
+      ['余仓离场', c.exit_rule === 'boll_mid' ? '4h 收盘 < BOLL 中轨' : c.exit_rule], ['挂单有效', `${c.order_ttl_bars} 根 4h`], ['最长持有', `${c.max_hold_bars} 根 4h`],
+      ['当日熔断', `−${rep.fuse.daily_pct}%（含浮盈）`], ['费率', 'maker 0.02% · taker 0.05% · 滑点 0.02%'],
+    ].map(([k, v]) => `<span><b style="color:var(--text);font-weight:500">${k}</b> ${v}</span>`).join('');
+  }
+  $('btnPaperRefresh')?.addEventListener('click', loadPaperPage);
 
   function fmtPnl(n) {
     const v = Number(n || 0);
