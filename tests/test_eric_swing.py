@@ -196,3 +196,48 @@ def test_eric_square_post_text():
     assert "第一半 +14.5%" in t4 and "余仓 +2.0%" in t4
     t5 = compose_eric_square_post(symbol="ETH/USDT", kind="weekly_stop", price=1700.0, bf_value=None, plan={"pnl_pct": -12.3})
     assert "止损" in t5 and "-12.3%" in t5 and DISCLAIMER in t5
+
+
+def test_square_polish_keeps_numbers_or_falls_back(monkeypatch):
+    import analyst.monitor.square_posts as sp
+    from analyst.monitor.square_posts import DISCLAIMER, compose_eric_square_post, polish_square_text
+
+    original = compose_eric_square_post(symbol="BTC/USDT", kind="weekly_entry", price=63750.0, bf_value=-42.1, plan={"stop": 60000.0, "tp1": 79687.5})
+
+    class _Msg:
+        def __init__(self, c): self.content = c
+    class _Choice:
+        def __init__(self, c): self.message = _Msg(c)
+    class _Resp:
+        def __init__(self, c): self.choices = [_Choice(c)]
+    class _Client:
+        def __init__(self, reply): self._reply = reply
+        class _Chat:
+            def __init__(self, outer): self._o = outer
+            class _Comp:
+                def __init__(self, outer): self._o = outer
+                def create(self, **kw): return _Resp(self._o._reply)
+            @property
+            def completions(self): return _Client._Chat._Comp(self._o)
+        @property
+        def chat(self): return _Client._Chat(self)
+
+    class _S:  # 最小 settings
+        square_post_ai_polish = True
+
+    # 1) 润色稿保留全部数字 + 尾部两行 → 采用（用原文改写口吻，保证数字一个不少）
+    good = "兄弟们，" + original.replace("计划｜", "我的计划很简单：").replace("现价", "现在价格")
+    monkeypatch.setattr(sp, "_iter_chat_clients", lambda s: iter([(_Client(good), "m", "fake")]), raising=False)
+    import analyst.llm.chat as chat
+    monkeypatch.setattr(chat, "_iter_chat_clients", lambda s: iter([(_Client(good), "m", "fake")]))
+    out, src = polish_square_text(original, settings=_S())
+    assert src == "llm:fake" and "63750" in out and "79687.5" in out and DISCLAIMER in out and out.splitlines()[-1].startswith("$BTC")
+    # 2) 润色稿丢了一个数字 → 回退模板原文
+    bad = good.replace("60000", "六万")
+    monkeypatch.setattr(chat, "_iter_chat_clients", lambda s: iter([(_Client(bad), "m", "fake")]))
+    out2, src2 = polish_square_text(original, settings=_S())
+    assert out2 == original and src2 == "template:fallback"
+    # 3) 关闭开关 → 原文
+    class _Off:
+        square_post_ai_polish = False
+    assert polish_square_text(original, settings=_Off()) == (original, "template:disabled")

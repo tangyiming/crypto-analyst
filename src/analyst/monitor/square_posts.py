@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -174,6 +175,84 @@ def compose_jack_square_post(
     return text
 
 
+POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交易员，多年合约实盘，说话像人不像机器。
+把用户给你的「模板短评」改写成你自己发帖的口吻：
+- 第一人称、口语、短句，有态度、有判断，像在群里跟兄弟说话；可以有一点情绪，但不油腻、不喊单式营销、不用感叹号轰炸、不堆 emoji、不用项目符号和小标题。
+- 把「我们的系统/引擎/指标读数」这类机器表述换成交易员会说的话（比如「日线超卖了」「回踩位在 xxx」）。
+- 所有价格、点位、百分比、倍数、日期、币种标签（$BTC #BTC 这种）必须原样保留，一个数字都不能改、不能删、不能新增。
+- 不改变原文的方向判断和操作建议；不要编造原文没有的理由。
+- 最后两行原样保留：免责声明那一行、标签那一行。
+- 总长度不超过原文的 1.3 倍，且不超过 800 字。只输出改写后的正文，不要解释。"""
+
+_NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def _numbers(text: str) -> set[str]:
+    """按数值归一（63750.00 与 63750 视为同一个数；忽略 0.382 这类系数以外的差异由长度校验兜底）。"""
+    out: set[str] = set()
+    for m in _NUM_RE.finditer(text):
+        raw = m.group(0).replace(",", "")
+        try:
+            v = float(raw)
+        except ValueError:
+            continue
+        out.add(f"{v:.6g}")
+    return out
+
+
+def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
+    """LLM 润色广场短评。返回 (最终文本, 来源 'llm:<provider>' | 'template:<原因>')。
+
+    校验：原文里的每个数字必须在润色稿里出现；免责声明与标签行保留；长度 ≤ 900。任一不满足回退原文。
+    """
+    import time as _time
+
+    s = settings or get_settings()
+    if not getattr(s, "square_post_ai_polish", True):
+        return text, "template:disabled"
+    try:
+        from analyst.llm.chat import _iter_chat_clients
+    except Exception as e:  # noqa: BLE001
+        return text, f"template:import({e})"
+    want_nums = _numbers(text)
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    tail = lines[-2:] if len(lines) >= 2 else lines
+    start = _time.time()
+    for client, model, prov in _iter_chat_clients(s):
+        if _time.time() - start > 60:
+            break
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": POLISH_SYSTEM}, {"role": "user", "content": text}],
+                temperature=0.7,
+                max_tokens=700,
+            )
+            out = (resp.choices[0].message.content or "").strip()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("square polish %s 失败：%s", prov, e)
+            continue
+        if not out:
+            continue
+        out = out.strip("`").strip()
+        got = _numbers(out)
+        missing = want_nums - got
+        if missing:
+            logger.warning("square polish %s 丢了数字 %s，回退模板", prov, sorted(missing)[:6])
+            continue
+        if any(t not in out for t in tail):
+            # 免责声明/标签行被改写 → 把原尾部补回去
+            body = out
+            for t in tail:
+                body = body.replace(t, "").rstrip()
+            out = body.rstrip() + "\n" + "\n".join(tail)
+        if len(out) > 900 or len(out) > int(len(text) * 1.5) + 80:
+            logger.warning("square polish %s 过长 %d，回退模板", prov, len(out))
+            continue
+        return out, f"llm:{prov}"
+    return text, "template:fallback"
+
+
 def _cooldown_path() -> Path:
     return Path(get_settings().data_cache_dir) / "square_jack_cooldown.json"
 
@@ -270,6 +349,8 @@ def maybe_post_jack_regime(
         jack=jack,
         regime=regime,
     )
+    text, polish_src = polish_square_text(text, settings=settings)
+    logger.info("Square 文案来源 %s（%s）", polish_src, cool_key)
     try:
         result = post_text(key, text)
     except SquareApiError as e:
@@ -422,6 +503,8 @@ def maybe_post_eric_signal(
     text = compose_eric_square_post(
         symbol=sym, kind=kind, price=price, bf_value=bf_value, reasons=reasons, plan=plan
     )
+    text, polish_src = polish_square_text(text, settings=settings)
+    logger.info("Square Eric 文案来源 %s（%s）", polish_src, cool_key)
     try:
         result = post_text(key, text)
     except SquareApiError as e:

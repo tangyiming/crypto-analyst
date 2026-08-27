@@ -178,6 +178,8 @@ class Settings(BaseSettings):
     square_post_cooldown_hours: float = Field(default=4.0)
     # Eric 超卖信号（仅 BTC/ETH 日线/周线）也发广场短文
     square_post_eric_enabled: bool = Field(default=True)
+    # 发帖前用 LLM 润色成交易员口吻（保留全部数字/标签/免责声明；失败回退模板原文）
+    square_post_ai_polish: bool = Field(default=True)
 
     # ── 新闻事件风控哨兵 ──
     monitor_news_enabled: bool = Field(default=True)
