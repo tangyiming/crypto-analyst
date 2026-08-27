@@ -81,6 +81,16 @@ class JackRegime:
     round_level: float | None = None
     barrier_below: tuple[float, float] | None = None
     barrier_above: tuple[float, float] | None = None
+    # 4h BOLL 三轨：Jack 的短线防守/低点/短阻常落在这里（SOL 8/26 防守 92=下轨，8/27 低点 97=中轨、短阻 102.75=上轨）
+    boll_4h_lower: float | None = None
+    boll_4h_mid: float | None = None
+    boll_4h_upper: float | None = None
+    # 4h 最近枢轴（3 根确认）：比结构识别更贴近现价的近支/近阻来源
+    pivot_supports: tuple[float, ...] = ()
+    pivot_resistances: tuple[float, ...] = ()
+    # 最近一波（24h 基准低 → 24h 高）的延伸目标：高 + (高−低)×0.5 / 0.618（SOL 8/25：87→103.26 ×1.5 = 111）
+    ext_150: float | None = None
+    ext_1618: float | None = None
     playbook_line: str = ""
     summary_line: str = ""
 
@@ -136,6 +146,9 @@ class JackRegime:
             f"- 大周期 {_fmt(self.cycle_low)}→{_fmt(self.cycle_high)} 反转梯子 0.382/0.5/0.618："
             f"{_fmt(self.cycle_382)} / {_fmt(self.cycle_500)} / {_fmt(self.cycle_618)} · 熊底参考 {_fmt(self.bear_bottom_618)}\n"
             f"- 整数关口 {_fmt(self.round_level)}：屏障支撑 {self._fmt_pair(self.barrier_below)} · 首压 {self._fmt_pair(self.barrier_above)}\n"
+            f"- 4h BOLL 下/中/上（短线防守/低点/短阻）：{_fmt(self.boll_4h_lower)} / {_fmt(self.boll_4h_mid)} / {_fmt(self.boll_4h_upper)}\n"
+            f"- 4h 枢轴支撑：{', '.join(_fmt(x) for x in self.pivot_supports) or 'N/A'} · 枢轴阻力：{', '.join(_fmt(x) for x in self.pivot_resistances) or 'N/A'}\n"
+            f"- 本波延伸目标 1.5/1.618：{_fmt(self.ext_150)} / {_fmt(self.ext_1618)}\n"
             f"- Playbook：{self.playbook_line}\n"
             f"- 摘要：{self.summary_line}"
         )
@@ -414,6 +427,49 @@ def _cycle_fib(
     return hi, lo, lo + rng * 0.382, lo + rng * 0.5, lo + rng * 0.618, bear_bottom
 
 
+def _boll_4h(h4: CandleSeries | None) -> tuple[float | None, float | None, float | None]:
+    if not h4 or len(h4.candles) < 21:
+        return None, None, None
+    b = compute_boll(h4)
+    return b.lower, b.middle, b.upper
+
+
+def _pivot_levels(
+    series: CandleSeries | None,
+    price: float,
+    *,
+    k: int = 3,
+    lookback: int = 120,
+    n: int = 3,
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """4h 枢轴高/低（左右各 k 根确认）：现价下方最近 n 个 = 支撑，上方最近 n 个 = 阻力。"""
+    if not series or len(series.candles) < 2 * k + 5 or price <= 0:
+        return (), ()
+    cs = series.candles[-lookback:]
+    highs: list[float] = []
+    lows: list[float] = []
+    for i in range(k, len(cs) - k):
+        w = cs[i - k : i + k + 1]
+        if cs[i].high >= max(x.high for x in w):
+            highs.append(cs[i].high)
+        if cs[i].low <= min(x.low for x in w):
+            lows.append(cs[i].low)
+    sup = sorted({x for x in lows + highs if x < price * 0.998}, reverse=True)[:n]
+    res = sorted({x for x in highs + lows if x > price * 1.002})[:n]
+    return tuple(sup), tuple(res)
+
+
+def _extension_targets(hourly: CandleSeries | None, used_low: float | None, *, bars: int = 24) -> tuple[float | None, float | None]:
+    """最近一波（基准低 → 24h 高）的 1.5 / 1.618 延伸：高 + (高−低)×0.5 / 0.618。"""
+    if not hourly or len(hourly.candles) < bars or used_low is None:
+        return None, None
+    hi = max(x.high for x in hourly.candles[-bars:])
+    if hi <= used_low:
+        return None, None
+    rng = hi - used_low
+    return hi + rng * 0.5, hi + rng * 0.618
+
+
 def _round_barriers(price: float) -> tuple[float | None, tuple[float, float] | None, tuple[float, float] | None]:
     """最近的整数关口（1/2/5 × 10^k 网格里高于现价的第一个）及其屏障区：下方 2–4%，上方 4–6%。"""
     if price <= 0:
@@ -658,6 +714,31 @@ def compute_jack_regime(
     monthly_mid = _monthly_boll_mid(daily_series)
     cyc_hi, cyc_lo, cyc_382, cyc_500, cyc_618, bear_618 = _cycle_fib(daily_series)
     round_level, barrier_below, barrier_above = _round_barriers(current_price)
+    b4_lo, b4_mid, b4_up = _boll_4h(h4_series)
+    piv_sup, piv_res = _pivot_levels(h4_series or primary_series, current_price)
+    ext150, ext1618 = _extension_targets(hourly_series, pb_low)
+    # 结构识别常滞后（SOL 8/22 价格 99 时近支仍 76.6、近阻 79.6 在现价之下）：
+    # 近支/近阻必须夹住现价；优先 4h 枢轴，其次回踩位/4h BOLL/24h 高/周 BOLL 上轨/整数关口。
+    def _pick(cands: list[float | None], *, below: bool, min_gap: float = 0.015) -> float | None:
+        """按优先级取第一个与现价至少相隔 min_gap 的候选；都太近则退回离现价最远的合法候选。"""
+        valid = [x for x in cands if x is not None and ((x < current_price) if below else (x > current_price))]
+        for x in valid:
+            if abs(x / current_price - 1) >= min_gap:
+                return x
+        return (min(valid) if below else max(valid)) if valid else None
+
+    hi24 = max(x.high for x in hourly_series.candles[-24:]) if hourly_series and len(hourly_series.candles) >= 24 else None
+    # 支撑优先级：回踩 0.618（Jack「回测 96–94」）→ 4h 枢轴低 → 结构支撑 → 4h BOLL 中/下
+    sup_cands = [pb618, piv_sup[0] if piv_sup else None, nearest_support, b4_mid, b4_lo]
+    # 阻力优先级：4h 枢轴高 → 24h 高 → 结构阻力 → 4h BOLL 上 → 周 BOLL 上 → 整数关口首压 → 本波 1.5 延伸
+    res_cands = [piv_res[0] if piv_res else None, hi24, nearest_resistance, b4_up, weekly_upper,
+                 barrier_above[0] if barrier_above else None, ext150]
+    nearest_support = _pick(sup_cands, below=True) or nearest_support
+    nearest_resistance = _pick(res_cands, below=False) or nearest_resistance
+    # 回踩位只在现价上方时有意义（价格已经跌破就不是「回踩」了）
+    if pb618 is not None and pb618 >= current_price:
+        pb50 = pb618 = None
+        pb_note = (pb_note + "；" if pb_note else "") + "现价已低于回踩位"
     second_break = jack.touch_count >= 2 and jack.daily_bias == "up"
     weekly_zero = _macd_decel_to_zero(_resample_weekly(daily_series))
     bias = jack.daily_bias
@@ -893,6 +974,13 @@ def compute_jack_regime(
         round_level=round_level,
         barrier_below=barrier_below,
         barrier_above=barrier_above,
+        boll_4h_lower=b4_lo,
+        boll_4h_mid=b4_mid,
+        boll_4h_upper=b4_up,
+        pivot_supports=piv_sup,
+        pivot_resistances=piv_res,
+        ext_150=ext150,
+        ext_1618=ext1618,
         playbook_line=playbook,
         summary_line=summary,
     )

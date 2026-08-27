@@ -234,3 +234,27 @@ def test_jack_level_formulas_from_tweets():
     lvl, below, above = _round_barriers(97.0)
     assert lvl == 100 and abs(below[0] - 96) < 1e-9 and abs(above[1] - 106) < 1e-9
     assert _round_barriers(78746.0)[0] == 100000
+
+
+def test_jack_4h_boll_pivots_extension():
+    from datetime import datetime, timedelta
+
+    from analyst.compute.jack_regime import _boll_4h, _extension_targets, _pivot_levels
+    from analyst.data.fetcher import Candle, CandleSeries
+
+    def c(i, lo, hi, hours=4):
+        return Candle(timestamp=datetime(2026, 8, 1) + timedelta(hours=i * hours), open=(lo + hi) / 2, high=hi, low=lo, close=(lo + hi) / 2, volume=1.0)
+
+    # 4h：两个明显枢轴低 87 / 93.2，枢轴高 102.8；现价 97 → 支撑 [93.2, 87]，阻力 [102.8]
+    lows = [90, 89, 88, 87, 88.5, 90, 92, 95, 96, 97, 96.5, 95.5, 93.2, 94, 95, 96, 96.5, 97, 96.8, 96.9, 97.0, 96.6, 96.7, 96.9]
+    highs = [92, 91, 90, 89.5, 91, 93, 95, 98, 100, 102.8, 101, 99, 96, 97, 98, 99, 99.5, 99.8, 99.2, 99.1, 99.3, 98.8, 98.9, 99.0]
+    s = CandleSeries("SOL/USDT", "4h", [c(i, lo, hi) for i, (lo, hi) in enumerate(zip(lows, highs))])
+    sup, res = _pivot_levels(s, 97.0)
+    assert sup[0] == 93.2 and 87 in sup
+    assert 102.8 in res and res[0] == 99.8  # 99.8 是更近的小枢轴高，102.8 在其后
+    lo_, mid, up = _boll_4h(s)
+    assert lo_ is not None and lo_ < mid < up
+    # 延伸：基准低 87、24h 高 103.26 → 1.5 = 111.39，1.618 = 113.3
+    hourly = CandleSeries("SOL/USDT", "1h", [c(i, 95, 103.26 if i == 20 else 100, hours=1) for i in range(24)])
+    e150, e1618 = _extension_targets(hourly, 87.0)
+    assert abs(e150 - (103.26 + 16.26 * 0.5)) < 1e-6 and abs(e1618 - (103.26 + 16.26 * 0.618)) < 1e-6

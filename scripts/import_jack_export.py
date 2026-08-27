@@ -57,17 +57,25 @@ def _load_cache() -> dict:
     return {"fetched_at": None, "user": {"username": USERNAME}, "count": 0, "tweets": []}
 
 
-def _existing_media_index() -> dict[str, str]:
-    """pbs 媒体 id → 本地相对路径（含官方 API 缓存里按 url 推出的 id）。"""
+def _existing_media_index(tweets: list[dict]) -> dict[str, str]:
+    """pbs 媒体 id → 本地相对路径。官方 API 缓存的文件名用数字 media_key，所以要从 media[].url 解析 pbs id。"""
     idx: dict[str, str] = {}
+    for t in tweets:
+        for m in t.get("media") or []:
+            pid = _pbs_id(m.get("url") or "") or m.get("media_key")
+            lp = m.get("local_path")
+            if pid and lp and (ROOT / lp).is_file():
+                idx[pid] = lp
     if MEDIA.is_dir():
         for p in MEDIA.iterdir():
-            # 文件名形如 {tweet}_{i}_{key}.jpg；key 可能是数字 media_key 或 pbs id
-            stem = p.stem
-            parts = stem.split("_", 2)
-            if len(parts) == 3:
-                idx[parts[2]] = str(p.relative_to(ROOT))
+            parts = p.stem.split("_", 2)
+            if len(parts) == 3 and not parts[2].isdigit():
+                idx.setdefault(parts[2], str(p.relative_to(ROOT)))
     return idx
+
+
+def _media_pid(m: dict) -> str | None:
+    return _pbs_id(m.get("url") or "") or m.get("media_key")
 
 
 def _normalize(item: dict) -> dict | None:
@@ -170,10 +178,10 @@ def main() -> None:
                 continue
             if norm["id"] in by_id:
                 dup += 1
-                # 补齐缓存里缺的配图
-                have = {m.get("media_key") for m in by_id[norm["id"]].get("media") or []}
+                # 补齐缓存里缺的配图（按 pbs 媒体 id 比对，官方缓存的 media_key 是数字）
+                have = {_media_pid(m) for m in by_id[norm["id"]].get("media") or []}
                 for m in norm["media"]:
-                    if m["media_key"] not in have:
+                    if _media_pid(m) not in have:
                         by_id[norm["id"]].setdefault("media", []).append(m)
                 continue
             by_id[norm["id"]] = norm
@@ -182,7 +190,7 @@ def main() -> None:
     print(f"合并：原缓存 {before} 条，新增 {added} 条，重复 {dup} 条，跳过转发/他人 {skipped} 条 → 共 {len(tweets)} 条")
 
     if not a.skip_media:
-        existing = _existing_media_index()
+        existing = _existing_media_index(tweets)
         saved, reused, failed = _download(tweets, existing)
         print(f"配图：新下载 {saved} 张，复用已有 {reused} 张，失败 {failed} 张；目录 {MEDIA}")
 
