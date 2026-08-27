@@ -221,7 +221,8 @@ def square_symbols_set(settings=None) -> set[str]:
 
 def square_timeframes_set(settings=None) -> set[str]:
     s = settings or get_settings()
-    raw = (getattr(s, "square_post_timeframes", "") or "1h,4h").strip()
+    # 默认只发 4h 及以上：1h 三盘来回切换，帖子观点变来变去
+    raw = (getattr(s, "square_post_timeframes", "") or "4h,1d,1w").strip()
     return {x.strip().lower() for x in raw.split(",") if x.strip()}
 
 

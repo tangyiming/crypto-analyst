@@ -162,7 +162,7 @@ class Settings(BaseSettings):
     square_post_symbols: str = Field(
         default="BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,AAVE/USDT"
     )
-    square_post_timeframes: str = Field(default="1h,4h")
+    square_post_timeframes: str = Field(default="4h,1d,1w")
     square_post_cooldown_hours: float = Field(default=4.0)
     # Eric 超卖信号（仅 BTC/ETH 日线/周线）也发广场短文
     square_post_eric_enabled: bool = Field(default=True)
