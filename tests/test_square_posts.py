@@ -147,3 +147,28 @@ def test_waist_note_distinguishes_below_and_near():
     assert "贴着" in _waist_note(reg, 2505.66)
     assert "在其下" in _waist_note(reg, 2400.0)
     assert _waist_note(SimpleNamespace(waist_line=2478.84, below_waist=False), 2600.0) == ""
+
+
+def test_indicator_block_filters_far_levels_by_timeframe():
+    from types import SimpleNamespace
+    from analyst.monitor.square_posts import indicator_block
+
+    reg = SimpleNamespace(
+        trade_side="long", macd_8h_decel=False, macd_12h_decel=False, weekly_macd_zero=False, accel_2d=False,
+        golden_3d=False, golden_5d=False, hollow_daily=False,
+        boll_4h_lower=77260.0, boll_4h_mid=78755.0, boll_4h_upper=80250.0, boll_12h_mid=74428.0,
+        ema12h_6=78431.0, boll_mid_3d=65734.0, boll_mid_5d=66276.0, ema5d_6=70980.0,
+        pullback_50=79050.0, pullback_618=78708.0, nearest_support=77704.0, nearest_resistance=80500.0,
+        ext_150=81950.0, ext_1618=82292.0, round_level=80000.0, barrier_below=(76800.0, 78400.0), barrier_above=(83200.0, 84800.0),
+        waist_line=63104.0, below_waist=False, cycle_low=57758.6, cycle_high=126208.5, cycle_382=83906.0, cycle_500=91984.0, cycle_618=100061.0,
+        monthly_boll_mid=88259.0, weekly_boll_upper=84398.0,
+    )
+    h4 = "\n".join(indicator_block(reg, None, price=79054.0, timeframe="4h"))
+    assert "65734" not in h4 and "66276" not in h4 and "70980" not in h4  # −17%/−10%：4h 帖不写
+    assert "91984" not in h4 and "100061" not in h4 and "83906" in h4  # 梯子只留最近一档
+    assert "88259" not in h4 and "84398" in h4  # 月线中轨 +12% 超门槛，周线上轨 +7% 保留
+    assert "上方 20%" in h4 and "牛市结构没坏" in h4  # 腰斩线远 → 定性
+    assert "78431" in h4 and "74428" in h4 and "80500" in h4
+    d1 = "\n".join(indicator_block(reg, None, price=79054.0, timeframe="1d"))
+    assert "65734" in d1 and "88259" in d1 and "91984" in d1  # 日线门槛 25%：这些都回来了
+    assert "100061" not in d1  # +27% 仍超

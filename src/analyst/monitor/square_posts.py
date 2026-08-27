@@ -198,7 +198,7 @@ def compose_jack_square_post(
     elif regime.trade_side == "short" and not regime.below_waist:
         lines.append("想开空等反弹靠近阻力，别贴着支撑追空。")
     lines.append("")
-    lines.extend(indicator_block(regime, jack, price=price))
+    lines.extend(indicator_block(regime, jack, price=price, timeframe=timeframe))
     text = "\n".join(lines)
     if len(text) > MAX_POST_LEN:
         text = text[: MAX_POST_LEN - 1] + "…"
@@ -226,9 +226,36 @@ def _waist_note(regime, price: float) -> str:
         return "（现价在其下，只低吸不追空）"
     return "（现价贴着腰斩线，只低吸不追空）"
 
-def indicator_block(regime: JackRegime, jack: JackLevels | None, eric_readings: list[str] | None = None, price: float = 0.0) -> list[str]:
-    """指标分析段：多周期 BOLL / MACD 动能 / 均线 / 关键位 / 大周期，给读者「为什么这么看」。"""
+_NEAR_BY_TF = {"4h": 0.10, "6h": 0.12, "8h": 0.12, "12h": 0.15, "1d": 0.25, "3d": 0.35, "1w": 0.40, "1M": 0.60}
+
+
+def _near_threshold(timeframe: str | None) -> float:
+    return _NEAR_BY_TF.get((timeframe or "4h").strip().lower(), 0.10)
+
+
+def indicator_block(
+    regime: JackRegime,
+    jack: JackLevels | None,
+    eric_readings: list[str] | None = None,
+    price: float = 0.0,
+    timeframe: str = "4h",
+) -> list[str]:
+    """指标分析段：多周期 BOLL / MACD 动能 / 均线 / 关键位 / 大周期，给读者「为什么这么看」。
+
+    远端点位距离过滤：离现价超过周期门槛（4h ±10%、1d ±25%、1w ±40%）的位不写进帖子，
+    大周期段只留腰斩线定性、最近一档反转梯子和最近一个变盘位，避免 4h 帖被月度级别的数字淹没。
+    """
     f = _fmt_price
+    thr = _near_threshold(timeframe)
+
+    def near(x: float | None) -> bool:
+        if x is None or not price or price <= 0:
+            return x is not None
+        return abs(float(x) / price - 1.0) <= thr
+
+    def dist(x: float) -> float:
+        return abs(float(x) / price - 1.0) if price else 0.0
+
     out: list[str] = ["指标怎么看："]
     macd_bits = []
     if regime.macd_8h_decel or regime.macd_12h_decel:
@@ -243,35 +270,64 @@ def indicator_block(regime: JackRegime, jack: JackLevels | None, eric_readings: 
         macd_bits.append("日线空心阳加速")
     if macd_bits:
         out.append("动能：" + "；".join(macd_bits) + "。")
+
     if regime.boll_4h_mid is not None:
-        out.append(f"4h BOLL：下轨 {f(regime.boll_4h_lower)} / 中轨 {f(regime.boll_4h_mid)} / 上轨 {f(regime.boll_4h_upper)}；12h 中轨 {f(regime.boll_12h_mid)}。")
+        line = f"4h BOLL：下轨 {f(regime.boll_4h_lower)} / 中轨 {f(regime.boll_4h_mid)} / 上轨 {f(regime.boll_4h_upper)}"
+        if near(regime.boll_12h_mid):
+            line += f"；12h 中轨 {f(regime.boll_12h_mid)}"
+        out.append(line + "。")
+
     ma_bits = []
-    if regime.ema12h_6 is not None:
+    if near(regime.ema12h_6):
         ma_bits.append(f"12h EMA6 {f(regime.ema12h_6)}（扎针参考）")
-    if regime.boll_mid_3d is not None or regime.boll_mid_5d is not None:
-        ma_bits.append(f"3日/5日 BOLL 中轨 {f(regime.boll_mid_3d)} / {f(regime.boll_mid_5d)}（强势盘减仓防守）")
-    if regime.ema5d_6 is not None:
+    mids = [x for x in (regime.boll_mid_3d, regime.boll_mid_5d) if near(x)]
+    if mids:
+        ma_bits.append(f"{'3日/5日' if len(mids) == 2 else ('3日' if regime.boll_mid_3d in mids else '5日')} BOLL 中轨 {' / '.join(f(x) for x in mids)}（强势盘减仓防守）")
+    if near(regime.ema5d_6):
         ma_bits.append(f"5日 EMA6 {f(regime.ema5d_6)}")
     if ma_bits:
         out.append("均线：" + "；".join(ma_bits) + "。")
+
     lv = []
-    if regime.pullback_618 is not None:
+    if regime.pullback_618 is not None and (near(regime.pullback_618) or near(regime.pullback_50)):
         lv.append(f"回踩做多位 {f(regime.pullback_50)} / {f(regime.pullback_618)}")
     lv.append(f"近支撑 {f(regime.nearest_support)} · 近阻力 {f(regime.nearest_resistance)}")
-    if regime.ext_150 is not None:
-        lv.append(f"本波延伸目标 {f(regime.ext_150)} / {f(regime.ext_1618)}")
-    if _round_near(regime, price, 0.15) and regime.barrier_below and regime.barrier_above:
+    exts = [x for x in (regime.ext_150, regime.ext_1618) if near(x)]
+    if exts:
+        lv.append("本波延伸目标 " + " / ".join(f(x) for x in exts))
+    if _round_near(regime, price, thr) and regime.barrier_below and regime.barrier_above:
         lv.append(f"整数关口 {f(regime.round_level)}（下方屏障 {f(regime.barrier_below[0])}-{f(regime.barrier_below[1])}，上方首压 {f(regime.barrier_above[0])}-{f(regime.barrier_above[1])}）")
     out.append("点位：" + "；".join(lv) + "。")
+
     big = []
     if regime.waist_line is not None:
-        big.append(f"腰斩线 {f(regime.waist_line)}" + _waist_note(regime, price))
-    if regime.cycle_382 is not None:
-        big.append(f"大周期 {f(regime.cycle_low)}→{f(regime.cycle_high)} 反转梯子 {f(regime.cycle_382)} / {f(regime.cycle_500)} / {f(regime.cycle_618)}")
+        if near(regime.waist_line):
+            big.append(f"腰斩线 {f(regime.waist_line)}" + _waist_note(regime, price))
+        elif price and price > regime.waist_line:
+            big.append(f"现价在腰斩线 {f(regime.waist_line)} 上方 {dist(regime.waist_line) * 100:.0f}%，牛市结构没坏")
+        else:
+            big.append(f"腰斩线 {f(regime.waist_line)}" + _waist_note(regime, price))
+    rungs = [x for x in (regime.cycle_382, regime.cycle_500, regime.cycle_618) if x is not None]
+    if rungs:
+        near_rungs = [x for x in rungs if near(x)]
+        if near_rungs:
+            big.append(f"大周期 {f(regime.cycle_low)}→{f(regime.cycle_high)} 反转梯子最近一档 {' / '.join(f(x) for x in near_rungs)}")
+        else:
+            up = [x for x in rungs if price and x > price]
+            nxt = min(up) if up else min(rungs, key=dist)
+            big.append(f"大周期反转梯子下一档在 {f(nxt)}（{'上方' if price and nxt > price else '下方'} {dist(nxt) * 100:.0f}%）")
+    pivots = []
     if regime.monthly_boll_mid is not None:
-        big.append(f"月线 BOLL 中轨 {f(regime.monthly_boll_mid)}（突破即大方向反转）")
+        pivots.append(("月线 BOLL 中轨", float(regime.monthly_boll_mid), "（突破即大方向反转）"))
     if regime.weekly_boll_upper is not None:
-        big.append(f"周线 BOLL 上轨 {f(regime.weekly_boll_upper)}")
+        pivots.append(("周线 BOLL 上轨", float(regime.weekly_boll_upper), ""))
+    near_p = [p_ for p_ in pivots if near(p_[1])]
+    far_p = [p_ for p_ in pivots if not near(p_[1])]
+    for name, val, note in near_p:
+        big.append(f"{name} {f(val)}{note}")
+    if far_p and not near_p:
+        name, val, note = min(far_p, key=lambda t: dist(t[1]))
+        big.append(f"更远的变盘位：{name} {f(val)}{note}")
     if big:
         out.append("大周期：" + "；".join(big) + "。")
     if eric_readings:
@@ -701,7 +757,7 @@ def compose_move_square_post(
     if play:
         lines.append(f"打法：{_clip_sentence(play, 200)}")
     lines.append("")
-    lines.extend(indicator_block(regime, jack, eric_readings, price=price))
+    lines.extend(indicator_block(regime, jack, eric_readings, price=price, timeframe=timeframe))
     text = "\n".join(lines)
     if len(text) > MAX_POST_LEN:
         text = text[: MAX_POST_LEN - 1] + "…"
