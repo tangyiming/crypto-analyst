@@ -96,3 +96,15 @@ def test_square_default_symbols_include_sol_aave():
     assert "SOL/USDT" in symbols
     assert "AAVE/USDT" in symbols
     assert "BTC/USDT" in symbols
+
+
+def test_round_barrier_far_from_price_is_skipped():
+    """SOL 102 时下一个整数关口是 150，离价 47%，不该被写成首压。"""
+    from types import SimpleNamespace
+    from analyst.monitor.square_posts import _round_near
+
+    reg = SimpleNamespace(round_level=150.0)
+    assert not _round_near(reg, 102.0, 0.08)
+    assert not _round_near(reg, 102.0, 0.15)
+    assert _round_near(SimpleNamespace(round_level=100.0), 97.0, 0.08)
+    assert not _round_near(SimpleNamespace(round_level=None), 97.0, 0.08)

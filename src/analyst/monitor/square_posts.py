@@ -168,7 +168,7 @@ def compose_jack_square_post(
     elif regime.trade_side == "short" and not regime.below_waist:
         lines.append("想开空等反弹靠近阻力，别贴着支撑追空。")
     lines.append("")
-    lines.extend(indicator_block(regime, jack))
+    lines.extend(indicator_block(regime, jack, price=price))
     text = "\n".join(lines)
     if len(text) > MAX_POST_LEN:
         text = text[: MAX_POST_LEN - 1] + "…"
@@ -178,7 +178,15 @@ def compose_jack_square_post(
 MAX_POST_LEN = 1500
 
 
-def indicator_block(regime: JackRegime, jack: JackLevels | None, eric_readings: list[str] | None = None) -> list[str]:
+
+def _round_near(regime, price: float, max_dist: float) -> bool:
+    """整数关口离现价太远（如 SOL 102 → 150）就别当首压写进帖子。"""
+    lv = getattr(regime, "round_level", None)
+    if lv is None or not price or price <= 0:
+        return False
+    return abs(lv / price - 1.0) <= max_dist
+
+def indicator_block(regime: JackRegime, jack: JackLevels | None, eric_readings: list[str] | None = None, price: float = 0.0) -> list[str]:
     """指标分析段：多周期 BOLL / MACD 动能 / 均线 / 关键位 / 大周期，给读者「为什么这么看」。"""
     f = _fmt_price
     out: list[str] = ["指标怎么看："]
@@ -212,7 +220,7 @@ def indicator_block(regime: JackRegime, jack: JackLevels | None, eric_readings: 
     lv.append(f"近支撑 {f(regime.nearest_support)} · 近阻力 {f(regime.nearest_resistance)}")
     if regime.ext_150 is not None:
         lv.append(f"本波延伸目标 {f(regime.ext_150)} / {f(regime.ext_1618)}")
-    if regime.round_level is not None and regime.barrier_below and regime.barrier_above:
+    if _round_near(regime, price, 0.15) and regime.barrier_below and regime.barrier_above:
         lv.append(f"整数关口 {f(regime.round_level)}（下方屏障 {f(regime.barrier_below[0])}-{f(regime.barrier_below[1])}，上方首压 {f(regime.barrier_above[0])}-{f(regime.barrier_above[1])}）")
     out.append("点位：" + "；".join(lv) + "。")
     big = []
@@ -604,7 +612,10 @@ def compose_move_square_post(
         else:
             lines.append(f"日线还没转强，这种拉升先当反弹看：近阻力 {f(regime.nearest_resistance)} 附近先减一部分，回踩 {f(regime.pullback_618)} 不破再拿。")
         if regime.ext_150 is not None:
-            lines.append(f"这波如果延续，看 {f(regime.ext_150)} / {f(regime.ext_1618)}；整数关口 {f(regime.round_level)} 上方 {f(regime.barrier_above[0]) if regime.barrier_above else '—'} 附近是首个压力，首次冲关一般站不稳，先止盈一部分。")
+            ext = f"这波如果延续，看 {f(regime.ext_150)} / {f(regime.ext_1618)}"
+            if _round_near(regime, price, 0.08) and regime.barrier_above:
+                ext += f"；整数关口 {f(regime.round_level)} 上方 {f(regime.barrier_above[0])} 附近是首个压力，首次冲关一般站不稳，先止盈一部分"
+            lines.append(ext + "。")
     else:
         if regime.below_waist:
             lines.append(f"已经在腰斩线 {f(regime.waist_line)} 之下，这里不追空，只等止跌信号低吸。")
@@ -614,7 +625,7 @@ def compose_move_square_post(
     if play:
         lines.append(f"打法：{play[:160]}")
     lines.append("")
-    lines.extend(indicator_block(regime, jack, eric_readings))
+    lines.extend(indicator_block(regime, jack, eric_readings, price=price))
     text = "\n".join(lines)
     if len(text) > MAX_POST_LEN:
         text = text[: MAX_POST_LEN - 1] + "…"
