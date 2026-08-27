@@ -85,6 +85,13 @@ class JackRegime:
     boll_4h_lower: float | None = None
     boll_4h_mid: float | None = None
     boll_4h_upper: float | None = None
+    # 币安 App 默认 BOLL(20,2)：他 15m/1h/4h/12h 都看。SOL 8/22「突破 97.56 可追」= 1h 上轨；BTC 8/15 支撑 62500 ≈ 12h 下轨 62698
+    boll_1h_lower: float | None = None
+    boll_1h_mid: float | None = None
+    boll_1h_upper: float | None = None
+    boll_12h_lower: float | None = None
+    boll_12h_mid: float | None = None
+    boll_12h_upper: float | None = None
     # 4h 最近枢轴（3 根确认）：比结构识别更贴近现价的近支/近阻来源
     pivot_supports: tuple[float, ...] = ()
     pivot_resistances: tuple[float, ...] = ()
@@ -147,6 +154,8 @@ class JackRegime:
             f"{_fmt(self.cycle_382)} / {_fmt(self.cycle_500)} / {_fmt(self.cycle_618)} · 熊底参考 {_fmt(self.bear_bottom_618)}\n"
             f"- 整数关口 {_fmt(self.round_level)}：屏障支撑 {self._fmt_pair(self.barrier_below)} · 首压 {self._fmt_pair(self.barrier_above)}\n"
             f"- 4h BOLL 下/中/上（短线防守/低点/短阻）：{_fmt(self.boll_4h_lower)} / {_fmt(self.boll_4h_mid)} / {_fmt(self.boll_4h_upper)}\n"
+            f"- 1h BOLL 下/中/上（追涨/短止盈）：{_fmt(self.boll_1h_lower)} / {_fmt(self.boll_1h_mid)} / {_fmt(self.boll_1h_upper)}"
+            f" · 12h BOLL 下/中/上：{_fmt(self.boll_12h_lower)} / {_fmt(self.boll_12h_mid)} / {_fmt(self.boll_12h_upper)}\n"
             f"- 4h 枢轴支撑：{', '.join(_fmt(x) for x in self.pivot_supports) or 'N/A'} · 枢轴阻力：{', '.join(_fmt(x) for x in self.pivot_resistances) or 'N/A'}\n"
             f"- 本波延伸目标 1.5/1.618：{_fmt(self.ext_150)} / {_fmt(self.ext_1618)}\n"
             f"- Playbook：{self.playbook_line}\n"
@@ -715,6 +724,8 @@ def compute_jack_regime(
     cyc_hi, cyc_lo, cyc_382, cyc_500, cyc_618, bear_618 = _cycle_fib(daily_series)
     round_level, barrier_below, barrier_above = _round_barriers(current_price)
     b4_lo, b4_mid, b4_up = _boll_4h(h4_series)
+    b1_lo, b1_mid, b1_up = _boll_4h(hourly_series)
+    b12_lo, b12_mid, b12_up = _boll_4h(h12)
     piv_sup, piv_res = _pivot_levels(h4_series or primary_series, current_price)
     ext150, ext1618 = _extension_targets(hourly_series, pb_low)
     # 结构识别常滞后（SOL 8/22 价格 99 时近支仍 76.6、近阻 79.6 在现价之下）：
@@ -729,9 +740,9 @@ def compute_jack_regime(
 
     hi24 = max(x.high for x in hourly_series.candles[-24:]) if hourly_series and len(hourly_series.candles) >= 24 else None
     # 支撑优先级：回踩 0.618（Jack「回测 96–94」）→ 4h 枢轴低 → 结构支撑 → 4h BOLL 中/下
-    sup_cands = [pb618, piv_sup[0] if piv_sup else None, nearest_support, b4_mid, b4_lo]
-    # 阻力优先级：4h 枢轴高 → 24h 高 → 结构阻力 → 4h BOLL 上 → 周 BOLL 上 → 整数关口首压 → 本波 1.5 延伸
-    res_cands = [piv_res[0] if piv_res else None, hi24, nearest_resistance, b4_up, weekly_upper,
+    sup_cands = [pb618, piv_sup[0] if piv_sup else None, nearest_support, b4_mid, b12_lo, b4_lo]
+    # 阻力优先级：4h 枢轴高 → 24h 高 → 结构阻力 → 1h/4h BOLL 上 → 12h/周 BOLL 上 → 整数关口首压 → 本波 1.5 延伸
+    res_cands = [piv_res[0] if piv_res else None, hi24, nearest_resistance, b1_up, b4_up, b12_up, weekly_upper,
                  barrier_above[0] if barrier_above else None, ext150]
     nearest_support = _pick(sup_cands, below=True) or nearest_support
     nearest_resistance = _pick(res_cands, below=False) or nearest_resistance
@@ -977,6 +988,12 @@ def compute_jack_regime(
         boll_4h_lower=b4_lo,
         boll_4h_mid=b4_mid,
         boll_4h_upper=b4_up,
+        boll_1h_lower=b1_lo,
+        boll_1h_mid=b1_mid,
+        boll_1h_upper=b1_up,
+        boll_12h_lower=b12_lo,
+        boll_12h_mid=b12_mid,
+        boll_12h_upper=b12_up,
         pivot_supports=piv_sup,
         pivot_resistances=piv_res,
         ext_150=ext150,
