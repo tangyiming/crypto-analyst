@@ -200,6 +200,8 @@ class MonitorHub:
         self._jack_pair_at: dict[str, float] = {}
         # Eric 周线超卖波段计划：按品种持久化状态（跨重启保留持仓阶段）
         self._eric_swing_state: dict[str, dict[str, Any]] | None = None
+        # 纸面交易引擎（Jack 强势盘低多计划）
+        self._paper: Any = None
 
     def _daemon_state_path(self) -> Any:
         from pathlib import Path
@@ -897,6 +899,10 @@ class MonitorHub:
                         await self._eric_swing_mark_check(worker, float(mark))
                     except Exception:
                         logger.exception("eric swing mark check failed %s", key.symbol)
+                    try:
+                        await self._paper_mark_check(worker, float(mark))
+                    except Exception:
+                        logger.exception("paper mark check failed %s", key.symbol)
                 settings = get_settings()
                 if settings.monitor_rules_enabled:
                     # funding/溢价与 K 线周期无关：只由挂 mark 的那条 worker 告警
@@ -1211,6 +1217,91 @@ class MonitorHub:
                     reasons=list(ev.reasons),
                     plan=sq_plan,
                 )
+
+    # ── 纸面交易（Jack 强势盘低多） ──
+    def _paper_broker(self):
+        if self._paper is not None:
+            return self._paper
+        s = get_settings()
+        if not getattr(s, "paper_enabled", False):
+            return None
+        from analyst.compute.strategies.jack_pullback import JackPullbackConfig
+        from analyst.exec.paper import PaperBroker
+
+        cfg = JackPullbackConfig(
+            risk_pct=float(s.paper_risk_pct),
+            max_leverage=float(s.paper_max_leverage),
+            exit_rule=str(s.paper_exit_rule),
+            entry_pref=str(s.paper_entry_pref),
+            min_stop_pct=float(s.paper_min_stop_pct),
+            min_rr=float(s.paper_min_rr),
+        )
+        self._paper = PaperBroker(
+            Path(s.data_cache_dir) / "paper_state.json",
+            equity0=float(s.paper_equity_usd),
+            cfg=cfg,
+            daily_fuse_pct=float(s.paper_daily_fuse_pct),
+            max_positions=int(s.paper_max_positions),
+        )
+        logger.info("paper broker ready: equity=%.0f positions=%d pending=%d", self._paper.equity, len(self._paper.state["positions"]), len(self._paper.state["pending"]))
+        return self._paper
+
+    def _paper_symbols(self) -> set[str]:
+        raw = str(getattr(get_settings(), "paper_symbols", "") or "")
+        return {_norm_symbol(x) for x in raw.split(",") if x.strip()}
+
+    async def _emit_paper_events(self, worker: StreamWorker, events: list[Any]) -> None:
+        for ev in events:
+            sym = ev.symbol if ev.symbol != "*" else worker.key.symbol
+            direction = "long" if ev.kind in ("submit", "fill") else ("short" if ev.kind in ("tp1", "stop", "exit", "fuse") else "long")
+            alert = rule_event_to_alert(
+                sym,
+                worker.key.timeframe,
+                RuleEvent(
+                    rule=f"paper_{ev.kind}",
+                    title={"submit": "纸面·挂单", "fill": "纸面·成交", "tp1": "纸面·一半止盈", "stop": "纸面·止损", "exit": "纸面·离场", "expire": "纸面·挂单过期", "fuse": "纸面·日内熔断", "reject": "纸面·拒单"}.get(ev.kind, f"纸面·{ev.kind}"),
+                    direction=direction,
+                    strength=0.8 if ev.kind in ("fill", "stop", "fuse") else 0.6,
+                    price=float(ev.price or 0.0),
+                    reasons=[ev.text, f"权益 {self._paper.equity:,.0f}U"] if self._paper else [ev.text],
+                    marker_time=int(datetime.now(timezone.utc).timestamp()),
+                    extras={"paper": ev.to_dict()},
+                ),
+            )
+            await self._emit_rule_alert(worker, alert)
+
+    async def _evaluate_paper(self, worker: StreamWorker, jack: Any, regime: Any) -> None:
+        """4h 收盘：先管理持仓（余仓离场/超时），再用当前点位出新计划。"""
+        broker = self._paper_broker()
+        if broker is None or worker.key.timeframe.lower() != "4h":
+            return
+        sym = worker.key.symbol
+        if _norm_symbol(sym) not in self._paper_symbols() or regime is None or jack is None:
+            return
+        from analyst.compute.strategies.jack_pullback import build_plan
+
+        price = float(worker.series.candles[-1].close)
+        now = datetime.now(timezone.utc)
+        events = broker.on_bar_close(sym, price, regime, now)
+        plan = build_plan(sym, price, jack, regime, now, broker.cfg)
+        if plan is not None:
+            ev = broker.submit(plan, now)
+            if ev:
+                events.append(ev)
+        await self._emit_paper_events(worker, events)
+
+    async def _paper_mark_check(self, worker: StreamWorker, mark: float) -> None:
+        broker = self._paper if self._paper is not None else (self._paper_broker() if getattr(get_settings(), "paper_enabled", False) else None)
+        if broker is None:
+            return
+        sym = worker.key.symbol
+        if _norm_symbol(sym) not in self._paper_symbols():
+            return
+        if sym not in broker.state["positions"] and sym not in broker.state["pending"]:
+            return
+        events = broker.on_mark(sym, float(mark), datetime.now(timezone.utc))
+        if events:
+            await self._emit_paper_events(worker, events)
 
     async def _eric_swing_mark_check(self, worker: StreamWorker, mark: float) -> None:
         """持仓中按实时标记价检查止损（止盈仍按日线收盘）。"""
@@ -2385,6 +2476,11 @@ class MonitorHub:
             await self._evaluate_eric_swing(worker)
         except Exception:
             logger.exception("eric swing evaluate failed %s", worker.key)
+
+        try:
+            await self._evaluate_paper(worker, jack, jack_regime)
+        except Exception:
+            logger.exception("paper evaluate failed %s", worker.key)
 
         try:
             await self._maybe_ai_confirm(

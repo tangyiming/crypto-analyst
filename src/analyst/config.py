@@ -119,6 +119,18 @@ class Settings(BaseSettings):
     monitor_eric_swing_risk_pct: float = Field(default=2.0)
     # 只对这些品种运行波段计划（回测只有 BTC/ETH 成立；BNB/SOL 证伪）
     monitor_eric_swing_symbols: str = Field(default="BTC/USDT,ETH/USDT")
+    # 纸面交易（Jack 强势盘低多计划 → 限价/止损/一半止盈，实时标记价撮合）
+    paper_enabled: bool = Field(default=True)
+    paper_symbols: str = Field(default="BTC/USDT,ETH/USDT,SOL/USDT")
+    paper_equity_usd: float = Field(default=10_000.0)
+    paper_risk_pct: float = Field(default=1.0)
+    paper_max_leverage: float = Field(default=3.0)
+    paper_daily_fuse_pct: float = Field(default=3.0)
+    paper_max_positions: int = Field(default=2)
+    paper_exit_rule: str = Field(default="boll_mid")
+    paper_entry_pref: str = Field(default="618")
+    paper_min_stop_pct: float = Field(default=0.008)
+    paper_min_rr: float = Field(default=1.2)
     monitor_funding_extreme_pct: float = Field(default=0.05)
     monitor_premium_extreme_pct: float = Field(default=0.30)
     monitor_volume_spike_ratio: float = Field(default=2.0)   # 放量告警阈值（×20 均量）
