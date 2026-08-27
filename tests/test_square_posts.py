@@ -122,3 +122,18 @@ def test_polish_number_check_tolerates_rounding():
     assert _missing_numbers(want, got) == set()
     got_bad = _numbers("上轨 101.57，现价 102.05")
     assert _missing_numbers(want, got_bad) == {"106.753"}
+
+
+def test_post_levels_filtered_by_price_side():
+    from types import SimpleNamespace
+    from analyst.monitor.square_posts import _clip_sentence, _numbers, _post_levels
+
+    jack = SimpleNamespace(defense_level=77704.0, rebound_382=69660.0, rebound_618=74094.0, touch_level=None)
+    reg = SimpleNamespace(trade_side="long", nearest_support=77704.0, nearest_resistance=80499.9, ext_150=81949.85, ext_1618=82292.0)
+    defense, near, target = _post_levels(reg, jack, 79054.0)
+    assert defense == 77704.0 and near == 80499.9 and target == 81949.85  # 锁点反弹位在现价下方，不能当近压/目标
+    reg_s = SimpleNamespace(trade_side="short", nearest_support=2431.0, nearest_resistance=2566.0, ext_150=None, ext_1618=None)
+    d, n, t = _post_levels(reg_s, SimpleNamespace(defense_level=2566.0, rebound_382=2400.0, rebound_618=2350.0, touch_level=None), 2505.0)
+    assert d == 2566.0 and n == 2431.0 and t == 2350.0
+    assert _clip_sentence("第一句。第二句；第三句没完", 12) == "第一句。第二句；"
+    assert _numbers("卖出 1/2，第2次，0.50–0.618，止损 2004.53，+25.0%") == {"2004.53", "25"}

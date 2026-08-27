@@ -100,18 +100,49 @@ def _prediction_hook(regime: JackRegime, tf: str) -> str:
     return f"👀 观望｜{zh} · {tf} 等边界再动手"
 
 
+def _post_levels(regime: JackRegime, jack: JackLevels | None, price: float) -> tuple[float | None, float | None, float | None]:
+    """帖子用（防守, 近压, 目标）：按方向做合理性过滤——多头目标/近压必须在现价上方，防守在下方。
+
+    24h 锁点的 rebound_382/618 只在「跌后反弹」语境有意义，涨势里会落在现价下方，不能直接拿来当近压/目标。
+    """
+    above = lambda x: x is not None and x > price * 1.001  # noqa: E731
+    below = lambda x: x is not None and x < price * 0.999  # noqa: E731
+    j_def = getattr(jack, "defense_level", None) if jack is not None else None
+    j_382 = getattr(jack, "rebound_382", None) if jack is not None else None
+    j_618 = getattr(jack, "rebound_618", None) if jack is not None else None
+    j_touch = getattr(jack, "touch_level", None) if jack is not None else None
+    if regime.trade_side == "short":
+        defense = next((x for x in (j_def, regime.nearest_resistance) if above(x)), None)
+        near = next((x for x in (regime.nearest_support, j_618, j_382) if below(x)), None)
+        target = next((x for x in (j_618, regime.nearest_support) if below(x) and (near is None or x <= near)), near)
+        return defense, near, target
+    defense = next((x for x in (j_def, regime.nearest_support) if below(x)), None)
+    near = next((x for x in (regime.nearest_resistance, j_382, j_618, j_touch) if above(x)), None)
+    target = next(
+        (x for x in (j_618, j_touch, getattr(regime, "ext_150", None), getattr(regime, "ext_1618", None)) if above(x) and (near is None or x >= near)),
+        None,
+    )
+    if target is None:
+        target = next((x for x in (getattr(regime, "ext_150", None), getattr(regime, "ext_1618", None)) if above(x)), near)
+    return defense, near, target
+
+
+def _clip_sentence(text: str, n: int) -> str:
+    """按句号/分号截断，避免半句话。"""
+    t = (text or "").strip()
+    if len(t) <= n:
+        return t
+    cut = t[:n]
+    k = max(cut.rfind("。"), cut.rfind("；"))
+    return cut[: k + 1] if k >= n // 3 else cut.rstrip("，、,") + "…"
+
+
 def _outlook_line(regime: JackRegime, jack: JackLevels | None, price: float) -> str:
     """一句话涨跌预测 + 关键点位（数字来自预计算）。"""
     side = regime.trade_side
     if side == "long":
-        tgt = None
-        if jack is not None:
-            tgt = jack.rebound_618 if price < jack.rebound_618 else jack.rebound_382
-            if jack.touch_level and jack.touch_level > price:
-                tgt = jack.touch_level
-        elif regime.nearest_resistance is not None:
-            tgt = regime.nearest_resistance
-        stop = jack.defense_level if jack is not None else regime.nearest_support
+        stop, near, tgt = _post_levels(regime, jack, price)
+        tgt = tgt or near
         if tgt is not None and stop is not None:
             return (
                 f"预测：短线偏涨，上看 {_fmt_price(tgt)}；"
@@ -121,8 +152,8 @@ def _outlook_line(regime: JackRegime, jack: JackLevels | None, price: float) -> 
     if side == "short":
         if regime.below_waist:
             return "预测：已近腰斩，暂不看更深下跌，宁可空仓等反抽"
-        tgt = regime.nearest_support
-        stop = jack.defense_level if jack is not None else regime.nearest_resistance
+        stop, near, tgt = _post_levels(regime, jack, price)
+        tgt = tgt or near
         if tgt is not None and stop is not None:
             return (
                 f"预测：短线偏跌，下看 {_fmt_price(tgt)}；"
@@ -149,20 +180,19 @@ def compose_jack_square_post(
         f"现价 {_fmt_price(price)} · 方向 {side}",
         _outlook_line(regime, jack, float(price)),
     ]
-    if jack is not None:
-        lines.append(
-            f"点位｜防守 {_fmt_price(jack.defense_level)} · "
-            f"近压 {_fmt_price(jack.rebound_382)} · "
-            f"目标0.618 {_fmt_price(jack.rebound_618)}"
-        )
-    elif regime.nearest_support is not None or regime.nearest_resistance is not None:
-        lines.append(
-            f"点位｜近支 {_fmt_price(regime.nearest_support)} · "
-            f"近压 {_fmt_price(regime.nearest_resistance)}"
-        )
+    defense, near, target = _post_levels(regime, jack, float(price))
+    if regime.trade_side == "short":
+        parts = [f"防守 {_fmt_price(defense)}" if defense else None, f"近支 {_fmt_price(near)}" if near else None,
+                 f"下看 {_fmt_price(target)}" if target and target != near else None]
+    else:
+        parts = [f"防守 {_fmt_price(defense)}" if defense else None, f"近压 {_fmt_price(near)}" if near else None,
+                 f"目标 {_fmt_price(target)}" if target and target != near else None]
+    parts = [x for x in parts if x]
+    if parts:
+        lines.append("点位｜" + " · ".join(parts))
     play = (regime.playbook_line or "").strip()
     if play:
-        lines.append(f"打法：{play[:100]}")
+        lines.append(f"打法：{_clip_sentence(play, 160)}")
     if regime.trade_side == "long":
         lines.append("想跟单先看防守是否守住，别追在鱼尾。")
     elif regime.trade_side == "short" and not regime.below_waist:
@@ -250,6 +280,7 @@ POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交�
 - 总长度不超过 1300 字。只输出改写后的正文，不要解释。"""
 
 _NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
+_COEFFS = {0.236, 0.382, 0.5, 0.618, 0.786, 1.5, 1.618, 2.618}
 
 
 def _numbers(text: str) -> set[str]:
@@ -261,6 +292,8 @@ def _numbers(text: str) -> set[str]:
             v = float(raw)
         except ValueError:
             continue
+        if abs(v) < 10 and (v == int(v) or round(v, 3) in _COEFFS):
+            continue  # 「1/2」「第2次」「0.618」这类计数/系数允许改写成文字
         out.add(f"{v:.6g}")
     return out
 
@@ -636,10 +669,12 @@ def compose_move_square_post(
         if regime.regime == "strong_trend" and regime.trade_side == "long":
             lines.append(
                 f"单边加速不等回踩，一味挂低多只会踏空；要追就追突破，突破近阻力 {f(regime.nearest_resistance)} 再补，"
-                f"回踩位 {f(regime.pullback_618)} 附近是低多位，跌破 {f(regime.nearest_support)} 就先出来。"
+                + (f"回踩位 {f(regime.pullback_618)} 附近是低多位，" if regime.pullback_618 is not None else "")
+                + f"跌破 {f(regime.nearest_support)} 就先出来。"
             )
         else:
-            lines.append(f"日线还没转强，这种拉升先当反弹看：近阻力 {f(regime.nearest_resistance)} 附近先减一部分，回踩 {f(regime.pullback_618)} 不破再拿。")
+            back = f"，回踩 {f(regime.pullback_618)} 不破再拿" if regime.pullback_618 is not None else f"，跌回 {f(regime.nearest_support)} 下方就走"
+            lines.append(f"日线还没转强，这种拉升先当反弹看：近阻力 {f(regime.nearest_resistance)} 附近先减一部分{back}。")
         if regime.ext_150 is not None:
             ext = f"这波如果延续，看 {f(regime.ext_150)} / {f(regime.ext_1618)}"
             if _round_near(regime, price, 0.08) and regime.barrier_above:
@@ -652,7 +687,7 @@ def compose_move_square_post(
             lines.append(f"急跌先看近支撑 {f(regime.nearest_support)} 能不能接住；反弹到 {f(regime.nearest_resistance)} 附近是短空位，破 {f(regime.nearest_support)} 再看下一档。")
     play = (regime.playbook_line or "").strip()
     if play:
-        lines.append(f"打法：{play[:160]}")
+        lines.append(f"打法：{_clip_sentence(play, 200)}")
     lines.append("")
     lines.extend(indicator_block(regime, jack, eric_readings, price=price))
     text = "\n".join(lines)
