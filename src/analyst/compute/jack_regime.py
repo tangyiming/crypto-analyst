@@ -61,11 +61,35 @@ class JackRegime:
     ema5d_6: float | None = None
     second_break: bool = False
     weekly_macd_zero: bool = False
+    # ── 2026-08 对照 Jack 推文补的点位 ──
+    # 日内回踩做多位：24h高 − (24h高 − 低)×0.5/0.618；振幅 >6% 时「低」改用最后一波冲高的起点（日内回踩低）
+    pullback_50: float | None = None
+    pullback_618: float | None = None
+    pullback_low_used: float | None = None
+    pullback_note: str = ""
+    weekly_boll_upper: float | None = None      # 周线 BOLL 上轨（反弹阻力）
+    monthly_boll_mid: float | None = None       # 月线 BOLL 中轨（自然月，含当月）：突破即大方向反转
+    # 大周期：周期高点 → 之后的低点；低 + (高−低)×0.382/0.5/0.618 = 反转确认梯子
+    cycle_high: float | None = None
+    cycle_low: float | None = None
+    cycle_382: float | None = None
+    cycle_500: float | None = None
+    cycle_618: float | None = None
+    # 熊市底部参考：周期高 − (周期高 − 上一轮熊底)×0.618（BTC 126208/15443 → 57755）
+    bear_bottom_618: float | None = None
+    # 整数关口与「屏障」：关口下方 2–4% 是止跌屏障，上方 4–6% 是首个压力
+    round_level: float | None = None
+    barrier_below: tuple[float, float] | None = None
+    barrier_above: tuple[float, float] | None = None
     playbook_line: str = ""
     summary_line: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @staticmethod
+    def _fmt_pair(p: tuple[float, float] | None) -> str:
+        return "N/A" if not p else f"{_fmt(p[0])}-{_fmt(p[1])}"
 
     def prompt_block(self, *, compact: bool = False) -> str:
         if compact:
@@ -106,6 +130,12 @@ class JackRegime:
             f"- 二次突破（日周托底下无假突破）：{self.second_break}\n"
             f"- 8h/12h MACD 归零下跌减速：{self.macd_8h_decel}/{self.macd_12h_decel}\n"
             f"- 周线 MACD 归零（大回调将尽）：{self.weekly_macd_zero}\n"
+            f"- 日内回踩做多位 0.5/0.618：{_fmt(self.pullback_50)} / {_fmt(self.pullback_618)}"
+            f"（振幅基准低点 {_fmt(self.pullback_low_used)}{'，' + self.pullback_note if self.pullback_note else ''}）\n"
+            f"- 周线 BOLL 上轨（反弹阻力）：{_fmt(self.weekly_boll_upper)} · 月线 BOLL 中轨（破则大反转）：{_fmt(self.monthly_boll_mid)}\n"
+            f"- 大周期 {_fmt(self.cycle_low)}→{_fmt(self.cycle_high)} 反转梯子 0.382/0.5/0.618："
+            f"{_fmt(self.cycle_382)} / {_fmt(self.cycle_500)} / {_fmt(self.cycle_618)} · 熊底参考 {_fmt(self.bear_bottom_618)}\n"
+            f"- 整数关口 {_fmt(self.round_level)}：屏障支撑 {self._fmt_pair(self.barrier_below)} · 首压 {self._fmt_pair(self.barrier_above)}\n"
             f"- Playbook：{self.playbook_line}\n"
             f"- 摘要：{self.summary_line}"
         )
@@ -276,6 +306,125 @@ def _weekly_boll_mid(daily: CandleSeries | None) -> float | None:
         return None
     period = min(20, len(weekly.candles))
     return compute_boll(weekly, period=period).middle
+
+
+def _weekly_boll_upper(daily: CandleSeries | None) -> float | None:
+    weekly = _resample_weekly(daily)
+    if not weekly:
+        return None
+    period = min(20, len(weekly.candles))
+    return compute_boll(weekly, period=period).upper
+
+
+def _resample_calendar_month(daily: CandleSeries | None) -> CandleSeries | None:
+    """自然月重采样（含当月未收盘 K）。Jack 的「月线 BOLL 中轨」按此算：ETH 2026-08-22 = 2646 精确复现。"""
+    if not daily or len(daily.candles) < 60:
+        return None
+    groups: dict[tuple[int, int], list[Candle]] = {}
+    for c in daily.candles:
+        groups.setdefault((c.timestamp.year, c.timestamp.month), []).append(c)
+    out: list[Candle] = []
+    for key in sorted(groups):
+        chunk = groups[key]
+        out.append(
+            Candle(
+                timestamp=chunk[-1].timestamp,
+                open=chunk[0].open,
+                high=max(x.high for x in chunk),
+                low=min(x.low for x in chunk),
+                close=chunk[-1].close,
+                volume=sum(x.volume for x in chunk),
+            )
+        )
+    if len(out) < 6:
+        return None
+    return CandleSeries(symbol=daily.symbol, timeframe="1M", candles=out)
+
+
+def _monthly_boll_mid(daily: CandleSeries | None) -> float | None:
+    monthly = _resample_calendar_month(daily)
+    if not monthly:
+        return None
+    period = min(20, len(monthly.candles))
+    return compute_boll(monthly, period=period).middle
+
+
+def _pullback_levels(
+    hourly: CandleSeries | None,
+    *,
+    bars: int = 24,
+    wide_pct: float = 0.06,
+) -> tuple[float | None, float | None, float | None, str]:
+    """Jack 日内回踩做多位：24h高 − (24h高 − 低)×0.5/0.618。
+
+    24h 振幅 > 6% 且 24h 低点在高点之前（先跌后拉）时，「低」改用 24h 低→高之间最后一个局部低点
+    （最后一波冲高的起点）。BTC 2026-08-21：24h 79556/72280 → 75059（"通常回踩不到"）；
+    改用 74214 → 76255（Jack 76267，实际低 76237）。
+    """
+    if not hourly or len(hourly.candles) < bars:
+        return None, None, None, ""
+    c = hourly.candles[-bars:]
+    hi_i = max(range(len(c)), key=lambda i: c[i].high)
+    lo_i = min(range(len(c)), key=lambda i: c[i].low)
+    hi, lo = c[hi_i].high, c[lo_i].low
+    if hi <= 0 or hi <= lo:
+        return None, None, None, ""
+    used, note = lo, ""
+    if (hi - lo) / hi > wide_pct and lo_i < hi_i:
+        piv = [
+            c[i].low
+            for i in range(lo_i + 1, hi_i)
+            if c[i].low <= c[i - 1].low and c[i].low <= c[i + 1].low
+        ]
+        if piv:
+            used = piv[-1]
+            note = f"24h振幅{(hi - lo) / hi * 100:.1f}%过大，改用日内回踩低 {used:.6g}"
+    rng = hi - used
+    return hi - rng * 0.5, hi - rng * 0.618, used, note
+
+
+def _cycle_fib(
+    daily: CandleSeries | None,
+    *,
+    min_bars: int = 300,
+) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
+    """周期高点（日线最高 high）→ 其后的最低 low；低 + (高−低)×0.382/0.5/0.618 = 反转确认梯子。
+
+    ETH 2026-08：4957.67/1503.6 → 2823/3231/3638（Jack 2822/3230/3637）。
+    熊底参考：高 − (高 − 上一轮熊底)×0.618，上一轮熊底 = 周期高点之前的最低 low（需足够长历史）。
+    """
+    if not daily or len(daily.candles) < min_bars:
+        return (None,) * 6
+    cs = daily.candles
+    hi_i = max(range(len(cs)), key=lambda i: cs[i].high)
+    after = cs[hi_i + 1 :]
+    if len(after) < 5:
+        return (None,) * 6
+    lo = min(x.low for x in after)
+    hi = cs[hi_i].high
+    if hi <= lo:
+        return (None,) * 6
+    rng = hi - lo
+    before = cs[:hi_i]
+    bear_bottom = None
+    if len(before) >= 200:
+        prev_low = min(x.low for x in before)
+        if prev_low < lo:
+            bear_bottom = hi - (hi - prev_low) * 0.618
+    return hi, lo, lo + rng * 0.382, lo + rng * 0.5, lo + rng * 0.618, bear_bottom
+
+
+def _round_barriers(price: float) -> tuple[float | None, tuple[float, float] | None, tuple[float, float] | None]:
+    """最近的整数关口（1/2/5 × 10^k 网格里高于现价的第一个）及其屏障区：下方 2–4%，上方 4–6%。"""
+    if price <= 0:
+        return None, None, None
+    import math
+
+    mag = 10 ** math.floor(math.log10(price))
+    grid = [m * mag for m in (1, 2, 5, 10)]
+    above = [g for g in grid if g > price * 1.001]
+    level = above[0] if above else grid[-1]
+    return level, (level * 0.96, level * 0.98), (level * 1.04, level * 1.06)
 
 
 def _accel_2d(daily: CandleSeries | None) -> tuple[bool, str]:
@@ -504,6 +653,11 @@ def compute_jack_regime(
     dec8 = _macd_decel_to_zero(h8)
     dec12 = _macd_decel_to_zero(h12)
     ema5d6 = _nd_ema6(daily_series, 5)
+    pb50, pb618, pb_low, pb_note = _pullback_levels(hourly_series)
+    weekly_upper = _weekly_boll_upper(daily_series)
+    monthly_mid = _monthly_boll_mid(daily_series)
+    cyc_hi, cyc_lo, cyc_382, cyc_500, cyc_618, bear_618 = _cycle_fib(daily_series)
+    round_level, barrier_below, barrier_above = _round_barriers(current_price)
     second_break = jack.touch_count >= 2 and jack.daily_bias == "up"
     weekly_zero = _macd_decel_to_zero(_resample_weekly(daily_series))
     bias = jack.daily_bias
@@ -724,6 +878,21 @@ def compute_jack_regime(
         ema5d_6=ema5d6,
         second_break=second_break,
         weekly_macd_zero=weekly_zero,
+        pullback_50=pb50,
+        pullback_618=pb618,
+        pullback_low_used=pb_low,
+        pullback_note=pb_note,
+        weekly_boll_upper=weekly_upper,
+        monthly_boll_mid=monthly_mid,
+        cycle_high=cyc_hi,
+        cycle_low=cyc_lo,
+        cycle_382=cyc_382,
+        cycle_500=cyc_500,
+        cycle_618=cyc_618,
+        bear_bottom_618=bear_618,
+        round_level=round_level,
+        barrier_below=barrier_below,
+        barrier_above=barrier_above,
         playbook_line=playbook,
         summary_line=summary,
     )

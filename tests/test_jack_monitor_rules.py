@@ -184,3 +184,53 @@ def test_jack_waist_uses_cycle_high_and_hist_decel():
     accel = [70000 - (i * i) * 6 for i in range(70)]
     still = CandleSeries("BTC/USDT", "8h", [c(i, x, 8) for i, x in enumerate(accel)])
     assert not _macd_decel_to_zero(still)
+
+
+def test_jack_level_formulas_from_tweets():
+    """2026-08 推文里可复现的公式：日内回踩位（振幅修正）、自然月 BOLL、周期斐波梯子、整数关口屏障。"""
+    from datetime import datetime, timedelta
+
+    from analyst.compute.jack_regime import (
+        _cycle_fib,
+        _pullback_levels,
+        _resample_calendar_month,
+        _round_barriers,
+    )
+    from analyst.data.fetcher import Candle, CandleSeries
+
+    def c(i, lo, hi, close=None, hours=1, base=datetime(2026, 8, 20, 18)):
+        cl = close if close is not None else (lo + hi) / 2
+        return Candle(timestamp=base + timedelta(hours=i * hours), open=cl, high=hi, low=lo, close=cl, volume=1.0)
+
+    # 先跌到 72280，再冲高 79556，中途回踩低 74214（最后一波冲高的起点）→ 用 74214 而不是 72280
+    lows = [72500, 72280, 72600, 72459, 72700, 73000, 73635, 74347, 74214, 74483, 74872, 75066, 75577, 76253, 77255, 77601, 76393, 76538, 76237, 76539, 77157, 76757, 77163, 77300]
+    highs = [l + 600 for l in lows]
+    highs[14] = 79556
+    bars = [c(i, lo, hi) for i, (lo, hi) in enumerate(zip(lows, highs))]
+    pb50, pb618, used, note = _pullback_levels(CandleSeries("BTC/USDT", "1h", bars))
+    assert used == 74214 and "改用日内回踩低" in note
+    assert abs(pb618 - (79556 - (79556 - 74214) * 0.618)) < 1e-6  # ≈76255，Jack 76267，实际低 76237
+    # 振幅小（<6%）时用 24h 低点本身
+    calm = [c(i, 2306 + i * 2, 2306 + i * 2 + 60) for i in range(24)]
+    calm[8] = c(8, 2370, 2449)
+    _, pb, used2, note2 = _pullback_levels(CandleSeries("ETH/USDT", "1h", calm))
+    assert used2 == 2306 and note2 == "" and abs(pb - (2449 - (2449 - 2306) * 0.618)) < 1e-6  # 2361
+
+    # 自然月重采样：含当月未收盘 K，按 (年,月) 分组
+    daily = [c(i, 100 + i, 110 + i, hours=24, base=datetime(2025, 1, 1)) for i in range(600)]
+    m = _resample_calendar_month(CandleSeries("X/USDT", "1d", daily))
+    assert m is not None and m.candles[-1].timestamp.month == daily[-1].timestamp.month
+    assert all(a.timestamp < b.timestamp for a, b in zip(m.candles, m.candles[1:]))
+
+    # 周期斐波：高 4957.67（idx 400）→ 其后低 1503.6；上一轮熊底 881 在高点之前
+    seq = [881.0 + i * 10 for i in range(400)] + [4957.67] + [4957.67 - i * 30 for i in range(1, 116)] + [1503.6] + [1700.0] * 30
+    ds = [Candle(timestamp=datetime(2023, 1, 1) + timedelta(days=i), open=x, high=x, low=x, close=x, volume=1) for i, x in enumerate(seq)]
+    hi, lo, f382, f500, f618, bear = _cycle_fib(CandleSeries("ETH/USDT", "1d", ds))
+    assert (hi, lo) == (4957.67, 1503.6)
+    assert abs(f382 - 2823.05) < 0.1 and abs(f500 - 3230.64) < 0.1 and abs(f618 - 3638.22) < 0.1
+    assert abs(bear - (4957.67 - (4957.67 - 881.0) * 0.618)) < 1e-6
+
+    # 整数关口：SOL 97 → 关口 100，屏障 96–98，首压 104–106；BTC 78,746 → 100,000
+    lvl, below, above = _round_barriers(97.0)
+    assert lvl == 100 and abs(below[0] - 96) < 1e-9 and abs(above[1] - 106) < 1e-9
+    assert _round_barriers(78746.0)[0] == 100000
