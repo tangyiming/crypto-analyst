@@ -255,7 +255,10 @@ def test_move_post_composer_has_indicator_block():
         round_level=150.0, barrier_below=(144.0, 147.0), barrier_above=(156.0, 159.0), waist_line=127.8, below_waist=True,
         cycle_low=60.03, cycle_high=253.49, cycle_382=133.9, cycle_500=156.8, cycle_618=179.6, macd_12h_decel=True, playbook_line="强势盘：突破补仓。",
     )
-    t = compose_move_square_post(symbol="SOL/USDT", timeframe="4h", price=101.06, change_pct=5.5, vol_ratio=1.5, jack=None, regime=reg, eric_readings=["日线 BF +49.5（超买）"])
+    t = compose_move_square_post(
+        symbol="SOL/USDT", timeframe="4h", price=101.06, change_pct=5.5, vol_ratio=1.5,
+        jack=None, regime=reg, eric_readings=["日线 BF +49.5（超买）"], compact=False,
+    )
     assert t.startswith("$SOL") and "+5.5%" in t and "指标怎么看" in t
     assert "4h BOLL" in t and "腰斩线 127.8" in t and "波段过滤器" in t and "133.9" in t
     assert DISCLAIMER not in t and "#SOL" not in t and len(t) <= 1500
