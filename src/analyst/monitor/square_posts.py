@@ -15,7 +15,7 @@ from typing import Any
 from analyst.compute.jack_levels import JackLevels
 from analyst.compute.jack_regime import JackRegime
 from analyst.config import get_settings
-from analyst.integrations.binance_square import SquareApiError, mask_key, post_text
+from analyst.integrations.binance_square import SquareApiError, mask_key, post_content, upload_image
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,9 @@ _COIN_TAGS: dict[str, tuple[str, ...]] = {
     "BNB": ("$BNB", "#BNB"),
     "SOL": ("$SOL", "#SOL", "#Solana"),
     "AAVE": ("$AAVE", "#AAVE"),
+    "DOGE": ("$DOGE", "#DOGE"),
+    "LINK": ("$LINK", "#LINK"),
+    "AVAX": ("$AVAX", "#AVAX"),
 }
 
 
@@ -60,6 +63,42 @@ def _tag_line(symbol: str) -> str:
             seen.add(t)
             out.append(t)
     return " ".join(out)
+
+
+def _is_compact(settings=None) -> bool:
+    s = settings or get_settings()
+    return bool(getattr(s, "square_post_compact", True))
+
+
+def _cta_line(
+    symbol: str,
+    side: str,
+    *,
+    defense: float | None = None,
+    target: float | None = None,
+    near: float | None = None,
+) -> str:
+    """促点击 $ 标签的行动号召。"""
+    tag = _cashtag(symbol)
+    if side == "long":
+        if defense is not None and target is not None:
+            return (
+                f"点 {tag} 看永续，站稳 {_fmt_price(defense)} 可跟，上看 {_fmt_price(target)}。"
+            )
+        if near is not None:
+            return f"点 {tag} 看行情，突破 {_fmt_price(near)} 可追，破防守就走。"
+        return f"点 {tag} 看永续，偏多思路见上。"
+    if side == "short":
+        if defense is not None and target is not None:
+            return (
+                f"点 {tag} 看永续，反弹 {_fmt_price(defense)} 附近可空，下看 {_fmt_price(target)}。"
+            )
+        if near is not None:
+            return f"点 {tag} 看行情，靠近 {_fmt_price(near)} 再空，别追在支撑上。"
+        return f"点 {tag} 看永续，偏空思路见上。"
+    if defense is not None:
+        return f"点 {tag} 看行情，守住 {_fmt_price(defense)} 再动手，方向不明先等。"
+    return f"点 {tag} 看行情，等方向明朗再动手。"
 
 
 def _fmt_price(x: float | None) -> str:
@@ -163,7 +202,7 @@ def _outlook_line(regime: JackRegime, jack: JackLevels | None, price: float) -> 
     return "预测：方向不明，先观望，不追涨杀跌"
 
 
-def compose_jack_square_post(
+def _compose_jack_compact(
     *,
     symbol: str,
     timeframe: str,
@@ -171,7 +210,217 @@ def compose_jack_square_post(
     jack: JackLevels | None,
     regime: JackRegime,
 ) -> str:
+    """短讯：钩子 + 现价/方向 + 关键位 + CTA（内容挖矿转化向）。"""
+    tag = _cashtag(symbol)
+    tf = (timeframe or "").strip().lower()
+    defense, near, target = _post_levels(regime, jack, float(price))
+    tgt = target or near
+    lines = [
+        f"{_prediction_hook(regime, tf)} {tag}",
+        f"现价 {_fmt_price(price)} · {_side_zh(regime.trade_side)} · {regime.regime_zh}",
+    ]
+    lvl: list[str] = []
+    if defense is not None:
+        lvl.append(f"防守 {_fmt_price(defense)}")
+    if near is not None and near != defense:
+        lbl = "近支" if regime.trade_side == "short" else "近压"
+        lvl.append(f"{lbl} {_fmt_price(near)}")
+    if tgt is not None and tgt not in (defense, near):
+        lbl = "下看" if regime.trade_side == "short" else "上看"
+        lvl.append(f"{lbl} {_fmt_price(tgt)}")
+    if lvl:
+        lines.append(" · ".join(lvl))
+    play = (regime.playbook_line or "").strip()
+    if play:
+        lines.append(_clip_sentence(play, 72))
+    lines.append(
+        _cta_line(
+            symbol,
+            regime.trade_side,
+            defense=defense,
+            target=tgt,
+            near=near,
+        )
+    )
+    text = "\n".join(lines)
+    if len(text) > MAX_POST_LEN:
+        text = text[: MAX_POST_LEN - 1] + "…"
+    return text
+
+
+def compose_jack_setup_post(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    jack: JackLevels | None,
+    regime: JackRegime,
+    flag_labels: list[str] | None = None,
+) -> str:
+    """Jack 打法提示（jack_setup）：新 flag 出现时的短讯。"""
+    tag = _cashtag(symbol)
+    tf = (timeframe or "").strip().lower()
+    hint = " · ".join((flag_labels or [])[:2]) or "打法更新"
+    defense, near, target = _post_levels(regime, jack, float(price))
+    tgt = target or near
+    lines = [
+        f"⚡ {tag} {tf} 打法：{hint}",
+        f"现价 {_fmt_price(price)} · {_side_zh(regime.trade_side)} · {regime.regime_zh}",
+    ]
+    if near is not None:
+        lines.append(f"关键位 {_fmt_price(near)}")
+    lines.append(
+        _cta_line(
+            symbol,
+            regime.trade_side,
+            defense=defense,
+            target=tgt,
+            near=near,
+        )
+    )
+    text = "\n".join(lines)
+    if len(text) > MAX_POST_LEN:
+        text = text[: MAX_POST_LEN - 1] + "…"
+    return text
+
+
+def compose_level_touch_post(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    level: float,
+    kind: str,
+    jack: JackLevels | None,
+    regime: JackRegime | None,
+) -> str:
+    """关键位触碰短讯。"""
+    tag = _cashtag(symbol)
+    tf = (timeframe or "").strip().lower()
+    is_support = kind == "support"
+    side = "long" if is_support else "short"
+    lvl_label = "支撑" if is_support else "阻力"
+    reg = regime
+    side_zh = _side_zh(reg.trade_side) if reg else ("偏多" if is_support else "偏空")
+    regime_zh = reg.regime_zh if reg else "—"
+    lines = [
+        f"{'👆' if is_support else '👇'} {tag} {tf} 触及{lvl_label} {_fmt_price(level)} 守住",
+        f"现价 {_fmt_price(price)} · {side_zh} · {regime_zh}",
+    ]
+    if reg is not None:
+        defense, near, target = _post_levels(reg, jack, float(price))
+        lines.append(
+            _cta_line(
+                symbol,
+                side,
+                defense=defense if defense else level,
+                target=target,
+                near=near if near else level,
+            )
+        )
+    else:
+        lines.append(
+            _cta_line(
+                symbol,
+                side,
+                defense=level if is_support else None,
+                near=level if not is_support else None,
+            )
+        )
+    text = "\n".join(lines)
+    if len(text) > MAX_POST_LEN:
+        text = text[: MAX_POST_LEN - 1] + "…"
+    return text
+
+
+def compose_daily_recap_post(
+    *,
+    facts: dict[str, Any] | None = None,
+    movers: list[tuple[str, float, float]] | None = None,
+) -> str:
+    """每日复盘短讯：保证 7 天窗口内持续有新帖 + 多 $ 标签。"""
+    facts = facts or {}
+    m = facts.get("market") or {}
+    zh = {"bull": "牛", "bear": "熊", "accum": "筑底"}
+    regime = m.get("regime")
+    btc_p = m.get("btc_price")
+    lines = ["📋 盯盘日报 · 点 $BTC $ETH 看行情"]
+    if btc_p is not None:
+        dev = m.get("btc_vs_ema200d_pct")
+        dev_s = f"（距200日线 {dev:+.1f}%）" if isinstance(dev, (int, float)) else ""
+        lines.append(
+            f"BTC {_fmt_price(float(btc_p))} · 相位 {zh.get(regime, regime or '—')}{dev_s}"
+        )
+    rs = (facts.get("relative_strength") or {}).get("pairs") or {}
+    if rs:
+        bits = []
+        for pair, v in list(rs.items())[:2]:
+            st = v.get("state")
+            st_zh = "山寨强" if st == "above" else ("BTC强" if st == "below" else st)
+            bits.append(f"{pair} {st_zh}")
+        if bits:
+            lines.append("相对强弱：" + " · ".join(bits))
+    if movers:
+        top = sorted(movers, key=lambda x: abs(x[2]), reverse=True)[:3]
+        lines.append(
+            "今日波动："
+            + " · ".join(
+                f"${_base_asset(sym)} {chg:+.1f}%" for sym, _, chg in top
+            )
+        )
+    lines.append("具体点位看最新短评；盈亏自负。")
+    text = "\n".join(lines)
+    if len(text) > MAX_POST_LEN:
+        text = text[: MAX_POST_LEN - 1] + "…"
+    return text
+
+
+def _fetch_24h_movers(symbols: set[str]) -> list[tuple[str, float, float]]:
+    """REST 拉 24h 涨跌幅，供复盘帖选波动榜。"""
+    import httpx
+
+    out: list[tuple[str, float, float]] = []
+    for sym in sorted(symbols):
+        fsym = _norm_symbol(sym).replace("/", "")
+        try:
+            with httpx.Client(timeout=6.0) as client:
+                resp = client.get(
+                    "https://fapi.binance.com/fapi/v1/ticker/24hr",
+                    params={"symbol": fsym},
+                )
+            data = resp.json()
+            if isinstance(data, dict) and data.get("lastPrice"):
+                out.append(
+                    (
+                        _norm_symbol(sym),
+                        float(data["lastPrice"]),
+                        float(data.get("priceChangePercent") or 0),
+                    )
+                )
+        except Exception:
+            logger.debug("square mover fetch failed %s", sym, exc_info=True)
+    return out
+
+
+def compose_jack_square_post(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    jack: JackLevels | None,
+    regime: JackRegime,
+    compact: bool | None = None,
+) -> str:
     """生成带币种标签 + 涨跌预测 + 点位的广场短评。"""
+    use_compact = compact if compact is not None else _is_compact()
+    if use_compact:
+        return _compose_jack_compact(
+            symbol=symbol,
+            timeframe=timeframe,
+            price=price,
+            jack=jack,
+            regime=regime,
+        )
     tag = _cashtag(symbol)
     tf = (timeframe or "").strip().lower()
     side = _side_zh(regime.trade_side)
@@ -339,15 +588,83 @@ POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交�
 把用户给你的「模板短评」改写成你自己发帖的口吻：
 - 第一人称、口语、短句，有态度、有判断，像在群里跟兄弟说话；可以有一点情绪，但不油腻、不喊单式营销、不用感叹号轰炸、不堆 emoji、不用项目符号和小标题。
 - 把「我们的系统/引擎/指标读数」这类机器表述换成交易员会说的话（比如「日线超卖了」「回踩位在 xxx」）。
-- 所有价格、点位、百分比、倍数、日期、币种标签（$BTC #BTC 这种）必须原样保留，一个数字都不能改、不能删、不能新增。
+- 币种标签 $BTC $ETH $SOL 必须原样保留在正文里，禁止改成纯文字 BTC/比特币/以太坊。
+- 所有价格、点位、百分比、倍数、日期必须原样保留，一个数字都不能改、不能删、不能新增。
 - 不改变原文的方向判断和操作建议；不要编造原文没有的理由。
 - 篇幅可以比原文长一些：把「指标怎么看」那段展开成交易员的推理（为什么这些位置重要、破了/守住分别怎么办），但只能用原文给出的指标和数字，不要新增数字。
+- 原文末行若有「点 $XXX 看永续/看行情」类行动号召，改写后在文末保留该行全部数字与含义。
 - 不要加免责声明、不要加话题标签、不要加「仅供参考」之类的套话。
 - 不要出现「原文」「模板」「系统」这类字眼，不要对原文做点评或加括号注释；若原文某句自相矛盾或看不懂，直接略过那句，不要解释。
 - 总长度不超过 1300 字。只输出改写后的正文，不要解释。"""
 
-_NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
+POLISH_SYSTEM_SHORT = """你是一位在币安广场写短评的中文加密货币合约交易员，多年实盘，说话像群里跟兄弟聊行情。
+把模板改写成第一人称、口语、有判断的短评：
+- 短句连贯，不用小标题和 bullet；emoji 最多保留原文里的 1 个。
+- 币种标签 $BTC $ETH $SOL 必须原样出现在正文，禁止改成纯文字 BTC/比特币。
+- 所有价格、点位、百分比必须原样保留，不能改、不能删、不能新增。
+- 不改变方向与操作建议；不编造理由；不加免责声明和话题标签。
+- 原文末行若有「点 $XXX 看永续/看行情」类行动号召，改写后在文末保留同等含义和全部数字。
+- 全文 400–650 字。只输出正文，不要解释。"""
+
+_CASHTAG_RE = re.compile(r"\$[A-Za-z0-9]{2,12}")
+_CTA_LINE_RE = re.compile(r"^点\s+\$")
 _COEFFS = {0.236, 0.382, 0.5, 0.618, 0.786, 1.5, 1.618, 2.618}
+
+
+def _extract_cashtags(text: str) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _CASHTAG_RE.finditer(text or ""):
+        t = m.group(0)
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def _extract_cta_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for ln in (text or "").splitlines():
+        s = ln.strip()
+        if s and _CTA_LINE_RE.match(s):
+            lines.append(s)
+    return lines
+
+
+def _enforce_square_anchors(polished: str, original: str) -> str:
+    """润色后补回 $ 标签与 CTA 行（内容挖矿点击入口）。"""
+    out = (polished or "").strip()
+    tags = _extract_cashtags(original)
+    ctas = _extract_cta_lines(original)
+    for tag in tags:
+        if tag in out:
+            continue
+        base = tag[1:]
+        # 常见：模型把 $BTC 写成 BTC
+        replaced = re.sub(rf"(?<![\$#/]){re.escape(base)}(?![A-Za-z0-9])", tag, out, count=1)
+        if tag in replaced:
+            out = replaced
+            continue
+        out = f"{tag} {out.lstrip()}"
+    for cta in ctas:
+        if cta not in out:
+            out = f"{out.rstrip()}\n{cta}"
+    if len(out) > MAX_POST_LEN:
+        out = out[: MAX_POST_LEN - 1] + "…"
+    return out
+
+
+def _anchors_ok(out: str, original: str) -> bool:
+    for tag in _extract_cashtags(original):
+        if tag not in out:
+            return False
+    ctas = _extract_cta_lines(original)
+    if ctas and not any(cta in out for cta in ctas):
+        return False
+    return True
+
+
+_NUM_RE = re.compile(r"\d+(?:[.,]\d+)*")
 
 
 def _numbers(text: str) -> set[str]:
@@ -387,10 +704,11 @@ def _missing_numbers(want: set[str], got: set[str], rel_tol: float = 1e-3) -> se
             missing.add(w)
     return missing
 
-def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
+def polish_square_text(text: str, *, settings=None, compact: bool = False) -> tuple[str, str]:
     """LLM 润色广场短评。返回 (最终文本, 来源 'llm:<provider>' | 'template:<原因>')。
 
-    校验：原文里的每个数字必须在润色稿里出现；长度 ≤ MAX_POST_LEN。任一不满足回退原文。
+    校验：数字全保留；$ 标签与 CTA 行强制补回；长度 ≤ MAX_POST_LEN。
+    compact=True 用短评 prompt（400–650 字），同样走 LLM。
     """
     import time as _time
 
@@ -402,6 +720,8 @@ def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
     except Exception as e:  # noqa: BLE001
         return text, f"template:import({e})"
     want_nums = _numbers(text)
+    system = POLISH_SYSTEM_SHORT if compact else POLISH_SYSTEM
+    max_out = 750 if compact else 1300
     start = _time.time()
     for client, model, prov in _iter_chat_clients(s):
         if _time.time() - start > 60:
@@ -409,9 +729,8 @@ def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
         try:
             create_kw: dict = {
                 "model": model,
-                "messages": [{"role": "system", "content": POLISH_SYSTEM}, {"role": "user", "content": text}],
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": text}],
                 "temperature": 0.7,
-                # 帖子最长 1500 字，中文≈1 字 1 token，留足余量，否则被 length 截成空正文
                 "max_tokens": 2000,
             }
             if prov == "b.ai" and str(model).lower().startswith("deepseek-v4"):
@@ -432,10 +751,14 @@ def polish_square_text(text: str, *, settings=None) -> tuple[str, str]:
         if missing:
             logger.warning("square polish %s 丢了数字 %s，回退模板", prov, sorted(missing)[:6])
             continue
-        if len(out) > MAX_POST_LEN:
+        out = _enforce_square_anchors(out, text)
+        if not _anchors_ok(out, text):
+            logger.warning("square polish %s 补回 $/CTA 失败，回退模板", prov)
+            continue
+        if len(out) > max_out:
             logger.warning("square polish %s 过长 %d，回退模板", prov, len(out))
             continue
-        return out, f"llm:{prov}"
+        return out, f"llm:{prov}{':short' if compact else ''}"
     return text, "template:fallback"
 
 
@@ -469,18 +792,167 @@ def _save_cooldown(data: dict[str, float]) -> None:
         logger.exception("save square cooldown failed")
 
 
+def _square_api_key(settings=None) -> str:
+    s = settings or get_settings()
+    return (getattr(s, "binance_square_openapi_key", "") or "").strip()
+
+
+def _cooldown_remain(cool_key: str, cooldown_hours: float, state: dict) -> float | None:
+    """冷却剩余秒数；None 表示可发。"""
+    cool_h = float(cooldown_hours or 0)
+    if cool_h <= 0:
+        return None
+    last = state.get(cool_key)
+    if last is None:
+        return None
+    remain = cool_h * 3600 - (time.time() - last)
+    return remain if remain > 0 else None
+
+
+def _chart_for_post(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    jack: JackLevels | None = None,
+    regime: JackRegime | None = None,
+    title: str | None = None,
+    subtitle: str | None = None,
+    extra_levels: list[dict[str, Any]] | None = None,
+) -> Any:
+    """构建 K 线截图请求（Playwright 截 chart_capture.html）。"""
+    from analyst.integrations.chart_capture import SquareChartRequest
+
+    return SquareChartRequest(
+        symbol=symbol,
+        timeframe=timeframe,
+        price=price,
+        jack=jack,
+        regime=regime,
+        title=title,
+        subtitle=subtitle,
+        extra_levels=extra_levels,
+    )
+
+
+def _chart_for_eric_post(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    bf_value: float | None = None,
+    kind: str | None = None,
+    title: str | None = None,
+    subtitle: str | None = None,
+    extra_levels: list[dict[str, Any]] | None = None,
+) -> Any:
+    from analyst.integrations.chart_capture import EricChartRequest
+
+    return EricChartRequest(
+        symbol=symbol,
+        timeframe=timeframe,
+        price=price,
+        bf_value=bf_value,
+        kind=kind,
+        title=title,
+        subtitle=subtitle,
+        extra_levels=extra_levels,
+    )
+
+
+def _square_image_urls(chart: Any | None, api_key: str, settings=None) -> list[str] | None:
+    """渲染 K 线 PNG 并上传广场；失败返回 None（降级纯文字）。"""
+    s = settings or get_settings()
+    if chart is None or not getattr(s, "square_post_chart_enabled", True):
+        return None
+    try:
+        from analyst.integrations.chart_capture import EricChartRequest, render_eric_chart, render_square_chart
+
+        if isinstance(chart, EricChartRequest):
+            png = render_eric_chart(chart)
+        else:
+            png = render_square_chart(chart)
+        if png is not None:
+            return [upload_image(api_key, png)]
+    except Exception:
+        logger.exception("Square 配图失败，降级纯文字")
+    return None
+
+
+def _publish_square_post(
+    text: str,
+    *,
+    cool_key: str,
+    cooldown_hours: float,
+    settings=None,
+    polish: bool | None = None,
+    compact: bool | None = None,
+    chart: Any | None = None,
+) -> dict[str, Any] | None:
+    """通用发帖：校验 key / 冷却 / 润色 / 可选 K 线截图 / POST / 写冷却。"""
+    s = settings or get_settings()
+    if not getattr(s, "square_post_enabled", False):
+        return None
+    key = _square_api_key(s)
+    if not key:
+        logger.warning("Square 已启用但未配置 BINANCE_SQUARE_OPENAPI_KEY，跳过")
+        return None
+    state = _load_cooldown()
+    remain = _cooldown_remain(cool_key, cooldown_hours, state)
+    if remain is not None:
+        logger.info("Square 冷却中 %s remain=%.0fs", cool_key, remain)
+        return None
+    use_compact = compact if compact is not None else _is_compact(s)
+    do_polish = polish if polish is not None else getattr(s, "square_post_ai_polish", True)
+    if do_polish:
+        text, polish_src = polish_square_text(text, settings=s, compact=use_compact)
+    else:
+        polish_src = "template:disabled"
+    image_urls: list[str] | None = None
+    if chart is not None:
+        image_urls = _square_image_urls(chart, key, settings=s)
+        if image_urls:
+            polish_src = f"{polish_src}+chart"
+    logger.info("Square 文案来源 %s（%s）", polish_src, cool_key)
+    try:
+        result = post_content(key, text, image_urls=image_urls)
+    except SquareApiError as e:
+        logger.error(
+            "Square 发帖失败 code=%s msg=%s key=%s %s",
+            e.code,
+            e.message,
+            mask_key(key),
+            cool_key,
+        )
+        raise
+    except Exception:
+        logger.exception("Square 发帖异常 key=%s %s", mask_key(key), cool_key)
+        raise
+    state[cool_key] = time.time()
+    _save_cooldown(state)
+    logger.info(
+        "Square 已发帖 %s id=%s link=%s",
+        cool_key,
+        result.get("id"),
+        result.get("shareLink"),
+    )
+    return {"text": text, "result": result, "cool_key": cool_key}
+
+
 def square_symbols_set(settings=None) -> set[str]:
     s = settings or get_settings()
     raw = (getattr(s, "square_post_symbols", "") or "").strip()
     if raw:
         return set(s._csv_symbols(raw))
-    # 默认：BTC / ETH / BNB / SOL / AAVE
     return {
         "BTC/USDT",
         "ETH/USDT",
         "BNB/USDT",
         "SOL/USDT",
         "AAVE/USDT",
+        "DOGE/USDT",
+        "LINK/USDT",
+        "AVAX/USDT",
     }
 
 
@@ -501,33 +973,14 @@ def maybe_post_jack_regime(
 ) -> dict[str, Any] | None:
     """三盘变化时发广场短文。未启用/不在白名单/冷却中 → None。"""
     settings = get_settings()
-    if not getattr(settings, "square_post_enabled", False):
-        return None
-    key = (getattr(settings, "binance_square_openapi_key", "") or "").strip()
-    if not key:
-        logger.warning("Square 已启用但未配置 BINANCE_SQUARE_OPENAPI_KEY，跳过")
-        return None
-
     sym = _norm_symbol(symbol)
     tf = (timeframe or "").strip().lower()
     if sym not in square_symbols_set(settings):
         return None
     if tf not in square_timeframes_set(settings):
         return None
-
-    cool_h = float(getattr(settings, "square_post_cooldown_hours", 4) or 0)
-    cool_key = f"{sym}|{tf}"
-    now = time.time()
-    state = _load_cooldown()
-    last = state.get(cool_key)
-    if cool_h > 0 and last is not None and (now - last) < cool_h * 3600:
-        logger.info(
-            "Square 冷却中 %s remain=%.0fs",
-            cool_key,
-            cool_h * 3600 - (now - last),
-        )
-        return None
-
+    cool_h = float(getattr(settings, "square_post_cooldown_hours", 2) or 0)
+    cool_key = f"jack|{sym}|{tf}"
     text = compose_jack_square_post(
         symbol=sym,
         timeframe=tf,
@@ -535,32 +988,144 @@ def maybe_post_jack_regime(
         jack=jack,
         regime=regime,
     )
-    text, polish_src = polish_square_text(text, settings=settings)
-    logger.info("Square 文案来源 %s（%s）", polish_src, cool_key)
-    try:
-        result = post_text(key, text)
-    except SquareApiError as e:
-        logger.error(
-            "Square 发帖失败 code=%s msg=%s key=%s %s",
-            e.code,
-            e.message,
-            mask_key(key),
-            cool_key,
-        )
-        raise
-    except Exception:
-        logger.exception("Square 发帖异常 key=%s %s", mask_key(key), cool_key)
-        raise
-
-    state[cool_key] = now
-    _save_cooldown(state)
-    logger.info(
-        "Square 已发帖 %s id=%s link=%s",
-        cool_key,
-        result.get("id"),
-        result.get("shareLink"),
+    chart = _chart_for_post(
+        symbol=sym, timeframe=tf, price=price, jack=jack, regime=regime
     )
-    return {"text": text, "result": result, "symbol": sym, "timeframe": tf}
+    out = _publish_square_post(
+        text, cool_key=cool_key, cooldown_hours=cool_h, settings=settings, chart=chart
+    )
+    if out:
+        out.update({"symbol": sym, "timeframe": tf, "kind": "jack_regime"})
+    return out
+
+
+def maybe_post_jack_setup(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    jack: JackLevels | None,
+    regime: JackRegime,
+    flag_labels: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """Jack 打法提示 jack_setup 发帖。"""
+    settings = get_settings()
+    if not getattr(settings, "square_post_setup_enabled", True):
+        return None
+    sym = _norm_symbol(symbol)
+    tf = (timeframe or "").strip().lower()
+    if sym not in square_symbols_set(settings):
+        return None
+    if tf not in square_timeframes_set(settings):
+        return None
+    cool_h = float(getattr(settings, "square_post_setup_cooldown_hours", 6) or 0)
+    cool_key = f"setup|{sym}|{tf}"
+    text = compose_jack_setup_post(
+        symbol=sym,
+        timeframe=tf,
+        price=price,
+        jack=jack,
+        regime=regime,
+        flag_labels=flag_labels,
+    )
+    chart = _chart_for_post(
+        symbol=sym, timeframe=tf, price=price, jack=jack, regime=regime
+    )
+    out = _publish_square_post(
+        text,
+        cool_key=cool_key,
+        cooldown_hours=cool_h,
+        settings=settings,
+        compact=True,
+        chart=chart,
+    )
+    if out:
+        out.update({"symbol": sym, "timeframe": tf, "kind": "jack_setup"})
+    return out
+
+
+def maybe_post_level_touch(
+    *,
+    symbol: str,
+    timeframe: str,
+    price: float,
+    level: float,
+    kind: str,
+    jack: JackLevels | None,
+    regime: JackRegime | None,
+) -> dict[str, Any] | None:
+    """关键位触碰 structure_touch 发帖。"""
+    settings = get_settings()
+    if not getattr(settings, "square_post_touch_enabled", True):
+        return None
+    sym = _norm_symbol(symbol)
+    tf = (timeframe or "").strip().lower()
+    if sym not in square_symbols_set(settings):
+        return None
+    if tf not in square_timeframes_set(settings):
+        return None
+    cool_h = float(getattr(settings, "square_post_touch_cooldown_hours", 4) or 0)
+    lvl_key = f"{kind}:{round(float(level), 4)}"
+    cool_key = f"touch|{sym}|{tf}|{lvl_key}"
+    text = compose_level_touch_post(
+        symbol=sym,
+        timeframe=tf,
+        price=price,
+        level=level,
+        kind=kind,
+        jack=jack,
+        regime=regime,
+    )
+    chart = _chart_for_post(
+        symbol=sym,
+        timeframe=tf,
+        price=price,
+        jack=jack,
+        regime=regime,
+        extra_levels=[
+            {
+                "price": float(level),
+                "color": "#c77dff",
+                "title": "触碰",
+                "lineStyle": "solid",
+            }
+        ],
+    )
+    out = _publish_square_post(
+        text,
+        cool_key=cool_key,
+        cooldown_hours=cool_h,
+        settings=settings,
+        compact=True,
+        chart=chart,
+    )
+    if out:
+        out.update({"symbol": sym, "timeframe": tf, "kind": "touch"})
+    return out
+
+
+def maybe_post_daily_recap(
+    *,
+    facts: dict[str, Any] | None = None,
+    digest_text: str | None = None,
+) -> dict[str, Any] | None:
+    """UTC 每日复盘帖（与日报同刻触发）。"""
+    settings = get_settings()
+    if not getattr(settings, "square_post_recap_enabled", True):
+        return None
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    cool_key = f"recap|{today}"
+    movers = _fetch_24h_movers(square_symbols_set(settings))
+    if digest_text and len(digest_text.strip()) <= 600 and "$BTC" in digest_text:
+        text = digest_text.strip()
+    else:
+        text = compose_daily_recap_post(facts=facts, movers=movers)
+    out = _publish_square_post(
+        text, cool_key=cool_key, cooldown_hours=20.0, settings=settings, compact=True
+    )
+    if out:
+        out.update({"kind": "recap", "day": today})
+    return out
 
 
 # ── Eric 超卖信号（BTC/ETH × 日线/周线）→ 广场短文 ──
@@ -641,6 +1206,12 @@ def compose_eric_square_post(
         if r and "过滤器" not in r and len(r) < 60:
             lines.append(r)
     lines.append("做反弹，不赌反转。")
+    stop = plan.get("stop")
+    tp1 = plan.get("tp1")
+    if stop is not None or tp1 is not None:
+        lines.append(_cta_line(symbol, "long", defense=stop, target=tp1))
+    else:
+        lines.append(f"点 {tag} 看永续，超卖反弹思路见上。")
     text = "\n".join(lines)
     if len(text) > MAX_POST_LEN:
         text = text[: MAX_POST_LEN - 1] + "…"
@@ -687,10 +1258,29 @@ def maybe_post_eric_signal(
     text = compose_eric_square_post(
         symbol=sym, kind=kind, price=price, bf_value=bf_value, reasons=reasons, plan=plan
     )
-    text, polish_src = polish_square_text(text, settings=settings)
+    use_compact = _is_compact(settings)
+    text, polish_src = polish_square_text(text, settings=settings, compact=use_compact)
+    tf = "1w" if kind.startswith("weekly") else "1d"
+    extra: list[dict[str, Any]] = []
+    plan = plan or {}
+    if plan.get("stop") is not None:
+        extra.append({"price": float(plan["stop"]), "color": "#f6465d", "title": "止损"})
+    if plan.get("tp1") is not None:
+        extra.append({"price": float(plan["tp1"]), "color": "#5eb8f0", "title": "目标"})
+    chart = _chart_for_eric_post(
+        symbol=sym,
+        timeframe=tf,
+        price=price,
+        bf_value=bf_value,
+        kind=kind,
+        extra_levels=extra or None,
+    )
+    image_urls = _square_image_urls(chart, key, settings=settings)
+    if image_urls:
+        polish_src = f"{polish_src}+chart"
     logger.info("Square Eric 文案来源 %s（%s）", polish_src, cool_key)
     try:
-        result = post_text(key, text)
+        result = post_content(key, text, image_urls=image_urls)
     except SquareApiError as e:
         logger.error(
             "Square Eric 发帖失败 code=%s msg=%s key=%s %s", e.code, e.message, mask_key(key), cool_key
@@ -707,7 +1297,7 @@ def maybe_post_eric_signal(
 
 # ── 加速行情（单边急涨/急跌）→ 广场短文 ──
 
-_MOVE_COOLDOWN_H = 8.0
+_MOVE_COOLDOWN_H = 4.0
 
 
 def compose_move_square_post(
@@ -720,8 +1310,10 @@ def compose_move_square_post(
     jack: JackLevels | None,
     regime: JackRegime,
     eric_readings: list[str] | None = None,
+    compact: bool | None = None,
 ) -> str:
-    """加速行情短文：发生了什么 → 我怎么看 → 指标分析 → 接下来盯什么。"""
+    """加速行情短文：发生了什么 → 我怎么看 →（长文含指标分析）。"""
+    use_compact = compact if compact is not None else _is_compact()
     tag = _cashtag(symbol)
     tf = (timeframe or "4h").lower()
     up = change_pct > 0
@@ -731,6 +1323,30 @@ def compose_move_square_post(
         if up
         else f"{tag} 这根 {tf} 直接砸了 {change_pct:+.1f}%，量放到平时的 {vol_ratio:.1f} 倍，加速下跌"
     )
+    if use_compact:
+        defense, near, target = _post_levels(regime, jack, float(price))
+        tgt = target or near
+        lines = [
+            hook,
+            f"现价 {f(price)} · {regime.regime_zh} · {_side_zh(regime.trade_side)}",
+        ]
+        if regime.nearest_resistance is not None and up:
+            lines.append(f"近阻力 {f(regime.nearest_resistance)}")
+        elif regime.nearest_support is not None and not up:
+            lines.append(f"近支撑 {f(regime.nearest_support)}")
+        lines.append(
+            _cta_line(
+                symbol,
+                regime.trade_side,
+                defense=defense,
+                target=tgt,
+                near=near,
+            )
+        )
+        text = "\n".join(lines)
+        if len(text) > MAX_POST_LEN:
+            text = text[: MAX_POST_LEN - 1] + "…"
+        return text
     lines = [hook, f"现价 {f(price)}，盘面 {regime.regime_zh}，方向 {_side_zh(regime.trade_side)}。"]
     if up:
         if regime.regime == "strong_trend" and regime.trade_side == "long":
@@ -775,37 +1391,32 @@ def maybe_post_market_move(
     regime: JackRegime,
     eric_readings: list[str] | None = None,
 ) -> dict[str, Any] | None:
-    """加速行情发帖：受 square_post_enabled / 品种白名单 / 8h 冷却约束。"""
+    """加速行情发帖：受 square_post_enabled / 品种白名单 / 冷却约束。"""
     settings = get_settings()
-    if not getattr(settings, "square_post_enabled", False):
-        return None
     if not getattr(settings, "square_post_move_enabled", True):
-        return None
-    key = (getattr(settings, "binance_square_openapi_key", "") or "").strip()
-    if not key:
         return None
     sym = _norm_symbol(symbol)
     if sym not in square_symbols_set(settings):
         return None
     cool_key = f"move|{sym}"
-    state = _load_cooldown()
-    now = time.time()
-    last = state.get(cool_key)
     cool_h = float(getattr(settings, "square_move_cooldown_hours", _MOVE_COOLDOWN_H) or _MOVE_COOLDOWN_H)
-    if last is not None and now - last < cool_h * 3600:
-        return None
     text = compose_move_square_post(
-        symbol=sym, timeframe=timeframe, price=price, change_pct=change_pct, vol_ratio=vol_ratio,
-        jack=jack, regime=regime, eric_readings=eric_readings,
+        symbol=sym,
+        timeframe=timeframe,
+        price=price,
+        change_pct=change_pct,
+        vol_ratio=vol_ratio,
+        jack=jack,
+        regime=regime,
+        eric_readings=eric_readings,
     )
-    text, polish_src = polish_square_text(text, settings=settings)
-    logger.info("Square 加速行情文案来源 %s（%s %+.1f%%）", polish_src, cool_key, change_pct)
-    try:
-        result = post_text(key, text)
-    except SquareApiError as e:
-        logger.error("Square move 发帖失败 code=%s msg=%s key=%s %s", e.code, e.message, mask_key(key), cool_key)
-        raise
-    state[cool_key] = now
-    _save_cooldown(state)
-    logger.info("Square 已发加速行情 %s id=%s link=%s", cool_key, result.get("id"), result.get("shareLink"))
-    return {"text": text, "result": result, "symbol": sym, "kind": "move"}
+    tf = (timeframe or "4h").strip().lower()
+    chart = _chart_for_post(
+        symbol=sym, timeframe=tf, price=price, jack=jack, regime=regime
+    )
+    out = _publish_square_post(
+        text, cool_key=cool_key, cooldown_hours=cool_h, settings=settings, chart=chart
+    )
+    if out:
+        out.update({"symbol": sym, "kind": "move"})
+    return out

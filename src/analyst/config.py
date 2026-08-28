@@ -172,20 +172,39 @@ class Settings(BaseSettings):
     binance_square_openapi_key: str = Field(default="")
     square_post_enabled: bool = Field(default=False)
     square_post_symbols: str = Field(
-        default="BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,AAVE/USDT"
+        default=(
+            "BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,AAVE/USDT,"
+            "DOGE/USDT,LINK/USDT,AVAX/USDT"
+        )
     )
     square_post_timeframes: str = Field(default="4h,1d,1w")
-    square_post_cooldown_hours: float = Field(default=4.0)
+    square_post_cooldown_hours: float = Field(default=2.0)
+    # 短讯模式：钩子 + 点位 + CTA，利于点击 $ 标签；长文仍走 indicator_block
+    square_post_compact: bool = Field(default=True)
     # Eric 超卖信号（仅 BTC/ETH 日线/周线）也发广场短文
     square_post_eric_enabled: bool = Field(default=True)
-    # 发帖前用 LLM 润色成交易员口吻（保留全部数字；失败回退模板原文）
+    # 发帖前 LLM 润色（compact 短讯用短评 prompt；强制保留 $ 标签与 CTA）
     square_post_ai_polish: bool = Field(default=True)
-    # 加速行情（单根 4h 涨跌幅达阈值或放量大阳/大阴）发帖：主流币 2.5%、其它 4%；同品种 8h 冷却
+    # Jack 打法提示（jack_setup）发帖
+    square_post_setup_enabled: bool = Field(default=True)
+    square_post_setup_cooldown_hours: float = Field(default=6.0)
+    # 关键位触碰（structure_touch）发帖
+    square_post_touch_enabled: bool = Field(default=True)
+    square_post_touch_cooldown_hours: float = Field(default=4.0)
+    # 每日复盘帖（UTC 定时，与日报同刻或单独小时）
+    square_post_recap_enabled: bool = Field(default=True)
+    square_post_recap_utc_hour: int | None = Field(default=None)
+    # 加速行情（单根 4h 涨跌幅达阈值或放量大阳/大阴）发帖
     square_post_move_enabled: bool = Field(default=True)
-    square_move_pct_major: float = Field(default=2.5)
-    square_move_pct_alt: float = Field(default=4.0)
+    square_move_pct_major: float = Field(default=2.0)
+    square_move_pct_alt: float = Field(default=3.0)
     square_move_vol_ratio: float = Field(default=2.0)
-    square_move_cooldown_hours: float = Field(default=8.0)
+    square_move_cooldown_hours: float = Field(default=4.0)
+    # 广场帖配图：Playwright 截 lightweight-charts DOM + Jack 点位线（需 playwright）
+    square_post_chart_enabled: bool = Field(default=True)
+    square_post_chart_bars: int = Field(default=120)
+    square_post_chart_width: int = Field(default=900)
+    square_post_chart_height: int = Field(default=600)
 
     # ── 新闻事件风控哨兵 ──
     monitor_news_enabled: bool = Field(default=True)

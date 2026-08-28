@@ -79,7 +79,18 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 
 关闭：`MONITOR_RULE_JACK=false`。
 
-**币安广场**：`SQUARE_POST_ENABLED=true` 且配置 `BINANCE_SQUARE_OPENAPI_KEY` 后，盯盘 1h/4h 上 `jack_regime`（三盘/方向变化）会自动发短评（看涨/看跌钩子 + 点位预测 + `$币种/#标签` + 免责声明）。默认品种 `BTC,ETH,BNB,SOL,AAVE`，同币同周期冷却 4h。预览：`analyst square-post`；试发：`analyst square-post --publish --text '...'`。
+**币安广场（内容挖矿）**：`SQUARE_POST_ENABLED=true` 且配置 `BINANCE_SQUARE_OPENAPI_KEY` 后自动发帖，默认 **短讯 + AI 润色**（交易员口吻；数字 / `$BTC` 标签 / 末行 CTA 强制保留，失败回退模板）。触发源：
+
+| 触发 | 说明 | 默认冷却 |
+|------|------|----------|
+| `jack_regime` | 三盘/方向切换 | 同币同周期 2h |
+| `jack_setup` | 金叉/加速/扎针等打法提示 | 6h |
+| `structure_touch` | 支撑/阻力触碰守住 | 同位 4h |
+| 加速行情 | 4h 单根涨跌 ≥2%/3% 或放量 | 同品种 4h |
+| Eric 超卖 | BTC/ETH 日/周线信号 | 20h |
+| 每日复盘 | UTC 与日报同刻 | 1 次/天 |
+
+默认品种含 BTC/ETH/BNB/SOL/AAVE/DOGE/LINK/AVAX；周期 `4h,1d,1w`（需 `MONITOR_DAEMON_TIMEFRAMES` 含对应级别）。**配图**（Jack/触碰/加速/Eric）：Playwright 离页渲染 `chart_capture.html`，截 K 线 + Jack 点位线后走广场 `imageList` API；未装 Playwright 时自动降级纯文字。安装：`uv sync --extra square && playwright install chromium`。预览：`analyst square-post`；试发：`analyst square-post --publish --text '...'`。
 
 | 盘面 | 打法 |
 |------|------|

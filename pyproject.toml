@@ -53,6 +53,10 @@ web = [
     "uvicorn[standard]>=0.30.0",
 ]
 
+square = [
+    "playwright>=1.40.0",
+]
+
 dashboard = [
     "streamlit>=1.36.0",
     "plotly>=5.22.0",
