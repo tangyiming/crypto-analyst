@@ -61,6 +61,20 @@ async def run_daily_digest_loop(
                             "每日日报已推送 source=%s model=%s",
                             out.get("source"), out.get("model", "-"),
                         )
+                    if (
+                        getattr(settings, "square_post_enabled", False)
+                        and getattr(settings, "square_post_recap_enabled", True)
+                    ):
+                        from analyst.monitor.square_posts import maybe_post_daily_recap
+
+                        recap = await asyncio.to_thread(
+                            maybe_post_daily_recap,
+                            facts=out.get("facts"),
+                            digest_text=text or None,
+                        )
+                        if recap:
+                            rid = (recap.get("result") or {}).get("id")
+                            logger.info("Square 每日复盘已发 id=%s", rid)
         except asyncio.CancelledError:
             raise
         except Exception:

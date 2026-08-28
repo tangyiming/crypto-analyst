@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>Chart Capture</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #capture { width: 900px; background: #000; }
+    #capture.eric { min-height: 580px; }
+    #head {
+      color: #eaecef;
+      padding: 10px 12px 8px;
+      font-size: 14px;
+      line-height: 1.4;
+      border-bottom: 1px solid #1e2329;
+    }
+    #head .sub { color: #848e9c; font-size: 12px; margin-top: 4px; }
+    #legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid #1e2329;
+      min-height: 34px;
+    }
+    #legend:empty { display: none; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #eaecef;
+      background: #12161c;
+      border: 1px solid #2b3139;
+      border-radius: 4px;
+      padding: 3px 8px;
+      white-space: nowrap;
+    }
+    .chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .chip .lbl { color: #848e9c; }
+    .chip .px { font-weight: 600; font-variant-numeric: tabular-nums; }
+    #wrap { width: 900px; height: 500px; background: #000; }
+    #wrap.eric-price { height: 420px; border-bottom: 1px solid #1e2329; }
+    #wrap.eric-bf { height: 96px; }
+    #chart, #chart-price, #chart-bf { width: 100%; height: 100%; }
+    .panel-label {
+      color: #848e9c;
+      font-size: 10px;
+      padding: 2px 12px 0;
+      letter-spacing: 0.02em;
+    }
+  </style>
+</head>
+<body>
+  <div id="capture">
+    <div id="head">
+      <div id="title">—</div>
+      <div id="subtitle" class="sub">—</div>
+    </div>
+    <div id="legend"></div>
+    <div id="panels">
+      <div id="wrap"><div id="chart"></div></div>
+    </div>
+  </div>
+  <script>
+    function fmtPrice(x) {
+      const v = Number(x);
+      if (!Number.isFinite(v)) return "—";
+      const ax = Math.abs(v);
+      if (ax >= 10) return v.toFixed(2);
+      if (ax >= 1) return v.toFixed(3);
+      return v.toFixed(6);
+    }
+
+    function bfBarColor(v) {
+      if (v <= -48) return "#0ecb81";
+      if (v <= -40) return "#26a69a";
+      if (v >= 48) return "#f6465d";
+      if (v >= 40) return "#e74c3c";
+      return "#5c6670";
+    }
+
+    function addLegendChip(legendEl, label, valueText, color) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.innerHTML =
+        '<span class="dot" style="background:' + color + '"></span>' +
+        '<span class="lbl">' + label + '</span>' +
+        '<span class="px">' + valueText + "</span>";
+      legendEl.appendChild(chip);
+    }
+
+    function drawPricePanel(host, candles, levels, cur, legendEl) {
+      host.innerHTML = "";
+      const chart = LightweightCharts.createChart(host, {
+        width: 900,
+        height: host.clientHeight || 420,
+        layout: { background: { type: "solid", color: "#000000" }, textColor: "#848e9c" },
+        grid: { vertLines: { color: "#1a1d21" }, horzLines: { color: "#1a1d21" } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: "#1e2329", minimumWidth: 72 },
+        timeScale: { borderColor: "#1e2329", timeVisible: true, secondsVisible: false },
+        localization: { locale: "zh-CN" },
+      });
+      const series = chart.addCandlestickSeries({
+        upColor: "#0ecb81", downColor: "#f6465d",
+        borderUpColor: "#0ecb81", borderDownColor: "#f6465d",
+        wickUpColor: "#0ecb81", wickDownColor: "#f6465d",
+      });
+      series.setData(candles);
+
+      (levels || []).forEach((lv) => {
+        if (lv == null || lv.price == null) return;
+        const price = Number(lv.price);
+        const label = lv.label || lv.title || "";
+        const px = fmtPrice(price);
+        addLegendChip(legendEl, label || "位", px, lv.color || "#f0b90b");
+        const style = lv.lineStyle === "solid"
+          ? LightweightCharts.LineStyle.Solid
+          : LightweightCharts.LineStyle.Dashed;
+        series.createPriceLine({
+          price,
+          color: lv.color || "#f0b90b",
+          lineWidth: lv.lineWidth || 2,
+          lineStyle: style,
+          axisLabelVisible: lv.axisLabelVisible !== false,
+          title: label ? label + " " + px : px,
+        });
+      });
+
+      if (cur != null && Number.isFinite(cur)) {
+        const hasNow = (levels || []).some((lv) => Math.abs(Number(lv.price) - cur) / cur < 0.0003);
+        if (!hasNow) {
+          addLegendChip(legendEl, "现价", fmtPrice(cur), "#eaecef");
+          series.createPriceLine({
+            price: cur, color: "#eaecef", lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true, title: "现价 " + fmtPrice(cur),
+          });
+        }
+      }
+
+      chart.timeScale().fitContent();
+      return chart;
+    }
+
+    function drawBfPanel(host, filter, legendEl) {
+      host.innerHTML = "";
+      const bars = (filter && filter.bars) || [];
+      const osLevel = filter && filter.os_level != null ? Number(filter.os_level) : -40;
+      const obLevel = filter && filter.ob_level != null ? Number(filter.ob_level) : 40;
+      const cur = filter && filter.current != null ? Number(filter.current) : null;
+
+      const chart = LightweightCharts.createChart(host, {
+        width: 900,
+        height: host.clientHeight || 96,
+        layout: { background: { type: "solid", color: "#000000" }, textColor: "#848e9c" },
+        grid: { vertLines: { color: "#1a1d21" }, horzLines: { color: "#1a1d21" } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: {
+          borderColor: "#1e2329", minimumWidth: 72,
+          scaleMargins: { top: 0.05, bottom: 0.05 },
+        },
+        timeScale: { borderColor: "#1e2329", timeVisible: false, secondsVisible: false },
+        localization: { locale: "zh-CN" },
+      });
+
+      const hist = chart.addHistogramSeries({
+        priceFormat: { type: "custom", formatter: (v) => Number(v).toFixed(1) },
+        priceScaleId: "right",
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      hist.setData(bars.map((b) => ({
+        time: b.time,
+        value: Number(b.value),
+        color: b.color || bfBarColor(Number(b.value)),
+      })));
+
+      const line = chart.addLineSeries({
+        color: "#f0b90b",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      line.setData(bars.map((b) => ({ time: b.time, value: Number(b.value) })));
+
+      [
+        { price: 0, color: "#848e9c", title: "0", style: LightweightCharts.LineStyle.Solid },
+        { price: osLevel, color: "#0ecb81", title: "超卖 " + osLevel, style: LightweightCharts.LineStyle.Dashed },
+        { price: -50, color: "#0ecb81", title: "-50", style: LightweightCharts.LineStyle.Dotted },
+        { price: obLevel, color: "#f6465d", title: "超买 " + obLevel, style: LightweightCharts.LineStyle.Dashed },
+        { price: 50, color: "#f6465d", title: "+50", style: LightweightCharts.LineStyle.Dotted },
+      ].forEach((lv) => {
+        line.createPriceLine({
+          price: lv.price, color: lv.color, lineWidth: 1, lineStyle: lv.style,
+          axisLabelVisible: false, title: "",
+        });
+      });
+
+      if (cur != null && Number.isFinite(cur)) {
+        const col = bfBarColor(cur);
+        addLegendChip(legendEl, "过滤器", (cur >= 0 ? "+" : "") + cur.toFixed(1), col);
+        line.createPriceLine({
+          price: cur, color: col, lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          axisLabelVisible: false, title: "",
+        });
+      }
+
+      chart.timeScale().fitContent();
+      return chart;
+    }
+
+    window.renderChart = function (payload) {
+      document.body.removeAttribute("data-ready");
+      document.body.removeAttribute("data-error");
+      const p = payload || {};
+      const capture = document.getElementById("capture");
+      const panels = document.getElementById("panels");
+      const legendEl = document.getElementById("legend");
+      legendEl.innerHTML = "";
+      document.getElementById("title").textContent = p.title || "";
+      document.getElementById("subtitle").textContent = p.subtitle || "";
+
+      const candles = (p.candles || []).slice().sort((a, b) => a.time - b.time);
+      const cur = p.price != null ? Number(p.price) : (candles.length ? Number(candles[candles.length - 1].close) : null);
+      let levels = (p.levels || []).slice();
+
+      if (p.mode === "eric") {
+        capture.classList.add("eric");
+        panels.innerHTML =
+          '<div class="panel-label">价格</div>' +
+          '<div id="wrap" class="eric-price"><div id="chart-price"></div></div>' +
+          '<div class="panel-label">波段过滤器 · Stoch(HLC3,14,5)−50 · 超卖 ≤ ' + (p.filter?.os_level ?? -40) + "</div>" +
+          '<div id="wrap-bf" class="eric-bf"><div id="chart-bf"></div></div>';
+
+        const priceChart = drawPricePanel(document.getElementById("chart-price"), candles, levels, cur, legendEl);
+        const bfChart = drawBfPanel(document.getElementById("chart-bf"), p.filter, legendEl);
+
+        priceChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+          if (range) bfChart.timeScale().setVisibleLogicalRange(range);
+        });
+        const range = priceChart.timeScale().getVisibleLogicalRange();
+        if (range) bfChart.timeScale().setVisibleLogicalRange(range);
+      } else {
+        capture.classList.remove("eric");
+        panels.innerHTML = '<div id="wrap"><div id="chart"></div></div>';
+        if (cur != null && Number.isFinite(cur)) {
+          const hasNow = levels.some((lv) => Math.abs(Number(lv.price) - cur) / cur < 0.0003);
+          if (!hasNow) {
+            levels.unshift({
+              price: cur, color: "#eaecef", label: "现价",
+              lineWidth: 2, lineStyle: "solid", axisLabelVisible: true,
+            });
+          }
+        }
+        drawPricePanel(document.getElementById("chart"), candles, levels, null, legendEl);
+      }
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => { document.body.dataset.ready = "1"; });
+      });
+    };
+  </script>
+</body>
+</html>

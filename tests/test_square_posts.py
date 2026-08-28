@@ -59,6 +59,7 @@ def test_compose_jack_square_post_has_direction_and_levels():
         price=65000.0,
         jack=jack,
         regime=reg,
+        compact=False,
     )
     assert "$BTC" in text
     assert "$BTC" in text  # 标签行已按用户要求去掉，只保留首行 cashtag
@@ -83,6 +84,7 @@ def test_compose_short_prediction_and_tags():
         price=2400.0,
         jack=jack,
         regime=reg,
+        compact=False,
     )
     assert "看跌" in text
     assert "$ETH" in text
@@ -172,3 +174,141 @@ def test_indicator_block_filters_far_levels_by_timeframe():
     d1 = "\n".join(indicator_block(reg, None, price=79054.0, timeframe="1d"))
     assert "65734" in d1 and "88259" in d1 and "91984" in d1  # 日线门槛 25%：这些都回来了
     assert "100061" not in d1  # +27% 仍超
+
+
+def test_enforce_square_anchors_restores_cashtag_and_cta():
+    from analyst.monitor.square_posts import _enforce_square_anchors
+
+    original = (
+        "📈 看涨 $BTC\n现价 65000.00\n点 $BTC 看永续，站稳 62000.00 可跟，上看 67000.00。"
+    )
+    polished = "BTC现在65000，4h多头，防守62000，上看67000。"
+    out = _enforce_square_anchors(polished, original)
+    assert "$BTC" in out
+    assert "点 $BTC 看永续" in out
+    assert "62000" in out
+
+
+def test_polish_enforces_anchors_when_llm_drops_dollar(monkeypatch):
+    import analyst.llm.chat as chat
+    import analyst.monitor.square_posts as sp
+    from analyst.monitor.square_posts import compose_jack_square_post, polish_square_text
+    from tests.test_square_posts import _sample
+
+    jack, reg = _sample()
+    raw = compose_jack_square_post(
+        symbol="BTC/USDT", timeframe="4h", price=65000.0, jack=jack, regime=reg, compact=True
+    )
+
+    class _Msg:
+        def __init__(self, c):
+            self.content = c
+
+    class _Choice:
+        def __init__(self, c):
+            self.message = _Msg(c)
+
+    class _Resp:
+        def __init__(self, c):
+            self.choices = [_Choice(c)]
+
+    class _Client:
+        def __init__(self, reply):
+            self._reply = reply
+
+        class _Chat:
+            def __init__(self, outer):
+                self._o = outer
+
+            class _Comp:
+                def __init__(self, outer):
+                    self._o = outer
+
+                def create(self, **kw):
+                    return _Resp(self._o._reply)
+
+            @property
+            def completions(self):
+                return _Client._Chat._Comp(self._o)
+
+        @property
+        def chat(self):
+            return _Client._Chat(self)
+
+    bad = (
+        "BTC现在65000，4h还是多头。防守62000，上看67000。"
+        "小仓试，突破再加，别追尾巴。"
+    )
+    monkeypatch.setattr(chat, "_iter_chat_clients", lambda s: iter([(_Client(bad), "m", "fake")]))
+
+    class _S:
+        square_post_ai_polish = True
+
+    out, src = polish_square_text(raw, settings=_S(), compact=True)
+    assert src.startswith("llm:fake")
+    assert "$BTC" in out
+    assert "点 $BTC" in out
+
+
+def test_compose_jack_compact_has_cta():
+    jack, reg = _sample()
+    text = compose_jack_square_post(
+        symbol="BTC/USDT",
+        timeframe="4h",
+        price=65000.0,
+        jack=jack,
+        regime=reg,
+        compact=True,
+    )
+    assert "$BTC" in text
+    assert "看涨" in text
+    assert "点 $BTC" in text
+    assert "预测" not in text
+    assert "指标怎么看" not in text
+
+
+def test_compose_jack_setup_post():
+    from analyst.monitor.square_posts import compose_jack_setup_post
+
+    jack, reg = _sample()
+    text = compose_jack_setup_post(
+        symbol="SOL/USDT",
+        timeframe="4h",
+        price=101.0,
+        jack=jack,
+        regime=reg,
+        flag_labels=["3日金叉", "大小周期共振，可市价冲"],
+    )
+    assert "$SOL" in text
+    assert "打法" in text
+    assert "点 $SOL" in text
+
+
+def test_compose_level_touch_post():
+    from analyst.monitor.square_posts import compose_level_touch_post
+
+    jack, reg = _sample()
+    text = compose_level_touch_post(
+        symbol="ETH/USDT",
+        timeframe="4h",
+        price=2410.0,
+        level=2400.0,
+        kind="support",
+        jack=jack,
+        regime=reg,
+    )
+    assert "$ETH" in text
+    assert "2400" in text
+    assert "点 $ETH" in text
+
+
+def test_compose_daily_recap_post():
+    from analyst.monitor.square_posts import compose_daily_recap_post
+
+    text = compose_daily_recap_post(
+        facts={"market": {"regime": "bull", "btc_price": 65000, "btc_vs_ema200d_pct": 5.2}},
+        movers=[("SOL/USDT", 101.0, 6.5), ("BTC/USDT", 65000.0, 1.2)],
+    )
+    assert "$BTC" in text
+    assert "$ETH" in text
+    assert "SOL" in text
