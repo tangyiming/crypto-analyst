@@ -93,11 +93,28 @@ def test_compose_short_prediction_and_tags():
     assert "预测" in text
 
 
-def test_square_default_symbols_include_sol_aave():
-    symbols = square_symbols_set()
-    assert "SOL/USDT" in symbols
-    assert "AAVE/USDT" in symbols
-    assert "BTC/USDT" in symbols
+def test_square_default_symbols_include_hot_alts():
+    from analyst.config import Settings
+    from analyst.monitor.square_posts import _cashtag, square_symbols_set
+
+    cfg = Settings()
+    symbols = set(cfg._csv_symbols(cfg.square_post_symbols))
+    for sym in (
+        "SOL/USDT",
+        "AAVE/USDT",
+        "UNI/USDT",
+        "HYPE/USDT",
+        "ASTER/USDT",
+        "BTC/USDT",
+    ):
+        assert sym in symbols
+    # square_symbols_set 在配置为空时走内置 fallback
+    empty = type("S", (), {"square_post_symbols": "", "_csv_symbols": cfg._csv_symbols})()
+    fallback = square_symbols_set(empty)
+    assert "UNI/USDT" in fallback and "HYPE/USDT" in fallback
+    assert _cashtag("UNI/USDT") == "$UNI"
+    assert _cashtag("HYPE/USDT") == "$HYPE"
+    assert _cashtag("ASTER/USDT") == "$ASTER"
 
 
 def test_round_barrier_far_from_price_is_skipped():

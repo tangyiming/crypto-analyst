@@ -77,7 +77,10 @@ class Settings(BaseSettings):
     # 数据源
     exchange: str = Field(default="binance")
     default_symbols: str = Field(
-        default="BTC/USDT,ETH/USDT,BNB/USDT,UNI/USDT"
+        default=(
+            "BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,AAVE/USDT,"
+            "UNI/USDT,HYPE/USDT,ASTER/USDT"
+        )
     )
     data_cache_dir: str = Field(default=".cache/data")
     data_cache_ttl_minutes: int = Field(default=5)
@@ -174,7 +177,7 @@ class Settings(BaseSettings):
     square_post_symbols: str = Field(
         default=(
             "BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,AAVE/USDT,"
-            "DOGE/USDT,LINK/USDT,AVAX/USDT"
+            "UNI/USDT,HYPE/USDT,ASTER/USDT,DOGE/USDT,LINK/USDT,AVAX/USDT"
         )
     )
     square_post_timeframes: str = Field(default="4h,1d,1w")
