@@ -284,6 +284,22 @@ def test_btc_touch_resistance_long_regime_cta():
     assert _square_post_ok(fixed, template=template)
 
 
+def test_enforce_square_anchors_strips_inline_cta():
+    from analyst.monitor.square_posts import _enforce_square_anchors
+
+    original = (
+        "👇 $BTC 4h\n现价 79480.20\n"
+        "点 $BTC 看永续，突破 79555.50 可追，破 77704.05 走，上看 82818.00。"
+    )
+    polished = (
+        "$BTC 79480 顶阻力，偏多。\n"
+        "总结一下：突破 79555 追，破 77704 走。点 $BTC 看永续，突破 79555.50 可追，破 77704.05 走，上看 82818.00。"
+    )
+    out = _enforce_square_anchors(polished, original)
+    assert out.count("点 $BTC 看永续") == 1
+    assert out.endswith("上看 82818.00。")
+
+
 def test_enforce_square_anchors_restores_cashtag_and_cta():
     from analyst.monitor.square_posts import _enforce_square_anchors
 
