@@ -176,6 +176,114 @@ def test_indicator_block_filters_far_levels_by_timeframe():
     assert "100061" not in d1  # +27% 仍超
 
 
+def test_touch_resistance_long_regime_uses_long_cta():
+    from types import SimpleNamespace
+    from analyst.monitor.square_posts import compose_level_touch_post
+
+    reg = SimpleNamespace(
+        trade_side="long", regime_zh="强势盘",
+        nearest_support=693.23, nearest_resistance=719.14,
+        ext_150=727.11, ext_1618=730.0,
+    )
+    jack = SimpleNamespace(
+        defense_level=693.23, rebound_382=680.0, rebound_618=700.0, touch_level=707.77,
+    )
+    text = compose_level_touch_post(
+        symbol="BNB/USDT", timeframe="4h", price=705.93, level=707.77,
+        kind="resistance", jack=jack, regime=reg,
+    )
+    assert "偏多" in text
+    assert "可空" not in text
+    assert "点 $BNB" in text
+    assert "693.23" in text
+    assert "727.11" in text
+    assert "突破" in text
+    assert "707.77" in text
+
+
+def test_cta_price_logic_rejects_inverted_targets():
+    from analyst.monitor.square_posts import _cta_price_logic_ok, _direction_consistent
+
+    bad = (
+        "现价 705.93 · 偏多\n"
+        "点 $BNB 看永续，反弹 693.23 附近可空，下看 727.11。"
+    )
+    good = (
+        "现价 705.93 · 偏多\n"
+        "点 $BNB 看永续，站稳 693.23 可跟，上看 727.11。"
+    )
+    assert not _cta_price_logic_ok(bad)
+    assert _cta_price_logic_ok(good)
+    orig = good
+    assert not _direction_consistent(orig, bad)
+
+
+def test_enforce_square_anchors_replaces_mangled_cta():
+    from analyst.monitor.square_posts import _enforce_square_anchors
+
+    original = (
+        "📈 看涨 $BNB\n现价 705.93\n"
+        "点 $BNB 看永续，站稳 693.23 可跟，上看 727.11。"
+    )
+    polished = (
+        "BNB 705 附近，反弹 693 可空，下看 727。\n"
+        "点 $BNB 看永续，反弹 693.23 附近可空，下看 727.11。"
+    )
+    out = _enforce_square_anchors(polished, original)
+    assert out.count("点 $BNB") == 1
+    assert "站稳 693.23 可跟" in out
+    assert "可空" not in out
+
+
+def test_btc_touch_resistance_long_regime_cta():
+    """阻力 + 偏多：CTA 应为突破阻力可追，不能写成反弹可空、下看更高价。"""
+    from types import SimpleNamespace
+    from analyst.monitor.square_posts import (
+        _finalize_square_text,
+        _square_post_ok,
+        compose_level_touch_post,
+    )
+
+    reg = SimpleNamespace(
+        trade_side="long",
+        regime_zh="强势盘",
+        nearest_support=77704.05,
+        nearest_resistance=81270.0,
+        ext_150=82818.0,
+        ext_1618=85000.0,
+    )
+    jack = SimpleNamespace(
+        defense_level=77704.05,
+        rebound_382=76000.0,
+        rebound_618=78500.0,
+        touch_level=79555.50,
+    )
+    template = compose_level_touch_post(
+        symbol="BTC/USDT",
+        timeframe="4h",
+        price=79480.20,
+        level=79555.50,
+        kind="resistance",
+        jack=jack,
+        regime=reg,
+    )
+    assert "偏多" in template
+    assert "可空" not in template
+    assert "77704.05" in template
+    assert "82818" in template
+    assert "突破 79555.50 可追" in template
+    bad = (
+        "$BTC 4小时又顶到79555.50，现价79480.20，偏多但强撑着。\n"
+        "短线偏空，反弹77704.05附近可空，下看82818.00。\n"
+        "点 $BTC 看永续，反弹 77704.05 附近可空，下看 82818.00。"
+    )
+    assert not _square_post_ok(bad, template=template)
+    fixed, tag = _finalize_square_text(bad, template, polished=True)
+    assert tag == "template:logic_fallback"
+    assert fixed == template
+    assert _square_post_ok(fixed, template=template)
+
+
 def test_enforce_square_anchors_restores_cashtag_and_cta():
     from analyst.monitor.square_posts import _enforce_square_anchors
 
@@ -312,3 +420,398 @@ def test_compose_daily_recap_post():
     assert "$BTC" in text
     assert "$ETH" in text
     assert "SOL" in text
+
+
+def _mock_llm_client(reply: str):
+    """构造 fake OpenAI client，用于 polish_square_text 单测。"""
+
+    class _Msg:
+        def __init__(self, c):
+            self.content = c
+
+    class _Choice:
+        def __init__(self, c):
+            self.message = _Msg(c)
+
+    class _Resp:
+        def __init__(self, c):
+            self.choices = [_Choice(c)]
+
+    class _Client:
+        def __init__(self, r):
+            self._reply = r
+
+        class _Chat:
+            def __init__(self, outer):
+                self._o = outer
+
+            class _Comp:
+                def __init__(self, outer):
+                    self._o = outer
+
+                def create(self, **kw):
+                    return _Resp(self._o._reply)
+
+            @property
+            def completions(self):
+                return _Client._Chat._Comp(self._o)
+
+        @property
+        def chat(self):
+            return _Client._Chat(self)
+
+    return _Client(reply)
+
+
+def _touch_regime(*, side: str, support: float, resistance: float, ext150: float):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        trade_side=side,
+        regime_zh="强势盘" if side == "long" else "弱势盘",
+        nearest_support=support,
+        nearest_resistance=resistance,
+        ext_150=ext150,
+        ext_1618=ext150 * 1.02,
+    )
+
+
+def _touch_jack(*, defense: float, touch: float):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        defense_level=defense,
+        rebound_382=defense * 0.98,
+        rebound_618=defense * 1.01,
+        touch_level=touch,
+    )
+
+
+def test_touch_resistance_short_regime_uses_short_cta():
+    from analyst.monitor.square_posts import compose_level_touch_post
+
+    reg = _touch_regime(side="short", support=680.0, resistance=707.77, ext150=650.0)
+    jack = _touch_jack(defense=707.77, touch=707.77)
+    text = compose_level_touch_post(
+        symbol="BNB/USDT",
+        timeframe="4h",
+        price=705.93,
+        level=707.77,
+        kind="resistance",
+        jack=jack,
+        regime=reg,
+    )
+    assert "偏空" in text
+    assert "附近可空" in text
+    assert "下看" in text
+    assert "可跟" not in text
+
+
+def test_touch_support_long_regime_uses_long_cta():
+    from analyst.monitor.square_posts import compose_level_touch_post
+
+    reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
+    jack = _touch_jack(defense=77704.05, touch=77704.05)
+    text = compose_level_touch_post(
+        symbol="BTC/USDT",
+        timeframe="4h",
+        price=79480.20,
+        level=77704.05,
+        kind="support",
+        jack=jack,
+        regime=reg,
+    )
+    assert "守住" in text
+    assert "偏多" in text
+    assert "守住 77704.05 可跟" in text
+    assert "可空" not in text
+
+
+def test_trade_side_markers_and_cta_conflict():
+    from analyst.monitor.square_posts import (
+        _cta_direction_conflict,
+        _trade_side_markers,
+    )
+
+    assert _trade_side_markers("现价 70000 · 偏多 · 强势盘") == "long"
+    assert _trade_side_markers("现价 70000 · 偏空 · 弱势盘") == "short"
+    assert _trade_side_markers("偏多但短线偏空思路") is None
+    assert _cta_direction_conflict(
+        "点 $BTC 看永续，站稳 62000 可跟，上看 67000。\n"
+        "点 $BTC 看永续，反弹 65000 附近可空，下看 60000。"
+    )
+
+
+def test_cta_price_logic_long_short_rules():
+    from analyst.monitor.square_posts import _cta_price_logic_ok
+
+    price = 79480.20
+    base = f"现价 {price} · 偏多\n"
+    assert _cta_price_logic_ok(base + "点 $BTC 看永续，站稳 77704.05 可跟，上看 82818.00。")
+    assert not _cta_price_logic_ok(base + "点 $BTC 看永续，站稳 81270.00 可跟，上看 82818.00。")
+    assert not _cta_price_logic_ok(base + "点 $BTC 看永续，反弹 77704.05 附近可空，下看 82818.00。")
+    # 价位本身自洽的空单 CTA（entry 在上方、目标在下方）仍会通过；方向一致性靠 _direction_consistent
+    assert _cta_price_logic_ok(base + "点 $BTC 看永续，反弹 79555.50 附近可空，下看 76000.00。")
+
+    short_base = f"现价 {price} · 偏空\n"
+    assert _cta_price_logic_ok(short_base + "点 $BTC 看永续，反弹 81270.00 附近可空，下看 76000.00。")
+    assert not _cta_price_logic_ok(short_base + "点 $BTC 看永续，反弹 77704.05 附近可空，下看 82818.00。")
+
+
+def test_polish_enforce_fixes_inverted_cta_from_llm(monkeypatch):
+    """LLM 若翻转 CTA，_enforce_square_anchors 应贴回模板末行，最终不含可空。"""
+    import analyst.llm.chat as chat
+    from analyst.monitor.square_posts import compose_level_touch_post, polish_square_text
+
+    reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
+    jack = _touch_jack(defense=77704.05, touch=79555.50)
+    template = compose_level_touch_post(
+        symbol="BTC/USDT",
+        timeframe="4h",
+        price=79480.20,
+        level=79555.50,
+        kind="resistance",
+        jack=jack,
+        regime=reg,
+    )
+    bad = (
+        "$BTC 79480 顶阻力，偏多但强撑。\n"
+        "短线偏空，等反弹 77704 附近可空，下看 82818。\n"
+        "点 $BTC 看永续，反弹 77704.05 附近可空，下看 82818.00。"
+    )
+    monkeypatch.setattr(
+        chat,
+        "_iter_chat_clients",
+        lambda s: iter([(_mock_llm_client(bad), "m", "fake")]),
+    )
+
+    class _S:
+        square_post_ai_polish = True
+
+    out, src = polish_square_text(template, settings=_S(), compact=True)
+    assert src.startswith("llm:")
+    assert "附近可空" not in out
+    assert "突破 79555.50 可追" in out
+    assert "82818.00" in out
+
+
+def test_direction_consistent_rejects_inverted_before_enforce():
+    from analyst.monitor.square_posts import _direction_consistent, compose_level_touch_post
+
+    reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
+    jack = _touch_jack(defense=77704.05, touch=79555.50)
+    template = compose_level_touch_post(
+        symbol="BTC/USDT",
+        timeframe="4h",
+        price=79480.20,
+        level=79555.50,
+        kind="resistance",
+        jack=jack,
+        regime=reg,
+    )
+    bad = (
+        "现价 79480.20 · 偏多\n"
+        "点 $BTC 看永续，反弹 77704.05 附近可空，下看 82818.00。"
+    )
+    assert not _direction_consistent(template, bad)
+
+
+def test_polish_accepts_valid_long_rewrite_llm(monkeypatch):
+    import analyst.llm.chat as chat
+    from analyst.monitor.square_posts import compose_level_touch_post, polish_square_text
+
+    reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
+    jack = _touch_jack(defense=77704.05, touch=79555.50)
+    template = compose_level_touch_post(
+        symbol="BTC/USDT",
+        timeframe="4h",
+        price=79480.20,
+        level=79555.50,
+        kind="resistance",
+        jack=jack,
+        regime=reg,
+    )
+    good = (
+        "$BTC 4h 又测 79555.50 阻力，现价 79480.20，偏多但别追。\n"
+        "突破 81270 再跟，破 77704 就走，上看 82818.00。\n"
+        "点 $BTC 看永续，突破 79555.50 可追，破 77704.05 走，上看 82818.00。"
+    )
+    monkeypatch.setattr(
+        chat,
+        "_iter_chat_clients",
+        lambda s: iter([(_mock_llm_client(good), "m", "fake")]),
+    )
+
+    class _S:
+        square_post_ai_polish = True
+
+    out, src = polish_square_text(template, settings=_S(), compact=True)
+    assert src.startswith("llm:fake")
+    assert "可空" not in out
+    assert "突破 79555.50 可追" in out
+    assert "82818.00" in out
+
+
+def test_publish_square_post_enforces_long_cta_after_bad_polish(monkeypatch, tmp_path):
+    """发帖链路：LLM 翻转 CTA 时，最终发出模板语义的突破/上看。"""
+    import analyst.llm.chat as chat
+    import analyst.monitor.square_posts as sp
+    from analyst.monitor.square_posts import compose_level_touch_post, _publish_square_post
+
+    reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
+    jack = _touch_jack(defense=77704.05, touch=79555.50)
+    template = compose_level_touch_post(
+        symbol="BTC/USDT",
+        timeframe="4h",
+        price=79480.20,
+        level=79555.50,
+        kind="resistance",
+        jack=jack,
+        regime=reg,
+    )
+    bad = (
+        "$BTC 79480 顶阻力，偏多。\n"
+        "点 $BTC 看永续，反弹 77704.05 附近可空，下看 82818.00。"
+    )
+    monkeypatch.setattr(
+        chat,
+        "_iter_chat_clients",
+        lambda s: iter([(_mock_llm_client(bad), "m", "fake")]),
+    )
+    monkeypatch.setattr(
+        sp,
+        "get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "square_post_enabled": True,
+                "binance_square_openapi_key": "sk-test",
+                "square_post_compact": True,
+                "square_post_ai_polish": True,
+                "square_post_chart_enabled": False,
+                "data_cache_dir": str(tmp_path),
+            },
+        )(),
+    )
+    monkeypatch.setattr(sp, "_load_cooldown", lambda: {})
+    monkeypatch.setattr(sp, "_save_cooldown", lambda d: None)
+    posted = {}
+
+    def _post_content(key, text, image_urls=None, **kw):
+        posted["text"] = text
+        return {"id": "1", "shareLink": "https://x"}
+
+    monkeypatch.setattr(sp, "post_content", _post_content)
+    out = _publish_square_post(
+        template,
+        cool_key="touch|BTC/USDT|4h",
+        cooldown_hours=0,
+    )
+    assert out is not None
+    assert "附近可空" not in posted["text"]
+    assert "突破 79555.50 可追" in posted["text"]
+    assert "82818.00" in posted["text"]
+
+
+def test_move_post_up_long_uses_breakout_cta():
+    from analyst.compute.jack_regime import JackRegime
+    from analyst.monitor.square_posts import compose_move_square_post
+
+    reg = JackRegime(
+        regime="strong_trend",
+        regime_zh="强势盘",
+        trade_side="long",
+        seed_style="market",
+        add_mode="breakout",
+        tp_style="new_high",
+        defense_broken=False,
+        continuation_intact=True,
+        nearest_support=96.6,
+        nearest_resistance=102.84,
+        prev_day_high=None,
+        prev_day_low=None,
+        intraday_high=None,
+        intraday_low=None,
+        tp_intraday_50=None,
+        tp_intraday_618=None,
+        ema12h_6=96.6,
+        spike_stop_recent=False,
+        ext_150=105.5,
+        ext_1618=106.3,
+        playbook_line="强势盘：突破补仓。",
+        summary_line="测",
+    )
+    text = compose_move_square_post(
+        symbol="SOL/USDT",
+        timeframe="4h",
+        price=101.06,
+        change_pct=5.5,
+        vol_ratio=1.5,
+        jack=None,
+        regime=reg,
+        compact=True,
+    )
+    assert "别追" in text
+    assert "突破 102.84 再跟" in text
+    assert "96.60" in text
+    assert "105.50" in text
+    assert "站稳 96.60 可跟" not in text
+
+
+def test_publish_skips_when_template_cta_inverted(monkeypatch):
+    """模板自身 CTA 反逻辑时，发帖前闸口应直接跳过（不发出去）。"""
+    import analyst.monitor.square_posts as sp
+    from analyst.monitor.square_posts import _publish_square_post
+
+    broken = (
+        "👇 $BTC 4h 触及阻力 79555.50 测试\n"
+        "现价 79480.20 · 偏多 · 强势盘\n"
+        "点 $BTC 看永续，反弹 77704.05 附近可空，下看 82818.00。"
+    )
+    monkeypatch.setattr(
+        sp,
+        "get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "square_post_enabled": True,
+                "binance_square_openapi_key": "sk-test",
+                "square_post_compact": True,
+                "square_post_ai_polish": False,
+                "square_post_chart_enabled": False,
+                "data_cache_dir": "/tmp",
+            },
+        )(),
+    )
+    monkeypatch.setattr(sp, "_load_cooldown", lambda: {})
+    monkeypatch.setattr(
+        sp,
+        "post_content",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("不应调用 post_content")),
+    )
+    out = _publish_square_post(
+        broken,
+        cool_key="touch|BTC/USDT|4h|broken",
+        cooldown_hours=0,
+    )
+    assert out is None
+
+
+def test_enforce_square_anchors_short_strips_long_body_lines():
+    from analyst.monitor.square_posts import _enforce_square_anchors
+
+    original = (
+        "📉 看跌 $ETH\n现价 2400.00\n"
+        "点 $ETH 看永续，反弹 2450.00 附近可空，下看 2300.00。"
+    )
+    polished = (
+        "ETH 2400 偏弱，站稳 2350 可跟，上看 2500。\n"
+        "点 $ETH 看永续，反弹 2450.00 附近可空，下看 2300.00。"
+    )
+    out = _enforce_square_anchors(polished, original)
+    assert "附近可空" in out
+    assert "可跟" not in out
+    assert "上看 2500" not in out
+    assert out.count("点 $ETH") == 1
