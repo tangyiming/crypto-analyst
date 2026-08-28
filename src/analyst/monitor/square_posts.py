@@ -645,33 +645,35 @@ def indicator_block(
     return out
 
 
-POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交易员，多年合约实盘，说话像人不像机器。
+POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交易员，多年合约实盘，语气干脆、像笔记不像喊麦。
 把用户给你的「模板短评」改写成你自己发帖的口吻：
-- 第一人称、口语、短句，有态度、有判断，像在群里跟兄弟说话；可以有一点情绪，但不油腻、不喊单式营销、不用感叹号轰炸、不堆 emoji、不用项目符号和小标题。
+- 第一人称、短句、有判断；冷静专业，不喊「兄弟们/家人们/冲啊」，不用感叹号轰炸、不堆 emoji、不用项目符号和小标题。
 - 把「我们的系统/引擎/指标读数」这类机器表述换成交易员会说的话（比如「日线超卖了」「回踩位在 xxx」）。
 - 币种标签 $BTC $ETH $SOL 必须原样保留在正文里，禁止改成纯文字 BTC/比特币/以太坊。
 - 所有价格、点位、百分比、倍数、日期必须原样保留，一个数字都不能改、不能删、不能新增。
 - 不改变原文的方向判断和操作建议；不要编造原文没有的理由。
-- 原文偏多/看涨/站稳/上看，禁止改成偏空/可空/下看；反之亦然；末行 CTA 语义不得与原文互换。
-- 篇幅可以比原文长一些：把「指标怎么看」那段展开成交易员的推理（为什么这些位置重要、破了/守住分别怎么办），但只能用原文给出的指标和数字，不要新增数字。
-- 原文末行若有「点 $XXX 看永续/看行情」类行动号召，改写后在文末保留该行全部数字与含义。
+- 原文偏多/看涨/站稳/上看/突破可追，禁止改成偏空/可空/下看；反之亦然；末行 CTA 语义不得与原文互换。
+- 篇幅控制在原文 2–3 倍：只展开关键位怎么理解、破了/守住怎么办；不灌水、不重复同一句话。
+- 末行「点 $XXX 看永续/看行情」行动号召不要写进正文段落，留给系统单独追加；正文里不要复述该行。
 - 不要加免责声明、不要加话题标签、不要加「仅供参考」之类的套话。
 - 不要出现「原文」「模板」「系统」这类字眼，不要对原文做点评或加括号注释；若原文某句自相矛盾或看不懂，直接略过那句，不要解释。
-- 总长度不超过 1300 字。只输出改写后的正文，不要解释。"""
+- 总长度不超过 900 字。只输出改写后的正文，不要解释。"""
 
-POLISH_SYSTEM_SHORT = """你是一位在币安广场写短评的中文加密货币合约交易员，多年实盘，说话像群里跟兄弟聊行情。
-把模板改写成第一人称、口语、有判断的短评：
-- 短句连贯，不用小标题和 bullet；emoji 最多保留原文里的 1 个。
+POLISH_SYSTEM_SHORT = """你是一位在币安广场写短评的中文加密货币合约交易员，多年实盘，语气干脆、像笔记不像喊麦。
+把模板改写成第一人称、短句、有判断的短评：
+- 冷静专业，禁止「兄弟们/家人们/老铁/冲啊」等群聊口癖；emoji 最多保留原文里的 1 个。
 - 币种标签 $BTC $ETH $SOL 必须原样出现在正文，禁止改成纯文字 BTC/比特币。
 - 所有价格、点位、百分比必须原样保留，不能改、不能删、不能新增。
 - 不改变方向与操作建议；不编造理由；不加免责声明和话题标签。
-- 原文写偏多/看涨/站稳/上看，禁止改成偏空/可空/下看；原文写偏空/看跌/可空/下看，禁止改成偏多/可跟/上看。
-- 末行行动号召必须保留原文语义：「站稳 X 可跟，上看 Y」与「反弹 X 可空，下看 Y」不得互换。
-- 原文末行若有「点 $XXX 看永续/看行情」类行动号召，改写后在文末保留同等含义和全部数字。
-- 全文 400–650 字。只输出正文，不要解释。"""
+- 原文偏多/看涨/站稳/上看/突破可追，禁止改成偏空/可空/下看；反之亦然。
+- 末行行动号召语义不得互换；「点 $XXX 看永续…」不要写进正文，留给系统单独追加。
+- 全文 220–380 字，3–5 段即可，不重复、不凑字数。只输出正文，不要解释。"""
 
 _CASHTAG_RE = re.compile(r"\$[A-Za-z0-9]{2,12}")
 _CTA_LINE_RE = re.compile(r"^点\s+\$")
+_CTA_INLINE_RE = re.compile(
+    r"点\s+\$[A-Za-z0-9]{2,12}\s+看(?:永续|行情)[^。\n]*。"
+)
 _COEFFS = {0.236, 0.382, 0.5, 0.618, 0.786, 1.5, 1.618, 2.618}
 
 
@@ -789,6 +791,12 @@ def _finalize_square_text(text: str, template: str, *, polished: bool) -> tuple[
     logger.warning("Square 文案逻辑校验失败，回退模板")
     return template, "template:logic_fallback"
 
+def _strip_inline_ctas(text: str) -> str:
+    """去掉正文段落里内嵌的「点 $XXX 看永续…」避免与末行 CTA 重复。"""
+    out = _CTA_INLINE_RE.sub("", text or "")
+    return re.sub(r"[ \t]+", " ", out).strip(" \t，,。；;")
+
+
 def _enforce_square_anchors(polished: str, original: str) -> str:
     """润色后补回 $ 标签与 CTA 行（内容挖矿点击入口）。"""
     out = (polished or "").strip()
@@ -811,6 +819,8 @@ def _enforce_square_anchors(polished: str, original: str) -> str:
             body = [ln for ln in body if not re.search(r"附近可空|下看\s*[\d.]", ln)]
         elif "可空" in canonical or "下看" in canonical:
             body = [ln for ln in body if not re.search(r"可跟|上看\s*[\d.]", ln)]
+        body = [_strip_inline_ctas(ln) for ln in body]
+        body = [ln for ln in body if ln.strip()]
         out = "\n".join(body).rstrip()
         out = f"{out}\n{canonical}"
     if len(out) > MAX_POST_LEN:
@@ -872,7 +882,7 @@ def polish_square_text(text: str, *, settings=None, compact: bool = False) -> tu
     """LLM 润色广场短评。返回 (最终文本, 来源 'llm:<provider>' | 'template:<原因>')。
 
     校验：数字全保留；$ 标签与 CTA 行强制补回；长度 ≤ MAX_POST_LEN。
-    compact=True 用短评 prompt（400–650 字），同样走 LLM。
+    compact=True 用短评 prompt（220–380 字），同样走 LLM。
     """
     import time as _time
 
@@ -885,7 +895,7 @@ def polish_square_text(text: str, *, settings=None, compact: bool = False) -> tu
         return text, f"template:import({e})"
     want_nums = _numbers(text)
     system = POLISH_SYSTEM_SHORT if compact else POLISH_SYSTEM
-    max_out = 750 if compact else 1300
+    max_out = 420 if compact else 950
     start = _time.time()
     for client, model, prov in _iter_chat_clients(s):
         if _time.time() - start > 60:
