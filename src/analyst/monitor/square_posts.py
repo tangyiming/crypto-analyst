@@ -77,10 +77,33 @@ def _cta_line(
     defense: float | None = None,
     target: float | None = None,
     near: float | None = None,
+    scene: str | None = None,
 ) -> str:
-    """促点击 $ 标签的行动号召。"""
+    """促点击 $ 标签的行动号召。
+
+    scene:
+      resist_test — 阻力测试 + 偏多：突破 near 可追，破 defense 走
+      support_hold — 支撑触碰 + 偏多：守住 defense 可跟，跌破走
+      move_breakout — 加速拉升后：别追，突破 near 再跟
+    """
     tag = _cashtag(symbol)
+
+    def _with_target(prefix: str) -> str:
+        if target is not None:
+            return f"{prefix}，上看 {_fmt_price(target)}。"
+        return f"{prefix}。"
+
     if side == "long":
+        if scene == "resist_test" and near is not None and defense is not None:
+            return _with_target(
+                f"点 {tag} 看永续，突破 {_fmt_price(near)} 可追，破 {_fmt_price(defense)} 走"
+            )
+        if scene == "support_hold" and defense is not None:
+            return _with_target(f"点 {tag} 看永续，守住 {_fmt_price(defense)} 可跟，跌破就走")
+        if scene == "move_breakout" and near is not None and defense is not None:
+            return _with_target(
+                f"点 {tag} 看永续，别追，突破 {_fmt_price(near)} 再跟，破 {_fmt_price(defense)} 走"
+            )
         if defense is not None and target is not None:
             return (
                 f"点 {tag} 看永续，站稳 {_fmt_price(defense)} 可跟，上看 {_fmt_price(target)}。"
@@ -298,31 +321,69 @@ def compose_level_touch_post(
     tag = _cashtag(symbol)
     tf = (timeframe or "").strip().lower()
     is_support = kind == "support"
-    side = "long" if is_support else "short"
     lvl_label = "支撑" if is_support else "阻力"
     reg = regime
-    side_zh = _side_zh(reg.trade_side) if reg else ("偏多" if is_support else "偏空")
+    cta_side = reg.trade_side if reg is not None else ("long" if is_support else "short")
+    side_zh = _side_zh(cta_side)
     regime_zh = reg.regime_zh if reg else "—"
     lines = [
-        f"{'👆' if is_support else '👇'} {tag} {tf} 触及{lvl_label} {_fmt_price(level)} 守住",
+        f"{'👆' if is_support else '👇'} {tag} {tf} 触及{lvl_label} {_fmt_price(level)}"
+        + (" 守住" if is_support else " 测试"),
         f"现价 {_fmt_price(price)} · {side_zh} · {regime_zh}",
     ]
     if reg is not None:
         defense, near, target = _post_levels(reg, jack, float(price))
-        lines.append(
-            _cta_line(
-                symbol,
-                side,
-                defense=defense if defense else level,
-                target=target,
-                near=near if near else level,
+        if is_support:
+            hold = level if level < price * 0.999 else (defense if defense else level)
+            if cta_side == "long":
+                lines.append(
+                    _cta_line(
+                        symbol,
+                        "long",
+                        defense=hold,
+                        target=target,
+                        scene="support_hold",
+                    )
+                )
+            else:
+                lines.append(
+                    _cta_line(
+                        symbol,
+                        cta_side,
+                        defense=defense if defense else level,
+                        target=target,
+                        near=near if near else level,
+                    )
+                )
+        elif cta_side == "short":
+            entry = level if level > price else (near if near and near > price else defense)
+            lines.append(
+                _cta_line(
+                    symbol,
+                    "short",
+                    defense=entry,
+                    target=target,
+                    near=near,
+                )
             )
-        )
+        else:
+            # 阻力触碰 + 偏多：等突破，不把多头防守位塞进「可空」文案
+            brk = level if level > price else near
+            lines.append(
+                _cta_line(
+                    symbol,
+                    "long",
+                    defense=defense,
+                    target=target,
+                    near=brk,
+                    scene="resist_test",
+                )
+            )
     else:
         lines.append(
             _cta_line(
                 symbol,
-                side,
+                cta_side,
                 defense=level if is_support else None,
                 near=level if not is_support else None,
             )
@@ -591,6 +652,7 @@ POLISH_SYSTEM = """你是一位在币安广场写短评的中文加密货币交�
 - 币种标签 $BTC $ETH $SOL 必须原样保留在正文里，禁止改成纯文字 BTC/比特币/以太坊。
 - 所有价格、点位、百分比、倍数、日期必须原样保留，一个数字都不能改、不能删、不能新增。
 - 不改变原文的方向判断和操作建议；不要编造原文没有的理由。
+- 原文偏多/看涨/站稳/上看，禁止改成偏空/可空/下看；反之亦然；末行 CTA 语义不得与原文互换。
 - 篇幅可以比原文长一些：把「指标怎么看」那段展开成交易员的推理（为什么这些位置重要、破了/守住分别怎么办），但只能用原文给出的指标和数字，不要新增数字。
 - 原文末行若有「点 $XXX 看永续/看行情」类行动号召，改写后在文末保留该行全部数字与含义。
 - 不要加免责声明、不要加话题标签、不要加「仅供参考」之类的套话。
@@ -603,6 +665,8 @@ POLISH_SYSTEM_SHORT = """你是一位在币安广场写短评的中文加密货�
 - 币种标签 $BTC $ETH $SOL 必须原样出现在正文，禁止改成纯文字 BTC/比特币。
 - 所有价格、点位、百分比必须原样保留，不能改、不能删、不能新增。
 - 不改变方向与操作建议；不编造理由；不加免责声明和话题标签。
+- 原文写偏多/看涨/站稳/上看，禁止改成偏空/可空/下看；原文写偏空/看跌/可空/下看，禁止改成偏多/可跟/上看。
+- 末行行动号召必须保留原文语义：「站稳 X 可跟，上看 Y」与「反弹 X 可空，下看 Y」不得互换。
 - 原文末行若有「点 $XXX 看永续/看行情」类行动号召，改写后在文末保留同等含义和全部数字。
 - 全文 400–650 字。只输出正文，不要解释。"""
 
@@ -631,11 +695,105 @@ def _extract_cta_lines(text: str) -> list[str]:
     return lines
 
 
+def _spot_price_from_text(text: str) -> float | None:
+    m = re.search(r"现价\s*([\d.]+)", text or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _trade_side_markers(text: str) -> str | None:
+    t = text or ""
+    has_long = bool(
+        re.search(
+            r"看涨|偏多|可跟|上看|站稳\s*[\d.]+\s*可跟|突破\s*[\d.]+\s*可追|守住\s*[\d.]+\s*可跟|低多",
+            t,
+        )
+    )
+    has_short = bool(re.search(r"看跌|偏空|可空|下看|反弹\s*[\d.]+\s*附近可空|高空", t))
+    if has_long and not has_short:
+        return "long"
+    if has_short and not has_long:
+        return "short"
+    return None
+
+
+def _cta_price_logic_ok(text: str) -> bool:
+    """CTA 价位与现价方向自洽：上看在上方、下看在下方、站稳在下方、反弹可空在上方。"""
+    price = _spot_price_from_text(text)
+    if price is None or price <= 0:
+        return True
+    tol = max(price * 0.001, 1e-6)
+    if m := re.search(r"上看\s*([\d.]+)", text):
+        if float(m.group(1)) <= price - tol:
+            return False
+    if m := re.search(r"下看\s*([\d.]+)", text):
+        if float(m.group(1)) >= price + tol:
+            return False
+    if m := re.search(r"站稳\s*([\d.]+)", text):
+        if float(m.group(1)) >= price + tol:
+            return False
+    if m := re.search(r"反弹\s*([\d.]+)\s*附近可空", text):
+        if float(m.group(1)) <= price - tol:
+            return False
+    if m := re.search(r"突破\s*([\d.]+)", text):
+        if float(m.group(1)) <= price - tol:
+            return False
+    if m := re.search(r"守住\s*([\d.]+)", text):
+        if float(m.group(1)) >= price + tol:
+            return False
+    return True
+
+
+def _cta_direction_conflict(text: str) -> bool:
+    """同一帖里不能既有「站稳可跟」又有「附近可空」。"""
+    t = text or ""
+    long_cta = bool(re.search(r"站稳\s*[\d.]+\s*可跟", t))
+    short_cta = bool(re.search(r"附近可空", t))
+    return long_cta and short_cta
+
+
+def _direction_consistent(original: str, polished: str) -> bool:
+    orig_side = _trade_side_markers(original)
+    pol = polished or ""
+    if orig_side == "long" and re.search(r"附近可空|反弹\s*[\d.]+\s*附近可空", pol):
+        return False
+    if orig_side == "short" and re.search(r"站稳\s*[\d.]+\s*可跟", pol):
+        return False
+    pol_side = _trade_side_markers(pol)
+    if orig_side and pol_side and orig_side != pol_side:
+        return False
+    return _cta_price_logic_ok(pol)
+
+
+def _square_post_ok(text: str, *, template: str | None = None) -> bool:
+    """发帖前最后一道：CTA 价位方向 + 不与模板多空相反。"""
+    if not _cta_price_logic_ok(text):
+        return False
+    if _cta_direction_conflict(text):
+        return False
+    if template:
+        return _direction_consistent(template, text)
+    return True
+
+
+def _finalize_square_text(text: str, template: str, *, polished: bool) -> tuple[str, str]:
+    """润色后校验；失败则回退模板原文（并强制模板 CTA）。"""
+    if not polished:
+        return text, "template:disabled"
+    if _square_post_ok(text, template=template):
+        return text, "ok"
+    logger.warning("Square 文案逻辑校验失败，回退模板")
+    return template, "template:logic_fallback"
+
 def _enforce_square_anchors(polished: str, original: str) -> str:
     """润色后补回 $ 标签与 CTA 行（内容挖矿点击入口）。"""
     out = (polished or "").strip()
     tags = _extract_cashtags(original)
-    ctas = _extract_cta_lines(original)
+    orig_ctas = _extract_cta_lines(original)
     for tag in tags:
         if tag in out:
             continue
@@ -646,9 +804,15 @@ def _enforce_square_anchors(polished: str, original: str) -> str:
             out = replaced
             continue
         out = f"{tag} {out.lstrip()}"
-    for cta in ctas:
-        if cta not in out:
-            out = f"{out.rstrip()}\n{cta}"
+    if orig_ctas:
+        canonical = orig_ctas[-1]
+        body = [ln for ln in out.splitlines() if not _CTA_LINE_RE.match(ln.strip())]
+        if "可跟" in canonical or "上看" in canonical or "可追" in canonical:
+            body = [ln for ln in body if not re.search(r"附近可空|下看\s*[\d.]", ln)]
+        elif "可空" in canonical or "下看" in canonical:
+            body = [ln for ln in body if not re.search(r"可跟|上看\s*[\d.]", ln)]
+        out = "\n".join(body).rstrip()
+        out = f"{out}\n{canonical}"
     if len(out) > MAX_POST_LEN:
         out = out[: MAX_POST_LEN - 1] + "…"
     return out
@@ -754,6 +918,12 @@ def polish_square_text(text: str, *, settings=None, compact: bool = False) -> tu
         out = _enforce_square_anchors(out, text)
         if not _anchors_ok(out, text):
             logger.warning("square polish %s 补回 $/CTA 失败，回退模板", prov)
+            continue
+        if not _direction_consistent(text, out):
+            logger.warning("square polish %s 方向/CTA 逻辑不一致，回退模板", prov)
+            continue
+        if not _cta_price_logic_ok(out):
+            logger.warning("square polish %s CTA 价位逻辑错误，回退模板", prov)
             continue
         if len(out) > max_out:
             logger.warning("square polish %s 过长 %d，回退模板", prov, len(out))
@@ -903,11 +1073,18 @@ def _publish_square_post(
         logger.info("Square 冷却中 %s remain=%.0fs", cool_key, remain)
         return None
     use_compact = compact if compact is not None else _is_compact(s)
+    template_text = text
     do_polish = polish if polish is not None else getattr(s, "square_post_ai_polish", True)
     if do_polish:
         text, polish_src = polish_square_text(text, settings=s, compact=use_compact)
+        text, logic = _finalize_square_text(text, template_text, polished=True)
+        if logic == "template:logic_fallback":
+            polish_src = f"{polish_src}|logic_fallback"
     else:
         polish_src = "template:disabled"
+    if not _square_post_ok(text, template=template_text):
+        logger.error("Square 模板文案逻辑仍不通过，跳过发帖 %s", cool_key)
+        return None
     image_urls: list[str] | None = None
     if chart is not None:
         image_urls = _square_image_urls(chart, key, settings=s)
@@ -1334,15 +1511,28 @@ def compose_move_square_post(
             lines.append(f"近阻力 {f(regime.nearest_resistance)}")
         elif regime.nearest_support is not None and not up:
             lines.append(f"近支撑 {f(regime.nearest_support)}")
-        lines.append(
-            _cta_line(
-                symbol,
-                regime.trade_side,
-                defense=defense,
-                target=tgt,
-                near=near,
+        if up and regime.trade_side == "long":
+            brk = near or regime.nearest_resistance
+            lines.append(
+                _cta_line(
+                    symbol,
+                    "long",
+                    defense=defense,
+                    target=tgt,
+                    near=brk,
+                    scene="move_breakout",
+                )
             )
-        )
+        else:
+            lines.append(
+                _cta_line(
+                    symbol,
+                    regime.trade_side,
+                    defense=defense,
+                    target=tgt,
+                    near=near,
+                )
+            )
         text = "\n".join(lines)
         if len(text) > MAX_POST_LEN:
             text = text[: MAX_POST_LEN - 1] + "…"
