@@ -1352,7 +1352,8 @@ def web(
     except ImportError:
         console.print(
             "[bold red]❌ Web 依赖未安装[/bold red]\n"
-            "请运行: [cyan]pip install -e \".[web]\"[/cyan]"
+            "请运行: [cyan]uv sync --extra web[/cyan]\n"
+            "或: [cyan]pip install -e \".[web]\"[/cyan]"
         )
         raise typer.Exit(1) from None
 
