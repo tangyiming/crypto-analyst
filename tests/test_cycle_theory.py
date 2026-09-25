@@ -1,4 +1,4 @@
-"""Wolfy 周期日历 + 狼波动能测试。"""
+"""Wolfy 周期日历 + 狼波指数测试。"""
 
 from datetime import datetime, timedelta
 
@@ -105,3 +105,36 @@ def test_evaluate_cycle_outlook_always_has_countdown():
     payload = outlook_to_api_dict(outlook)
     assert payload["countdown"]["days"] > 0
     assert payload["countdown"]["label"]
+    assert payload["wave_index"] is None
+
+
+def test_wave_index_matches_block_formula():
+    from analyst.compute.cycle_theory import HALVING_INTERVAL, WAVE_BULL_HALF, wave_index_at, wave_index_state
+
+    halving = HALVING_INTERVAL * 4
+    assert wave_index_at(halving) == 0.5
+    assert wave_index_at(halving - WAVE_BULL_HALF) == 0.0
+    assert wave_index_at(halving + WAVE_BULL_HALF) == 1.0
+
+    bull = wave_index_state(halving)
+    assert bull.phase == "bull"
+    assert bull.blocks_to_turn == WAVE_BULL_HALF
+
+    bear = wave_index_state(halving + WAVE_BULL_HALF + 1000)
+    assert bear.phase == "bear"
+    assert bear.value < 1.0
+    assert "理论熊底" in bear.turn_label
+
+
+def test_wave_chart_covers_top_bottom_and_halving():
+    from analyst.compute.cycle_theory import wave_chart
+
+    chart = wave_chart(968_562, now_ts=1_700_000_000)
+    values = [p["value"] for p in chart["points"]]
+    kinds = {m["kind"] for m in chart["markers"]}
+    assert min(values) == 0.0
+    assert max(values) == 1.0
+    assert any(abs(m["value"] - 0.5) < 1e-9 for m in chart["markers"] if m["kind"] == "halving")
+    assert {"bottom", "top", "halving"} <= kinds
+    assert any(p["future"] for p in chart["points"])
+    assert any(not p["future"] for p in chart["points"])

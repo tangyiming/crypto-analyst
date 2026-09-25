@@ -1185,12 +1185,16 @@ def research_ideas():
 
 @app.command("cycle-outlook")
 def cycle_outlook(
-    timeframe: str = typer.Option("1d", "--timeframe", "-t", help="狼波计算周期（建议 1d）"),
+    timeframe: str = typer.Option("1d", "--timeframe", "-t", help="日历用的 K 线周期（建议 1d）"),
     days: int = typer.Option(800, "--days", help="拉取历史天数"),
     telegram: bool = typer.Option(False, "--telegram", help="同时推送到 Telegram"),
 ):
-    """🔮 Wolfy 四年周期展望：日历牛熊进度 + 狼波动能提醒。"""
-    from analyst.compute.cycle_theory import evaluate_cycle_outlook, format_outlook_text
+    """🔮 Wolfy 四年周期展望：刻舟求剑日历与转折点倒计时。"""
+    from analyst.compute.cycle_theory import (
+        attach_wave_index,
+        evaluate_cycle_outlook,
+        format_outlook_text,
+    )
     from analyst.config import get_settings
     from analyst.data.fetcher import fetch_candles_history
     from analyst.monitor.notifier import build_default_notifier
@@ -1200,6 +1204,7 @@ def cycle_outlook(
             "BTC/USDT", timeframe, days=days, market="futures"
         )
     outlook = evaluate_cycle_outlook(series)
+    attach_wave_index(outlook)
     cal = outlook.calendar
     zh = {"bull": "牛市", "bear": "熊市"}
 
@@ -1210,12 +1215,10 @@ def cycle_outlook(
         f"预计日期：{cal.next_milestone.date:%Y-%m-%d}（还有 {cal.days_to_milestone} 天）\n"
         f"本周期牛市起点：{cal.cycle_bull_start:%Y-%m-%d}\n"
     )
-    if outlook.wave:
-        w = outlook.wave
-        body += (
-            f"\n[bold]图2 狼波动能（RSI 近似）[/bold]\n"
-            f"RSI={w.rsi:.1f} · {w.heat_label} · 20根涨跌 {w.roc_20_pct:+.1f}%\n"
-        )
+    if outlook.wave_index:
+        body += f"\n[bold]狼波指数[/bold]\n{outlook.wave_index.line()}\n"
+        if outlook.wave_index.alerts:
+            body += "\n".join(outlook.wave_index.alerts) + "\n"
     if outlook.alerts:
         body += "\n[bold yellow]提醒[/bold yellow]\n" + "\n".join(outlook.alerts)
     else:
@@ -1229,8 +1232,8 @@ def cycle_outlook(
         )
     )
     console.print(
-        "[dim]图1：熊市底起算牛 1064 天 / 熊 364 天；"
-        "图2：RSI 热度近似狼波，非 TV 原指标。[/dim]"
+        "[dim]日历：熊市底起算牛 1064 天 / 熊 364 天。"
+        "狼波：区块高度纯函数，0=理论熊底，1=理论牛顶。[/dim]"
     )
 
     if telegram:
@@ -1274,8 +1277,6 @@ def cycle_status(
         f"距{wcal.next_milestone.label} {wcal.days_to_milestone} 天"
         f"（{wcal.next_milestone.date:%Y-%m-%d}）"
     )
-    if outlook.wave:
-        wolfy_lines += f"\n狼波 RSI={outlook.wave.rsi:.0f}（{outlook.wave.heat_label}）"
     if outlook.alerts:
         wolfy_lines += "\n" + "\n".join(outlook.alerts[:4])
 
@@ -1288,7 +1289,7 @@ def cycle_status(
     console.print(
         Panel(
             wolfy_lines,
-            title="🔮 Wolfy 周期展望（图1日历 + 图2狼波）",
+            title="🔮 Wolfy 周期展望（刻舟求剑日历）",
             border_style="yellow",
         )
     )

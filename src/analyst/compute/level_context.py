@@ -32,6 +32,50 @@ def distance_pct(price: float, level: float) -> float:
     return (price - level) / level * 100.0
 
 
+def _resistance_row(price: float, level: float) -> dict[str, Any]:
+    dist = distance_pct(price, level)
+    return {
+        "kind": "resistance",
+        "price": level,
+        "dist_pct": round(dist, 3),
+        "near": abs(dist) <= NEAR_LEVEL_PCT,
+    }
+
+
+def supplement_resistances(
+    price: float,
+    resistances: list[dict[str, Any]] | None,
+    *,
+    nearest_resistance: float | None = None,
+    pivot_resistances: list[float] | tuple[float, ...] | None = None,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """现价上方的阻力：结构位 + 近阻力 + 枢轴阻力，近到远至多 limit 档。
+
+    结构识别只留高于快照收盘的枢轴高点。价格创出窗口新高时该列表为空，
+    但 jack_regime 仍可能有近阻力 / 4h·日线枢轴。只收录已有价位，不外推。
+    """
+    prices: list[float] = []
+    for row in resistances or []:
+        lvl = row.get("price")
+        if isinstance(lvl, (int, float)) and lvl > price:
+            prices.append(float(lvl))
+    if isinstance(nearest_resistance, (int, float)) and nearest_resistance > price:
+        prices.append(float(nearest_resistance))
+    for lvl in pivot_resistances or ():
+        if isinstance(lvl, (int, float)) and lvl > price:
+            prices.append(float(lvl))
+    prices.sort()
+    kept: list[float] = []
+    for lvl in prices:
+        if kept and kept[-1] > 0 and abs(lvl - kept[-1]) / kept[-1] < 0.001:
+            continue
+        kept.append(lvl)
+        if len(kept) >= limit:
+            break
+    return [_resistance_row(price, lvl) for lvl in kept]
+
+
 def _zone_bounds(lo: float, hi: float) -> tuple[float, float]:
     return (min(lo, hi), max(lo, hi))
 

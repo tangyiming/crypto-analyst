@@ -25,6 +25,10 @@ from analyst.compute.strategies.cycle_switch import (
 from analyst.data.fetcher import Candle, CandleSeries, fetch_candles
 from analyst.data.fetcher import fetch_candles_history
 from analyst.data.ws_kline import stream_klines, stream_mark_price
+from analyst.monitor.price_alerts import (
+    PriceAlertBook,
+    telegram_text as price_alert_telegram_text,
+)
 from analyst.monitor.notifier import (
     build_default_notifier,
     claim_ai_fail_tg_alert,
@@ -45,6 +49,7 @@ from analyst.compute.level_context import (
     LevelSnapshot,
     compute_level_context,
     snapshot_from_series,
+    supplement_resistances,
     tf_priority,
 )
 from analyst.monitor.serialize import candle_to_dict
@@ -202,6 +207,8 @@ class MonitorHub:
         self._eric_swing_state: dict[str, dict[str, Any]] | None = None
         # 纸面交易引擎（Jack 强势盘低多计划）
         self._paper: Any = None
+        self._price_alerts: PriceAlertBook | None = None
+        self._price_alert_tasks: dict[str, asyncio.Task] = {}
 
     def _daemon_state_path(self) -> Any:
         from pathlib import Path
@@ -314,11 +321,19 @@ class MonitorHub:
         ctx = compute_level_context(float(px), snap)
         ctx["symbol"] = sym
         live = self._jack_live.get(sym)
+        jr: dict[str, Any] = {}
         if live:
             if live.get("jack_regime"):
-                ctx["jack_regime"] = live["jack_regime"]
+                jr = live["jack_regime"]
+                ctx["jack_regime"] = jr
             if live.get("jack_levels"):
                 ctx["jack_levels"] = live["jack_levels"]
+        ctx["resistances"] = supplement_resistances(
+            float(px),
+            ctx.get("resistances") or [],
+            nearest_resistance=jr.get("nearest_resistance"),
+            pivot_resistances=jr.get("pivot_resistances"),
+        )
         return ctx
 
     def levels_for_symbols(self, symbols: list[str]) -> dict[str, Any]:
@@ -496,6 +511,87 @@ class MonitorHub:
     def recent_alerts(self, limit: int = 50) -> list[dict[str, Any]]:
         items = list(self._alerts)
         return items[-limit:][::-1]
+
+    def price_alert_book(self) -> PriceAlertBook:
+        if self._price_alerts is None:
+            book = PriceAlertBook(get_settings().cache_path / "price_alerts.json")
+            book.load()
+            self._price_alerts = book
+        return self._price_alerts
+
+    async def ensure_price_alert_streams(self) -> None:
+        """有启用中的价格告警、但还没有标记价流时，单独订一条 1 秒 mark。"""
+        wanted = self.price_alert_book().symbols_wanted()
+        for sym in sorted(wanted):
+            if self._symbol_has_mark_task(sym):
+                continue
+            task = self._price_alert_tasks.get(sym)
+            if task and not task.done():
+                continue
+            self._price_alert_tasks[sym] = asyncio.create_task(
+                self._price_alert_only_loop(sym),
+                name=f"pxalert-{sym}",
+            )
+        for sym, task in list(self._price_alert_tasks.items()):
+            if sym in wanted or task.done():
+                continue
+            task.cancel()
+
+    async def _price_alert_only_loop(self, symbol: str) -> None:
+        stop = asyncio.Event()
+        try:
+            while not stop.is_set():
+                if symbol not in self.price_alert_book().symbols_wanted():
+                    return
+                if self._symbol_has_mark_task(symbol):
+                    await asyncio.sleep(2.0)
+                    continue
+                async for prem in stream_mark_price(symbol, speed="1s", stop_event=stop):
+                    if symbol not in self.price_alert_book().symbols_wanted():
+                        stop.set()
+                        return
+                    if self._symbol_has_mark_task(symbol):
+                        break
+                    mark = prem.get("mark_price")
+                    if mark is None:
+                        continue
+                    await self._eval_price_alerts(symbol, float(mark))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("price alert stream crashed %s", symbol)
+
+    async def _eval_price_alerts(self, symbol: str, price: float) -> None:
+        fired = self.price_alert_book().on_tick(symbol, price)
+        for alert, event in fired:
+            self._alerts.append(event)
+            await self._broadcast_all(event)
+            await self._broadcast_all(
+                {"type": "price_alert", "alert": alert.to_public()}
+            )
+            try:
+                await self._notify_telegram_text(price_alert_telegram_text(alert, event))
+            except Exception:
+                logger.exception("price alert telegram failed %s", symbol)
+
+    async def _broadcast_all(self, payload: dict[str, Any]) -> None:
+        seen: set[WebSocket] = set()
+        dead: list[tuple[StreamWorker, WebSocket]] = []
+        for worker in self._workers.values():
+            for ws in list(worker.clients | worker.alert_clients):
+                if ws in seen:
+                    continue
+                seen.add(ws)
+                try:
+                    if ws.client_state != WebSocketState.CONNECTED:
+                        dead.append((worker, ws))
+                        continue
+                    await ws.send_json(payload)
+                except Exception:
+                    dead.append((worker, ws))
+        for worker, ws in dead:
+            worker.clients.discard(ws)
+            worker.alert_clients.discard(ws)
 
     def history(
         self,
@@ -903,6 +999,10 @@ class MonitorHub:
                         await self._paper_mark_check(worker, float(mark))
                     except Exception:
                         logger.exception("paper mark check failed %s", key.symbol)
+                    try:
+                        await self._eval_price_alerts(key.symbol, float(mark))
+                    except Exception:
+                        logger.exception("price alert check failed %s", key.symbol)
                 settings = get_settings()
                 if settings.monitor_rules_enabled:
                     # funding/溢价与 K 线周期无关：只由挂 mark 的那条 worker 告警
@@ -2050,6 +2150,7 @@ class MonitorHub:
             return
 
         from analyst.compute.cycle_theory import (
+            attach_wave_index,
             calendar_countdown_dict,
             evaluate_cycle_outlook,
             format_outlook_text,
@@ -2064,6 +2165,7 @@ class MonitorHub:
             use_cache=True,
         )
         outlook = evaluate_cycle_outlook(series_1d)
+        await asyncio.to_thread(attach_wave_index, outlook)
         if not outlook.summary and not outlook.alerts:
             return
 

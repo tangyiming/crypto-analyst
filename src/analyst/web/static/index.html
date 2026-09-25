@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Crypto Analyst</title>
+  <meta name="description" content="本地加密货币 K 线监控与分析" />
   <link rel="icon" href="/favicon.ico" sizes="32x32" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -22,12 +23,53 @@
       --panel: #12161c;
       --line: #1e2329;
       --muted: #848e9c;
-      --text: #eaecef;
+      --text: #c8cdd3;
       --green: #0ecb81;
       --red: #f6465d;
       --yellow: #f0b90b;
     }
     * { box-sizing: border-box; }
+    /* 暗色半透明滚动条：页面内所有可滚动区域（含 WebKit / Firefox） */
+    html, body, *,
+    .app-view-monitor,
+    .app-page,
+    .app-nav-links,
+    .side-pane-levels,
+    .ai-panel-body,
+    #aiResult,
+    .ai-rationale,
+    .ai-chat-log,
+    .dock-pane,
+    .paper-tbl-wrap,
+    .paper-journal,
+    .sym-drop,
+    #pxList {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(52, 58, 68, 0.78) rgba(0, 0, 0, 0.22);
+    }
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar,
+    *::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    html::-webkit-scrollbar-track,
+    body::-webkit-scrollbar-track,
+    *::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.28);
+      border-radius: 8px;
+    }
+    html::-webkit-scrollbar-thumb,
+    body::-webkit-scrollbar-thumb,
+    *::-webkit-scrollbar-thumb {
+      background: rgba(42, 48, 58, 0.82);
+      border-radius: 8px;
+    }
+    html::-webkit-scrollbar-thumb:hover,
+    body::-webkit-scrollbar-thumb:hover,
+    *::-webkit-scrollbar-thumb:hover {
+      background: rgba(78, 86, 98, 0.9);
+    }
     html, body { height: 100%; margin: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
@@ -126,13 +168,13 @@
       min-height: 0;
       overflow: auto;
     }
-    /* 左：图表+底部告警；右：AI 通栏占满 */
+    /* 左：图表+底部告警；右：关键位 / AI 共用一栏，可收起 */
     .monitor-body {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 320px minmax(260px, calc(40vw - 200px));
-      min-width: 1540px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      min-width: 0;
       min-height: 0;
-      overflow: visible;
+      overflow: hidden;
     }
     .monitor-left {
       display: grid;
@@ -147,32 +189,87 @@
       background: #000;
       overflow: hidden;
     }
+    .side-drawer {
+      display: flex;
+      flex-direction: row;
+      min-height: 0;
+      min-width: 0;
+      border-left: 1px solid var(--line);
+      background: #0d1117;
+    }
+    .side-rail {
+      width: 40px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 5px;
+      background: #0b0e11;
+    }
+    .side-drawer.open .side-rail { border-right: 1px solid var(--line); }
+    .side-rail-btn {
+      appearance: none;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      padding: 12px 0;
+      cursor: pointer;
+      writing-mode: vertical-rl;
+      border-radius: 6px;
+    }
+    .side-rail-btn:hover { color: var(--text); background: #161b22; }
+    .side-rail-btn.on {
+      color: var(--yellow);
+      border-color: rgba(240, 185, 11, 0.4);
+      background: rgba(240, 185, 11, 0.1);
+    }
+    .side-rail-close { margin-top: auto; letter-spacing: 0.2em; }
+    .side-drawer:not(.open) .side-rail-close { display: none; }
+    .side-main {
+      display: none;
+      width: 380px;
+      min-height: 0;
+      flex-direction: column;
+    }
+    .side-drawer.open .side-main { display: flex; }
+    .side-pane { display: none; flex: 1; min-height: 0; overflow: hidden; }
+    .side-drawer[data-tab="levels"] .side-pane-levels { display: block; overflow: auto; padding: 10px 12px 16px; }
+    .side-pane-levels .level-board {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      margin: 0;
+      padding: 0;
+    }
+    .side-pane-ai .ai-panel { flex: 1; width: 100%; height: auto; min-height: 0; }
+    .side-drawer[data-tab="ai"] .side-pane-ai { display: flex; }
+    .side-empty {
+      padding: 16px 14px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
     @media (max-width: 960px) {
       .monitor-body {
         min-width: 0;
         grid-template-columns: 1fr;
-        grid-template-rows: minmax(220px, 42vh) auto minmax(0, 1fr);
+        grid-template-rows: minmax(220px, 42vh) auto;
       }
       .monitor-left { border-right: 0; border-bottom: 1px solid var(--line); }
+      .side-drawer { flex-direction: column; border-left: 0; border-top: 1px solid var(--line); }
+      .side-rail { width: 100%; flex-direction: row; border-right: 0; border-bottom: 1px solid var(--line); }
+      .side-drawer.open .side-rail { border-right: 0; }
+      .side-rail-btn, .side-rail-close { writing-mode: horizontal-tb; letter-spacing: 0; padding: 8px 12px; }
+      .side-rail-close { margin-top: 0; margin-left: auto; }
+      .side-main { width: 100%; height: min(68vh, 640px); }
       .app-brand span { display: none; }
       .app-nav { padding-left: 8px; padding-right: 8px; }
       .chrome-main { flex-wrap: wrap; row-gap: 8px; }
       .chrome-group + .chrome-group { border-left: 0; }
       .chrome-watch { flex-wrap: wrap; }
       .app-page { padding: 12px; }
-    }
-    @media (min-width: 1400px) {
-      .monitor-body { grid-template-columns: minmax(0, 1fr) 340px minmax(320px, calc(42vw - 200px)); }
-    }
-    @media (min-width: 1800px) {
-      .monitor-body { grid-template-columns: minmax(0, 1fr) 360px minmax(360px, calc(44vw - 200px)); }
-    }
-    .level-rail {
-      min-height: 0;
-      overflow: auto;
-      padding: 10px;
-      border-right: 1px solid var(--line);
-      background: #0d1117;
     }
     .app-page {
       flex: 1;
@@ -481,7 +578,26 @@
       display: flex;
       flex-direction: column;
       max-height: 34%;
-      min-height: 120px;
+      min-height: 0;
+    }
+    .ai-chat.empty { max-height: none; }
+    .ai-chat.empty .ai-chat-log { display: none; }
+    .ai-chat.empty textarea {
+      min-height: 58px;
+      height: 58px;
+      max-height: 58px;
+      resize: none;
+      overflow: hidden;
+      padding: 8px 52px 8px 12px;
+      line-height: 1.5;
+    }
+    .ai-chat.empty .ai-chat-send {
+      top: auto;
+      bottom: 16px;
+      transform: none;
+    }
+    .ai-chat.empty .ai-chat-send:active {
+      transform: scale(0.97);
     }
     .ai-chat-log {
       flex: 1;
@@ -537,13 +653,13 @@
       position: absolute;
       right: 18px;
       bottom: 18px;
-      height: 28px;
-      padding: 0 14px;
+      height: 20px;
+      padding: 0 10px;
       border: 0;
-      border-radius: 14px;
+      border-radius: 10px;
       background: var(--yellow);
       color: #0b0e11;
-      font-size: 12px;
+      font-size: 8.4px;
       font-weight: 600;
       cursor: pointer;
       transition: opacity .15s ease, transform .1s ease;
@@ -721,6 +837,25 @@
     }
     .level-card.active {
       box-shadow: none;
+    }
+    .level-playbook {
+      margin: 8px 0 10px;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+    }
+    .level-playbook .k {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .level-playbook p { margin: 0 0 6px; }
+    .level-playbook p:last-child { margin-bottom: 0; }
+    .level-playbook .sub {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
     }
     .level-card-head {
       display: flex;
@@ -920,6 +1055,22 @@
     }
     .cycle-stat .k { font-size: 10px; color: var(--muted); display: block; }
     .cycle-stat .v { font-size: 15px; font-weight: 600; margin-top: 4px; }
+    .wave-panel {
+      margin: 4px 0 14px;
+      border: 1px solid var(--line);
+      background: #0b0e11;
+      border-radius: 6px;
+      padding: 10px 12px 8px;
+    }
+    .wave-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; }
+    .wave-readout { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .wave-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .wave-hover {
+      min-width: 180px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    #waveCanvas { width: 100%; height: 220px; display: block; cursor: crosshair; margin-top: 6px; }
+    .wave-legend { font-size: 11px; color: var(--muted); margin-top: 4px; }
     /* ── 通用内容页（AI 助手等） ── */
     .app-page-inner { max-width: 960px; margin: 0 auto; }
     .app-section {
@@ -1092,16 +1243,6 @@
       border-left-color: var(--red);
       background: rgba(246, 70, 93, 0.1);
     }
-    .cycle-wave-pill {
-      display: inline-block;
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 10px;
-      margin-left: 6px;
-    }
-    .heat-extreme_hot, .heat-hot { background: rgba(246,70,93,.25); color: #ff7a8a; }
-    .heat-neutral { background: rgba(240,185,11,.15); color: var(--yellow); }
-    .heat-cool, .heat-extreme_cold { background: rgba(14,203,129,.15); color: var(--green); }
     .hist-item, .alert-item {
       border: 1px solid var(--line);
       background: #0b0e11;
@@ -1111,6 +1252,16 @@
       margin-bottom: 6px;
     }
     .hist-item:hover, .alert-item:hover { border-color: #2b3139; }
+    .px-panel {
+      position: fixed; top: 52px; right: 16px; z-index: 45; width: 340px; max-width: calc(100vw - 24px);
+      background: #12161c; border: 1px solid var(--line); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(0,0,0,.45); padding: 12px;
+    }
+    .px-panel.hidden { display: none; }
+    .px-row { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+    .px-row .inp, .px-row .sel { flex: 1; min-width: 0; }
+    .px-item { border-top: 1px solid var(--line); padding: 8px 0; font-size: 12px; }
+    .px-item.off { opacity: 0.55; }
     .hist-item.active-row { border-color: rgba(240,185,11,.45); }
     .ai-rationale {
       font-size: 12px;
@@ -1289,6 +1440,7 @@
       </div>
 
       <div class="chrome-group">
+        <button type="button" class="chip shrink-0" id="btnPriceAlerts" title="按标记价实时触发，不等 K 线收盘">价格告警</button>
         <div class="mode-seg">
           <button type="button" class="mode-btn active" data-mode="native" id="modeNative">直连图</button>
           <button type="button" class="mode-btn" data-mode="tv" id="modeTv" title="TradingView 免费嵌入：画线无法跨刷新保存">TV 备选</button>
@@ -1326,24 +1478,32 @@
             <input type="checkbox" id="dockFilterSym" checked />
             仅当前币对
           </label>
-          <span class="dock-meta" id="dockHint">点告警 → 直连图标记 · 点历史 → 右侧回看</span>
+          <span class="dock-meta" id="dockHint">点告警 → 直连图标记 · 带价位的打开关键位</span>
         </div>
         <div class="dock-pane" id="paneAlerts"></div>
         <div class="dock-pane hidden" id="paneHistory"></div>
       </footer>
     </div>
 
-    <aside class="level-rail" aria-label="关键位分析">
-      <div id="levelBoard" class="level-board hidden" aria-label="关键位实时">
-        <div class="level-board-head">
-          <span>关键位 · 实时</span>
-          <span id="levelBoardHint" class="muted">当前币</span>
-        </div>
-        <div id="levelBoardGrid" class="level-board-grid"></div>
+    <aside class="side-drawer" id="sideDrawer" data-tab="levels" aria-label="关键位与 AI">
+      <div class="side-rail">
+        <button type="button" class="side-rail-btn" data-side="levels" title="关键位">关键位</button>
+        <button type="button" class="side-rail-btn" data-side="ai" title="AI 行情分析">AI行情分析</button>
+        <button type="button" class="side-rail-btn side-rail-close" id="sideClose" title="收起侧栏">收起</button>
       </div>
-    </aside>
-
-    <aside class="ai-panel" aria-label="AI 行情分析">
+      <div class="side-main">
+        <div class="side-pane side-pane-levels">
+          <div id="levelEmpty" class="side-empty">当前币还没有关键位快照。盯盘连上后，支撑、阻力和回调区会显示在这里。</div>
+          <div id="levelBoard" class="level-board hidden" aria-label="关键位实时">
+            <div class="level-board-head">
+              <span>关键位 · 实时</span>
+              <span id="levelBoardHint" class="muted">当前币</span>
+            </div>
+            <div id="levelBoardGrid" class="level-board-grid"></div>
+          </div>
+        </div>
+        <div class="side-pane side-pane-ai">
+    <div class="ai-panel" aria-label="AI 行情分析">
       <div class="ai-panel-head">
         <div class="flex items-center justify-between gap-2">
           <span
@@ -1370,15 +1530,18 @@
         </div>
         <div id="aiResult" class="hidden"></div>
       </div>
-      <div class="ai-chat" aria-label="追问对话框">
+      <div class="ai-chat empty" aria-label="追问对话框">
         <div class="ai-chat-log" id="chatLog"></div>
         <div class="ai-chat-compose">
           <textarea
             id="chatInput"
-            rows="3"
+            rows="2"
             placeholder="可对当前合约追问，例如「现在适合追多吗？」「止损放哪更合理？」建议先点上方分析，回答会更贴盘面。"
           ></textarea>
           <button type="button" id="btnChatSend" class="ai-chat-send">发送</button>
+        </div>
+      </div>
+    </div>
         </div>
       </div>
     </aside>
@@ -1403,8 +1566,21 @@
         <div class="app-page-head">
           <h1>四年周期 · 刻舟求剑</h1>
           <p id="cycleSummaryLine" style="color:var(--muted);margin:0">加载中…</p>
+          <p class="text-[11px] mt-1" style="color:var(--muted)">狼波按区块高度计算（0 理论熊底 → 1 理论牛顶）。完整图见 <a href="https://wolfyxbt.github.io/wolfy-wave-index/" target="_blank" rel="noopener" style="color:var(--yellow)">wolfy-wave-index</a>。</p>
         </div>
         <div id="cycleStats" class="cycle-stats"></div>
+        <div id="wavePanel" class="wave-panel hidden">
+          <div class="wave-head">
+            <div>
+              <div class="text-[11px]" style="color:var(--muted)">狼波周期指数 · 鼠标跟着线走</div>
+              <div id="waveReadout" class="wave-readout">—</div>
+              <div id="waveSub" class="wave-sub"></div>
+            </div>
+            <div id="waveHover" class="wave-hover">移到线上看那一天的读数</div>
+          </div>
+          <canvas id="waveCanvas" height="220"></canvas>
+          <div class="wave-legend">往上 = 模型牛市 · 往下 = 模型熊市 · 蓝 0 熊底 · 绿 0.5 减半 · 红 1 牛顶 · 虚线还没发生 · 黄线是今天</div>
+        </div>
         <div id="cycleRegime" class="cycle-regime hidden"></div>
         <div class="text-[11px]" style="color:var(--muted)">本相位进度</div>
         <div class="cycle-phase-bar"><div id="cyclePhaseFill" class="cycle-phase-fill bull" style="width:0%"></div></div>
@@ -1613,6 +1789,46 @@
   </div>
 </div>
 
+<div id="priceAlertPanel" class="px-panel hidden" aria-label="价格告警">
+  <div class="flex items-center justify-between">
+    <span class="text-sm font-semibold">价格告警</span>
+    <button type="button" id="btnPriceAlertsClose" class="text-xs" style="color:var(--muted)">关闭</button>
+  </div>
+  <p class="text-[11px] mt-1" style="color:var(--muted)">「价格达到」= 标记价碰到这个数，从上或从下都算。只上穿 / 只下穿才限定方向。涨跌幅看滚动窗口。</p>
+  <div class="px-row">
+    <select id="pxKind" class="sel">
+      <option value="cross">价格达到</option>
+      <option value="above">只上穿</option>
+      <option value="below">只下穿</option>
+      <option value="pct_change">百分比变化</option>
+      <option value="abs_change">绝对价格变化</option>
+    </select>
+    <select id="pxDir" class="sel" disabled>
+      <option value="any">任意方向</option>
+      <option value="up">只涨</option>
+      <option value="down">只跌</option>
+    </select>
+  </div>
+  <div class="px-row">
+    <input id="pxPrice" class="inp" inputmode="decimal" placeholder="价位或涨跌阈值" />
+    <select id="pxWindow" class="sel">
+      <option value="0">自设定起</option>
+      <option value="60">1 分钟</option>
+      <option value="300" selected>5 分钟</option>
+      <option value="900">15 分钟</option>
+      <option value="3600">1 小时</option>
+    </select>
+  </div>
+  <div class="px-row">
+    <input id="pxNote" class="inp" maxlength="80" placeholder="备注，可空" />
+    <label class="text-[11px] shrink-0 flex items-center gap-1" style="color:var(--muted)">
+      <input id="pxRepeat" type="checkbox" /> 重复
+    </label>
+    <button type="button" class="chip shrink-0" id="pxAdd">添加</button>
+  </div>
+  <div id="pxList" class="mt-2 max-h-72 overflow-auto"></div>
+</div>
+
 <div id="toasts" class="fixed top-14 right-4 z-40 space-y-2 w-80 max-w-[92vw]"></div>
 
 <script>
@@ -1630,6 +1846,8 @@
   let alertTotal = 0;
   let dropIndex = -1;
   let alertStore = [];
+  let priceAlerts = [];
+  let alertPriceLines = [];
   let sessionStore = [];
   let dockFilterCurrent = true;
   let levelStore = {};
@@ -1679,16 +1897,212 @@
     return Math.min(100, Math.max(0, (t.getTime() - a) / (b - a) * 100));
   }
 
+  let waveHoverHeight = null;
+  let waveChartBound = false;
+
+  function waveColor(v) {
+    const stops = [
+      [0, [38, 60, 219]],
+      [0.25, [62, 196, 233]],
+      [0.5, [72, 190, 80]],
+      [0.7, [214, 223, 56]],
+      [0.85, [246, 156, 28]],
+      [1, [236, 38, 38]],
+    ];
+    const x = Math.max(0, Math.min(1, v));
+    for (let i = 0; i < stops.length - 1; i++) {
+      const [a, ca] = stops[i];
+      const [b, cb] = stops[i + 1];
+      if (x <= b) {
+        const f = (x - a) / (b - a || 1);
+        const c = ca.map((v0, j) => Math.round(v0 + f * (cb[j] - v0)));
+        return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+      }
+    }
+    return 'rgb(236, 38, 38)';
+  }
+
+  function waveDate(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+
+  function renderWaveChart(w) {
+    const panel = $('wavePanel');
+    const canvas = $('waveCanvas');
+    if (!panel || !canvas) return;
+    const chart = w?.chart;
+    if (!w || !chart?.points?.length) {
+      panel.classList.add('hidden');
+      return;
+    }
+    panel.classList.remove('hidden');
+    const color = waveColor(w.value);
+    $('waveReadout').innerHTML = `<span style="color:${color}">${Number(w.value).toFixed(3)}</span> <span style="font-size:14px;font-weight:500">${escapeHtml(w.phase_label)}</span>`;
+    $('waveSub').textContent = `今天在往${w.phase === 'bull' ? '上' : '下'}走，距${w.turn_label}大约 ${w.days_to_turn} 天`;
+    paintWave(chart, waveHoverHeight);
+    if (!waveChartBound) {
+      waveChartBound = true;
+      canvas.addEventListener('mousemove', (ev) => {
+        const c = cycleData?.wave_index?.chart;
+        if (!c) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = ev.clientX - rect.left;
+        waveHoverHeight = waveHeightAtX(c, x, rect.width);
+        paintWave(c, waveHoverHeight);
+      });
+      canvas.addEventListener('mouseleave', () => {
+        waveHoverHeight = null;
+        const c = cycleData?.wave_index?.chart;
+        if (c) paintWave(c, null);
+        $('waveHover').textContent = '移到线上看那一天的读数';
+      });
+      window.addEventListener('resize', () => {
+        if (activeAppView === 'cycle' && cycleData?.wave_index?.chart) {
+          paintWave(cycleData.wave_index.chart, waveHoverHeight);
+        }
+      });
+    }
+  }
+
+  function waveLayout(chart, width) {
+    const padL = 36;
+    const padR = 12;
+    const padT = 16;
+    const padB = 28;
+    const h0 = chart.points[0].height;
+    const h1 = chart.points[chart.points.length - 1].height;
+    const xOf = (height) => padL + (height - h0) / Math.max(h1 - h0, 1) * (width - padL - padR);
+    const yOf = (v, heightPx) => padT + (1 - v) * (heightPx - padT - padB);
+    return { padL, padR, padT, padB, h0, h1, xOf, yOf };
+  }
+
+  function waveHeightAtX(chart, x, width) {
+    const { xOf, h0, h1 } = waveLayout(chart, width);
+    const padL = 36;
+    const padR = 12;
+    const inner = Math.max(width - padL - padR, 1);
+    const t = Math.max(0, Math.min(1, (x - padL) / inner));
+    return h0 + t * (h1 - h0);
+  }
+
+  function paintWave(chart, hoverHeight) {
+    const canvas = $('waveCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || 640;
+    const h = 220;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0b0e11';
+    ctx.fillRect(0, 0, w, h);
+    const { xOf, yOf } = waveLayout(chart, w);
+    const pts = chart.points;
+
+    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillStyle = '#848e9c';
+    ctx.textAlign = 'right';
+    [0, 0.5, 1].forEach((v) => {
+      const y = yOf(v, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(36, y);
+      ctx.lineTo(w - 12, y);
+      ctx.stroke();
+      ctx.fillText(v.toFixed(1), 30, y + 3);
+    });
+
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const up = b.value >= a.value;
+      ctx.fillStyle = up ? 'rgba(14,203,129,0.08)' : 'rgba(246,70,93,0.08)';
+      ctx.fillRect(xOf(a.height), 16, Math.max(1, xOf(b.height) - xOf(a.height)), h - 44);
+    }
+
+    ctx.lineWidth = 2.2;
+    ctx.lineJoin = 'round';
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      ctx.beginPath();
+      ctx.strokeStyle = waveColor((a.value + b.value) / 2);
+      ctx.setLineDash(b.future ? [5, 4] : []);
+      ctx.moveTo(xOf(a.height), yOf(a.value, h));
+      ctx.lineTo(xOf(b.height), yOf(b.value, h));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    const nx = xOf(chart.now_height);
+    (chart.markers || []).forEach((m) => {
+      const x = xOf(m.height);
+      const nearNow = Math.abs(x - nx) < 28;
+      if (!nearNow) {
+        ctx.strokeStyle = m.kind === 'halving' ? 'rgba(61,139,253,0.7)' : 'rgba(234,236,239,0.25)';
+        ctx.setLineDash(m.kind === 'halving' ? [2, 2] : []);
+        ctx.beginPath();
+        ctx.moveTo(x, 16);
+        ctx.lineTo(x, h - 28);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.fillStyle = m.kind === 'top' ? '#f6465d' : m.kind === 'bottom' ? '#5eb8f0' : '#7da3ff';
+      ctx.textAlign = nearNow ? 'left' : 'center';
+      ctx.fillText(nearNow ? `${m.label}（临近）` : m.label, nearNow ? nx + 6 : x, h - 12);
+    });
+    ctx.strokeStyle = '#f0b90b';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(nx, 8);
+    ctx.lineTo(nx, h - 22);
+    ctx.stroke();
+    const nowPt = pts.reduce((best, p) => Math.abs(p.height - chart.now_height) < Math.abs(best.height - chart.now_height) ? p : best, pts[0]);
+    ctx.fillStyle = '#f0b90b';
+    ctx.beginPath();
+    ctx.arc(nx, yOf(nowPt.value, h), 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f0b90b';
+    ctx.textAlign = 'center';
+    ctx.fillText('今天', nx, 12);
+
+    const hover = hoverHeight == null ? null : pts.reduce((best, p) => (
+      Math.abs(p.height - hoverHeight) < Math.abs(best.height - hoverHeight) ? p : best
+    ), pts[0]);
+    if (hover) {
+      const hx = xOf(hover.height);
+      const hy = yOf(hover.value, h);
+      ctx.strokeStyle = 'rgba(234,236,239,0.45)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(hx, 16);
+      ctx.lineTo(hx, h - 28);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = waveColor(hover.value);
+      ctx.beginPath();
+      ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+      ctx.fill();
+      const i = pts.indexOf(hover);
+      const nxt = pts[Math.min(pts.length - 1, Math.max(0, i + 1))];
+      const prev = pts[Math.max(0, i - 1)];
+      const rising = nxt.value > prev.value;
+      $('waveHover').innerHTML = `${hover.future ? '预计 ' : ''}${waveDate(hover.ts)}<br>${Number(hover.value).toFixed(3)} · ${rising ? '往上（牛）' : '往下（熊）'}`;
+    }
+  }
+
   function renderCycleStats(data) {
     const box = $('cycleStats');
     if (!box || !data?.calendar) return;
     const cal = data.calendar;
-    const wave = data.wave;
     const phaseZh = cal.phase === 'bull' ? '牛市' : '熊市';
     const phaseColor = cal.phase === 'bull' ? 'var(--green)' : 'var(--red)';
-    const waveHtml = wave
-      ? `<span class="cycle-wave-pill heat-${wave.heat}">${wave.heat_label} RSI ${wave.rsi}</span>`
-      : '';
     box.innerHTML = `
       <div class="cycle-stat">
         <span class="k">当前相位</span>
@@ -1702,10 +2116,6 @@
         <span class="k">下一里程碑</span>
         <span class="v" style="font-size:12px">${escapeHtml(cal.next_milestone.label)}<br/>
           <span style="color:var(--muted);font-weight:400">${cal.days_to_milestone} 天后</span></span>
-      </div>
-      <div class="cycle-stat">
-        <span class="k">狼波动能</span>
-        <span class="v" style="font-size:13px">${wave ? wave.heat_label : '—'}${waveHtml}</span>
       </div>`;
 
     const fill = $('cyclePhaseFill');
@@ -1721,6 +2131,7 @@
       $('cycleSummaryLine').textContent = data.summary || '';
     }
     renderCycleRegime(data.regime);
+    renderWaveChart(data.wave_index);
   }
 
   function renderCycleRegime(rg) {
@@ -1880,7 +2291,7 @@
     const box = $('cycleAlerts');
     if (!box) return;
     const cd = data?.countdown;
-    const alerts = (data?.alerts || []).slice(1);
+    const alerts = (data?.wave_index?.alerts || []).concat((data?.alerts || []).slice(1));
     let html = renderCycleCountdownCard(cd);
     if (alerts.length) {
       html += alerts.map((a) => `<div class="cycle-alert">${escapeHtml(a)}</div>`).join('');
@@ -2971,13 +3382,16 @@
     if (!board || !grid) return;
     const active = normalizeSymbol(activeSymbol);
     const rows = [levelStore[active]].filter(Boolean);
+    const empty = $('levelEmpty');
     if (!rows.length) {
       board.classList.add('hidden');
+      empty?.classList.remove('hidden');
       grid.innerHTML = '';
       if (hint) hint.textContent = '支撑/阻力距离 · 回调区';
       return;
     }
     board.classList.remove('hidden');
+    empty?.classList.add('hidden');
     const liveJr = rows[0]?.jack_regime || {};
     if (hint) hint.textContent = liveJr.regime_zh
       ? `${active.split('/')[0]} · ${liveJr.regime_zh}`
@@ -3014,22 +3428,59 @@
           <span class="d ${dCls}">${fmtDistPct(d)}</span>
         </div>`;
       }).join('');
+      const resistanceItems = (() => {
+        const price = Number(ctx.price);
+        const raw = [];
+        for (const row of (ctx.resistances || [])) {
+          if (row && row.price != null) raw.push(Number(row.price));
+        }
+        if (jr.nearest_resistance != null) raw.push(Number(jr.nearest_resistance));
+        for (const p of (jr.pivot_resistances || [])) raw.push(Number(p));
+        const above = raw.filter((p) => Number.isFinite(p) && price > 0 && p > price).sort((a, b) => a - b);
+        const kept = [];
+        for (const p of above) {
+          const prev = kept[kept.length - 1];
+          if (prev && Math.abs(p - prev.price) / prev.price < 0.001) continue;
+          const dist = ((price - p) / p) * 100;
+          kept.push({
+            price: p,
+            dist_pct: dist,
+            near: Math.abs(dist) <= 0.35,
+          });
+          if (kept.length >= 3) break;
+        }
+        return kept;
+      })();
+      const resistanceHtml = levelRows('阻', resistanceItems, 'var(--red)')
+        || '<div class="muted" style="font-size:11px;">现价上方暂无结构阻力</div>';
+      const seedZh = { market: '市价', pullback: '回踩', resistance_short: '阻力试空' };
+      const addZh = { breakout: '突破加', pullback: '回踩加', breakdown: '跌破加', none: '不加' };
+      const stopPx = jr.nearest_support ?? (ctx.supports || [])[0]?.price;
+      const tpPx = jr.tp_intraday_618 ?? jr.nearest_resistance ?? (ctx.resistances || [])[0]?.price;
+      const headline = (() => {
+        const base = jr.regime_zh || z.label || '观望';
+        return sideZh ? `${base} · ${sideZh}` : base;
+      })();
+      const seedLine = jr.seed_style
+        ? `${seedZh[jr.seed_style] || jr.seed_style}${jr.add_mode ? ` · ${addZh[jr.add_mode] || jr.add_mode}` : ''}`
+        : '—';
+      const playbook = (jr.playbook_line || '').trim();
+      const playbookParas = playbook
+        .split(/(?<=。)/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => `<p>${escapeHtml(s)}</p>`)
+        .join('');
       return `<div class="level-card${isActive ? ' active' : ''}" data-sym="${escapeHtml(sym)}">
         <div class="level-card-head">
           <span class="sym">${escapeHtml(sym.split('/')[0])}</span>
           <span class="px">${fmtNum(ctx.price)}</span>
         </div>
-        <div class="level-zone ${zCls}">${escapeHtml(z.label || '观望')}</div>
-        <div class="level-decision">
-          <div class="title">${escapeHtml(decisionText(ctx))}</div>
-          <div class="desc">${escapeHtml(riskText(ctx))}</div>
-        </div>
+        <div class="level-zone ${zCls}">${escapeHtml(headline)}</div>
         <div class="level-plan">
-          <div class="level-plan-row"><span class="k">计划</span><span class="v">${escapeHtml(jr.regime_zh || z.label || '观望')}</span></div>
-          ${jr.seed_style ? `<div class="level-plan-row"><span class="k">头仓</span><span class="v">${escapeHtml(jr.seed_style)} · ${escapeHtml(jr.add_mode || '—')}</span></div>` : ''}
-          <div class="level-plan-row"><span class="k">低吸</span><span class="v">${fmtNum(longZone.low)} - ${fmtNum(longZone.high)}</span></div>
-          <div class="level-plan-row"><span class="k">试空</span><span class="v">${fmtNum(shortZone.low)} - ${fmtNum(shortZone.high)}</span></div>
-          <div class="level-plan-row"><span class="k">枢轴</span><span class="v">${fmtNum(ctx.key_pivot)}</span></div>
+          <div class="level-plan-row"><span class="k">头仓</span><span class="v">${escapeHtml(seedLine)}</span></div>
+          <div class="level-plan-row"><span class="k">止损</span><span class="v">${fmtNum(stopPx)}</span></div>
+          <div class="level-plan-row"><span class="k">止盈</span><span class="v">${fmtNum(tpPx)}</span></div>
         </div>
         <div class="level-chips">${chips.map((x) => `<span class="level-chip">${escapeHtml(x)}</span>`).join('')}</div>
         <div class="level-summary">
@@ -3057,8 +3508,11 @@
         </div>
         <div class="level-sect-title">Resistances</div>
         <div class="level-rows">
-          ${levelRows('阻', ctx.resistances, 'var(--red)')}
+          ${resistanceHtml}
         </div>
+        ${playbookParas
+          ? `<div class="level-playbook"><span class="k">打法</span>${playbookParas}<p class="sub">${escapeHtml(riskText(ctx))}</p></div>`
+          : `<div class="level-playbook"><p>${escapeHtml(riskText(ctx))}</p></div>`}
       </div>`;
     }).join('');
   }
@@ -3249,12 +3703,13 @@
       } else {
         redrawAlertOverlays();
       }
-    } else {
-      updateLegend(null);
-      candleSeries.setMarkers([]);
-      clearPriceLines();
-      $('alertLevels').classList.add('hidden');
-    }
+      } else {
+        updateLegend(null);
+        candleSeries.setMarkers([]);
+        clearPriceLines();
+        $('alertLevels').classList.add('hidden');
+      }
+    syncAlertPriceLines();
   }
 
   function snapMarkerTime(t, { loose = false } = {}) {
@@ -3566,6 +4021,45 @@
     renderLevelBoard();
   }
 
+  const LEVEL_SIDE_RULES = new Set([
+    'structure_touch', 'structure_flip', 'fib_zone', 'jack_setup', 'jack_regime',
+  ]);
+
+  function sidePref() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('monitor.sideDrawer') || '');
+      if (raw && (raw.tab === 'ai' || raw.tab === 'levels')) {
+        return { open: !!raw.open, tab: raw.tab };
+      }
+    } catch (_) {}
+    return { open: false, tab: 'levels' };
+  }
+
+  function applySideDrawer(pref) {
+    const el = $('sideDrawer');
+    if (!el) return;
+    const tab = pref.tab === 'ai' ? 'ai' : 'levels';
+    const open = !!pref.open;
+    el.classList.toggle('open', open);
+    el.dataset.tab = tab;
+    el.querySelectorAll('.side-rail-btn[data-side]').forEach((btn) => {
+      btn.classList.toggle('on', open && btn.dataset.side === tab);
+    });
+    try { localStorage.setItem('monitor.sideDrawer', JSON.stringify({ open, tab })); } catch (_) {}
+  }
+
+  function openSide(tab) {
+    applySideDrawer({ open: true, tab });
+  }
+
+  function toggleSide(tab) {
+    const el = $('sideDrawer');
+    if (!el) return;
+    const open = el.classList.contains('open');
+    if (open && (el.dataset.tab || 'levels') === tab) applySideDrawer({ open: false, tab });
+    else applySideDrawer({ open: true, tab });
+  }
+
   function setConn(text, ok) {
     const el = $('connBadge');
     el.textContent = text;
@@ -3670,6 +4164,10 @@
       card.onclick = () => {
         switchDock('alerts');
         focusAlertOnChart(alert);
+        const priced = plan.stop_loss != null || plan.entry_low != null || plan.take_profit_1 != null
+          || alert.price != null || alert.break_level != null
+          || LEVEL_SIDE_RULES.has(alert.rule);
+        if (priced) openSide('levels');
       };
       list.appendChild(card);
     });
@@ -3687,9 +4185,9 @@
     $('paneHistory')?.classList.toggle('hidden', name !== 'history');
     if ($('dockHint')) {
       if (name === 'history') {
-        $('dockHint').textContent = '点条目 → 右侧回看该次分析';
+        $('dockHint').textContent = '点条目 → 右侧 AI 回看该次分析';
       } else {
-        $('dockHint').textContent = '点告警 → 直连图标记';
+        $('dockHint').textContent = '点告警 → 直连图标记 · 带价位的打开关键位';
       }
     }
   }
@@ -3774,6 +4272,7 @@
       };
 
       renderAiSession(data);
+      openSide('ai');
       setAnalyzeBusy(false, statusLabel(data.status));
       // 历史回看：强制载入该次对话
       renderChatLog(data.chat_log || []);
@@ -4047,6 +4546,8 @@
     box.innerHTML = '';
     chatHistory = [];
     const turns = Array.isArray(log) ? log : [];
+    const chat = box.closest('.ai-chat');
+    chat?.classList.toggle('empty', !turns.some((t) => t && t.content));
     if (!turns.length) return;
     turns.forEach((t) => {
       const role = t.role === 'assistant' ? 'assistant' : 'user';
@@ -4063,6 +4564,7 @@
     box.className = `ai-chat-bubble ${role === 'user' ? 'user' : 'assistant'}`;
     box.innerHTML = `<div class="who">${role === 'user' ? '我' : 'AI'}</div><div>${escapeHtml(text)}</div>`;
     log.appendChild(box);
+    log.closest('.ai-chat')?.classList.remove('empty');
     log.scrollTop = log.scrollHeight;
     if (persistLocal) {
       chatHistory.push({ role: role === 'user' ? 'user' : 'assistant', content: text });
@@ -4171,6 +4673,7 @@
   async function runAnalyze() {
     if (analyzeBusy) return;
     const tf = $('analyzeTf')?.value || mapChartTfToAnalyze(activeTf);
+    openSide('ai');
     setAnalyzeBusy(true, '拉数中');
     // 新分析：先清空对话框，避免串到上一条历史
     renderChatLog([]);
@@ -4323,8 +4826,20 @@
         if (normalizeSymbol(msg.symbol) !== normalizeSymbol(activeSymbol)) return;
         upsertCandle(msg.candle);
         updateTicker(msg.candle.close, 'live');
+      } else if (msg.type === 'price_alert' && msg.alert) {
+        upsertPriceAlert(msg.alert);
+        renderPriceAlerts();
+        syncAlertPriceLines();
       } else if (msg.type === 'alert') {
-        if (rememberAlert(msg)) pushAlertCard(msg);
+        const fresh = rememberAlert(msg);
+        if (fresh) pushAlertCard(msg);
+        if (
+          fresh
+          && LEVEL_SIDE_RULES.has(msg.rule)
+          && normalizeSymbol(msg.symbol) === normalizeSymbol(activeSymbol)
+        ) {
+          openSide('levels');
+        }
         if (sameSymTf(msg) && candleBuf.length) {
           redrawAlertOverlays(msg);
         } else if (normalizeSymbol(msg.symbol) === normalizeSymbol(activeSymbol) && !candleBuf.length) {
@@ -4371,6 +4886,150 @@
     });
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.sym-picker')) closeDropdown();
+    });
+  }
+
+  function upsertPriceAlert(alert) {
+    const i = priceAlerts.findIndex((a) => a.id === alert.id);
+    if (i >= 0) priceAlerts[i] = alert;
+    else priceAlerts.unshift(alert);
+  }
+
+  function syncAlertPriceLines() {
+    if (!candleSeries) return;
+    alertPriceLines.forEach((pl) => {
+      try { candleSeries.removePriceLine(pl); } catch (_) {}
+    });
+    alertPriceLines = [];
+    if (chartMode !== 'native') return;
+    for (const a of priceAlerts) {
+      if (!a.enabled || a.price == null) continue;
+      if (!['cross', 'above', 'below'].includes(a.kind)) continue;
+      if (normalizeSymbol(a.symbol) !== normalizeSymbol(activeSymbol)) continue;
+      const title = a.kind === 'below' ? '下穿' : a.kind === 'above' ? '上穿' : '达到';
+      alertPriceLines.push(candleSeries.createPriceLine({
+        price: Number(a.price),
+        color: a.kind === 'below' ? '#f6465d' : '#f0b90b',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title,
+      }));
+    }
+  }
+
+  function renderPriceAlerts() {
+    const box = $('pxList');
+    if (!box) return;
+    if (!priceAlerts.length) {
+      box.innerHTML = '<div class="text-[11px] py-2" style="color:var(--muted)">还没有价格告警</div>';
+      return;
+    }
+    box.innerHTML = priceAlerts.map((a) => `
+      <div class="px-item ${a.enabled ? '' : 'off'}">
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <div>${escapeHtml(a.label || a.symbol)}</div>
+            <div class="text-[10px]" style="color:var(--muted)">${a.enabled ? '盯着' : '已触发/关闭'} · ${a.repeat ? '重复' : '一次'} · 已响 ${a.fire_count || 0} 次</div>
+          </div>
+          <div class="flex gap-1 shrink-0">
+            <button type="button" class="chip" data-px-toggle="${a.id}">${a.enabled ? '暂停' : '重新盯'}</button>
+            <button type="button" class="chip" data-px-del="${a.id}">删</button>
+          </div>
+        </div>
+      </div>`).join('');
+  }
+
+  async function loadPriceAlerts() {
+    try {
+      const data = await fetch('/api/price-alerts').then((r) => r.json());
+      priceAlerts = data.alerts || [];
+      renderPriceAlerts();
+      syncAlertPriceLines();
+    } catch (_) {}
+  }
+
+  function wirePriceAlerts() {
+    const panel = $('priceAlertPanel');
+    $('btnPriceAlerts')?.addEventListener('click', () => {
+      panel.classList.toggle('hidden');
+      const kind = $('pxKind').value;
+      const level = kind === 'pct_change' || kind === 'abs_change';
+      if (!level && !$('pxPrice').value) {
+        const px = Number(String($('tickerPrice').textContent).replace(/,/g, ''));
+        if (Number.isFinite(px)) $('pxPrice').value = String(px);
+      }
+    });
+    $('btnPriceAlertsClose')?.addEventListener('click', () => panel.classList.add('hidden'));
+    const syncPxKind = () => {
+      const kind = $('pxKind').value;
+      const move = kind === 'pct_change' || kind === 'abs_change';
+      $('pxDir').disabled = !move;
+      if (!move) $('pxDir').value = 'any';
+      $('pxWindow').disabled = !move;
+      $('pxPrice').placeholder = kind === 'pct_change' ? '百分比，如 1.5' : move ? '价格变动，如 500' : '目标价';
+    };
+    $('pxKind')?.addEventListener('change', syncPxKind);
+    syncPxKind();
+    $('pxAdd')?.addEventListener('click', async () => {
+      const kind = $('pxKind').value;
+      const move = kind === 'pct_change' || kind === 'abs_change';
+      const num = Number($('pxPrice').value);
+      if (!Number.isFinite(num) || num <= 0) {
+        toast('价格告警', '请填写大于 0 的价位或阈值', 'short');
+        return;
+      }
+      const body = {
+        symbol: activeSymbol,
+        kind,
+        direction: $('pxDir').value,
+        price: move ? null : num,
+        threshold: move ? num : null,
+        window_sec: move ? Number($('pxWindow').value) : 0,
+        repeat: $('pxRepeat').checked,
+        note: $('pxNote').value.trim(),
+      };
+      const res = await fetch('/api/price-alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast('价格告警', data.detail || '添加失败', 'short');
+        return;
+      }
+      upsertPriceAlert(data);
+      renderPriceAlerts();
+      syncAlertPriceLines();
+      toast('已盯上', data.label || activeSymbol, 'long');
+    });
+    $('pxList')?.addEventListener('click', async (ev) => {
+      const toggle = ev.target.closest('[data-px-toggle]');
+      const del = ev.target.closest('[data-px-del]');
+      if (toggle) {
+        const id = toggle.dataset.pxToggle;
+        const cur = priceAlerts.find((a) => a.id === id);
+        const res = await fetch(`/api/price-alerts/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !(cur && cur.enabled) }),
+        });
+        if (res.ok) {
+          upsertPriceAlert(await res.json());
+          renderPriceAlerts();
+          syncAlertPriceLines();
+        }
+      }
+      if (del) {
+        const id = del.dataset.pxDel;
+        const res = await fetch(`/api/price-alerts/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          priceAlerts = priceAlerts.filter((a) => a.id !== id);
+          renderPriceAlerts();
+          syncAlertPriceLines();
+        }
+      }
     });
   }
 
@@ -4452,6 +5111,8 @@
     }
 
     loadPersistedAlerts();
+    wirePriceAlerts();
+    loadPriceAlerts();
     alertTotal = alertStore.length;
     try {
       const raw = localStorage.getItem('monitor.dockFilterSym');
@@ -4478,6 +5139,15 @@
       refreshDockLists();
     });
     loadHistorySessions();
+
+    document.querySelectorAll('.side-rail-btn[data-side]').forEach((btn) => {
+      btn.addEventListener('click', () => toggleSide(btn.dataset.side));
+    });
+    $('sideClose')?.addEventListener('click', () => {
+      const el = $('sideDrawer');
+      applySideDrawer({ open: false, tab: el?.dataset.tab || 'levels' });
+    });
+    applySideDrawer(sidePref());
 
     $('btnAnalyze')?.addEventListener('click', () => runAnalyze());
     $('btnChatSend')?.addEventListener('click', () => sendChatQuestion());

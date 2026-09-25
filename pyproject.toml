@@ -1,7 +1,7 @@
 [project]
 name = "crypto-analyst"
 version = "0.1.0"
-description = "AI-powered crypto market analysis, outlook, and outcome verification"
+description = "Local crypto K-line monitor and analysis tool"
 requires-python = ">=3.11"
 authors = [
     { name = "Eamon" },

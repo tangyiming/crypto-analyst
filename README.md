@@ -1,8 +1,13 @@
 # Crypto Analyst
 
-本地跑的 **AI 行情分析 + U 本位永续盯盘 + 牛熊周期工具**。AI 给出观点/计划并落库复盘；规则引擎常驻盯盘，命中后推 Telegram——**只提醒，不下单**。
+本地跑的 **加密货币 K 线监控与分析工具**。多周期图表盯盘，规则命中后在页面提示，可选再让 AI 点评并推 Telegram——**只提醒，不下单**。
 
 顶栏：**盯盘** → **周期** → **日程** → **策略库** → **回测** → **AI 助手**。
+
+<p align="center">
+  <img src="docs/images/web-dashboard.png" alt="Web 盯盘：K 线、关键位与 AI 分析" width="900" />
+</p>
+<p align="center"><em>盯盘页：左侧 K 线；右侧同一条可收起侧栏，竖标签「关键位」「AI行情分析」（关键位含头仓 / 止损 / 止盈 / 支撑 / 阻力，打法在支撑阻力下方）；底部告警记录与历史分析</em></p>
 
 ---
 
@@ -24,14 +29,14 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 
 ## 能力一览
 
-| | AI 分析 | 实时盯盘 | 周期与组合策略 |
+| | K 线盯盘 | AI 点评 | 周期与组合策略 |
 |---|---|---|---|
-| **做什么** | 多周期数据 + **波段锁点预计算** → LLM 出观点与计划 → 到期验证 | 规则 + `cycle_switch` / `xs_momentum` / `funding_carry`；候选可再调 AI 确认后推 TG | Wolfy 四年周期 + `cycle_switch`；经典策略长周期回测 |
-| **入口** | Web 右侧「AI 行情分析」，或 `analyst practice` | 打开 Web；开常驻后关页面也推 TG | 顶栏「周期」；`analyst cycle-outlook` / `backtest-classic` |
-| **数据** | 会话写入 `analyst.db`（含 `jack_levels`） | 观察列表 + 告警；K 线本身不长期落库 | BTC 日线定日历相位；组合回测分页拉 2–5 年历史 |
+| **做什么** | 多周期 K 线 + 规则告警（`cycle_switch` / `xs_momentum` / `funding_carry`）；候选可再调 AI 确认后推 TG | 多周期数据 + **波段锁点预计算** → LLM 出观点与计划 → 到期验证 | Wolfy 四年周期 + `cycle_switch`；经典策略长周期回测 |
+| **入口** | 打开 Web；开常驻后关页面也推 TG | 右侧侧栏另一页「AI行情分析」，或 `analyst practice` | 顶栏「周期」；`analyst cycle-outlook` / `backtest-classic` |
+| **数据** | 观察列表 + 告警；K 线本身不长期落库 | 会话写入 `analyst.db`（含 `jack_levels`） | BTC 日线定日历相位；组合回测分页拉 2–5 年历史 |
 
 ```
-盯盘推送（Web / TG）  ←→  选币做 AI 分析（锁点注入）落库  →  到期验证  →  历史复盘
+K 线盯盘（Web / TG）  ←→  选币做 AI 点评（锁点注入）落库  →  到期验证  →  历史复盘
                               ↑
               周期图 / cycle_switch / 转折点倒计时
 ```
@@ -45,6 +50,9 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 | 各币 `cycle_switch` 仓位变化 | 有（触发 AI 候选） | 不直推；等 AI 确认 |
 | 周期位置日更（`cycle_outlook`，BTC） | 有 | UTC **每天最多 1 条** |
 | 日程：时段 / 资金费 / 宏观高影响 | 「日程」页 | 提前期推（`MONITOR_SCHEDULE_TG`） |
+| 价格告警（标记价，不等 K 线收盘） | 有 | 推 |
+
+价格告警按标记价实时触发：价格达到、只上穿、只下穿、百分比变化、绝对价格变化。时间窗口只用于百分比和绝对变化（自设定起，或 1 / 5 / 15 / 60 分钟）。
 
 ### Web 周期图
 
@@ -53,7 +61,7 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 - **刻舟求剑日历**：牛 1064 天 / 熊 364 天，显示当前相位进度与下一转折点
 - **转折点倒计时**：距预计牛顶 / 熊底还有多少天（≤30 天高亮）
 - **时间轴色带**：历史牛熊分段 + 减半标记 + 价格背景折线
-- **狼波动能**：RSI 分区（过热 / 超卖），与日历交叉确认
+- **狼波指数**：按区块高度计算的 [Wolfy Wave Index](https://github.com/tangyiming/wolfy-wave-index)（0 = 理论熊底，1 = 理论牛顶；页面见 [wolfy-wave-index](https://wolfyxbt.github.io/wolfy-wave-index/)）。周期页有可交互锯齿图；日更 Telegram 带当前读数
 
 数据每 5 分钟自动刷新；与主图 WebSocket 独立，固定用 BTC 日线。
 
@@ -73,7 +81,7 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 
 #### 三盘分类（`jack_regime`）
 
-创建分析会话、盯盘 K 线收盘时都会预计算，注入 `{jack_regime_block}`；盯盘关键位面板也会显示当前盘面。
+创建分析会话、盯盘 K 线收盘时都会预计算，注入 `{jack_regime_block}`。盯盘右侧「关键位」显示头仓、止损、止盈、支撑、阻力，打法在支撑阻力下方，并带当前盘面。
 
 规则引擎把三盘变化写成 `jack_regime` / `jack_setup` 告警（默认只上页面；单独命中即可作为 AI 候选）。规则基线 `generate_baseline_plan` 在收盘评估时也会带上锁点与三盘（腰斩不追空、震荡用日内 0.50–0.618 止盈）。
 
@@ -253,7 +261,7 @@ analyst cycle-status          # 当前牛熊相位 + 各币 cycle_switch 目标�
 | `analyst verify` | 验证到期会话 |
 | `analyst backtest <symbol>` | 规则告警前瞻命中率回放 |
 | `analyst backtest-classic <symbol>` | 经典组合策略回测（复利、手续费、牛熊分段、样本外） |
-| `analyst cycle-outlook` | Wolfy 日历 + 狼波 RSI + 转折点倒计时 |
+| `analyst cycle-outlook` | Wolfy 刻舟求剑日历 + 转折点倒计时 |
 | `analyst cycle-status` | 实时 `cycle_switch` 各品种目标仓位 |
 | `analyst strategies` | 策略库目录 |
 | `analyst history` / `review <id>` | 历史 / 单条复盘 |
@@ -293,12 +301,12 @@ analyst backtest-carry BTC --days 1825                    # 资金费套利
 
 ---
 
-## 四年周期（Wolfy 刻舟求剑 + 狼波）
+## 四年周期（Wolfy 刻舟求剑）
 
 基于 BTC 日线的**周期位置参考**（非交易信号，仅供参考）：
 
 - **图 1 日历**：锚定历次熊市底部，牛市 1064 天 → 预计见顶，熊市 364 天 → 预计见底
-- **图 2 狼波**：RSI + 短期动量近似 TradingView 狼波指数，红区过热、蓝区超卖
+- **狼波指数**：区块高度纯函数（[Wolfy Wave Index](https://github.com/tangyiming/wolfy-wave-index)），0 = 理论熊底，1 = 理论牛顶。周期页有可交互锯齿图；日更 Telegram 带当前读数。页面亦见 [wolfy-wave-index](https://wolfyxbt.github.io/wolfy-wave-index/)
 - **提醒**：异动规则（MACD 金叉死叉、放量、突破等）+ AI 盯盘点评推 TG；`cycle_outlook` 每天推周期位置；**日程**推时段/资金费/宏观；`xs_momentum` / `funding_carry` 信号变化上页面告警
 
 ```bash
@@ -342,7 +350,7 @@ crypto-analyst/
 ├── scripts/generate_favicon.py
 ├── src/analyst/
 │   ├── backtest/classic.py           # 组合策略回测
-│   ├── compute/cycle_theory.py       # Wolfy 日历 + 狼波
+│   ├── compute/cycle_theory.py       # Wolfy 刻舟求剑日历
 │   ├── compute/market_schedule.py    # 时段 / 时钟 / FF 宏观日历
 │   ├── compute/jack_levels.py        # 波段锁点预计算
 │   ├── compute/jack_regime.py        # 三盘分类 + playbook

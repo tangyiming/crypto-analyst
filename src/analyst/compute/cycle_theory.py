@@ -1,13 +1,8 @@
-"""WolfyXBT 四年周期理论 + 狼波动能（刻舟求剑 / 狼波周期指数）。
+"""WolfyXBT 四年周期日历（刻舟求剑）。
 
-图 1 — 日历模型（刻舟求剑）
-  锚点：历次熊市底部（非减半日）；牛市固定 1064 天 → 预计见顶；
-  熊市固定 364 天 → 预计见底 → 下一轮牛市开始。减半日常落在牛市中段。
-
-图 2 — 狼波动能（本模块用 RSI + 短期动量近似，非 TradingView 原指标）
-  红色区 RSI≥80：过热，牛市末端预警
-  蓝色/紫色 RSI≤30：超卖，熊市末端抄底参考
-  与日历信号叠加可提高可信度，单独使用易误判。
+日历模型：锚点为历次熊市底部（非减半日）；牛市固定 1064 天 → 预计见顶；
+熊市固定 364 天 → 预计见底 → 下一轮牛市开始。减半日常落在牛市中段。
+狼波指数与 https://github.com/tangyiming/wolfy-wave-index 同一公式：只看区块高度。
 
 仅供周期位置提醒，不自动下单。
 """
@@ -76,6 +71,159 @@ class CycleOutlook:
     wave: WolfyWaveState | None
     summary: str
     alerts: list[str] = field(default_factory=list)
+    wave_index: "WaveIndexState | None" = None
+
+
+# 与 wolfy-wave-index js/blocks.js、js/config.js 同一套常数
+HALVING_INTERVAL = 210_000
+WAVE_BULL_HALF = 78_750
+_BLOCK_MINUTES = 10
+_tip_cache: tuple[float, int] | None = None
+
+
+@dataclass(frozen=True)
+class WaveIndexState:
+    """狼波周期指数：0 = 理论熊底，1 = 理论牛顶。只看区块高度。"""
+
+    height: int
+    value: float
+    phase: str          # bull | bear
+    phase_label: str
+    progress_pct: float
+    blocks_to_turn: int
+    days_to_turn: int
+    turn_label: str
+    alerts: tuple[str, ...] = ()
+
+    def line(self) -> str:
+        return (
+            f"狼波 {self.value:.3f} · {self.phase_label} · 高度 {self.height:,} · "
+            f"距{self.turn_label} {self.blocks_to_turn:,} 块（约 {self.days_to_turn} 天）"
+        )
+
+
+def wave_index_at(height: float) -> float:
+    """WWI(h)。移植自 wolfy-wave-index `waveIndexAt`。"""
+    h = float(height)
+    k = round(h / HALVING_INTERVAL)
+    d = h - k * HALVING_INTERVAL
+    if abs(d) <= WAVE_BULL_HALF:
+        return (d + WAVE_BULL_HALF) / (2 * WAVE_BULL_HALF)
+    bear_len = HALVING_INTERVAL - 2 * WAVE_BULL_HALF
+    into = d - WAVE_BULL_HALF if d > 0 else d + HALVING_INTERVAL - WAVE_BULL_HALF
+    return 1.0 - into / bear_len
+
+
+def wave_index_state(height: int) -> WaveIndexState:
+    h = int(height)
+    k = round(h / HALVING_INTERVAL)
+    d = h - k * HALVING_INTERVAL
+    value = wave_index_at(h)
+    bull = abs(d) <= WAVE_BULL_HALF
+    bear_len = HALVING_INTERVAL - 2 * WAVE_BULL_HALF
+    if bull:
+        blocks_to_turn = int(WAVE_BULL_HALF - d)
+        phase, phase_label, turn_label = "bull", "牛市上行", "理论牛顶"
+        progress = value
+    else:
+        into = d - WAVE_BULL_HALF if d > 0 else d + HALVING_INTERVAL - WAVE_BULL_HALF
+        blocks_to_turn = int(round(bear_len - into))
+        phase, phase_label, turn_label = "bear", "熊市下行", "理论熊底"
+        progress = 1.0 - value
+    days = max(0, int(round(blocks_to_turn * _BLOCK_MINUTES / 60 / 24)))
+    notes: list[str] = []
+    if bull and value >= 0.85:
+        notes.append(f"狼波临近理论牛顶（{value:.3f}）")
+    elif not bull and value <= 0.15:
+        notes.append(f"狼波临近理论熊底（{value:.3f}）")
+    if bull and abs(d) <= 5_000:
+        notes.append(f"距减半约 {abs(int(d)):,} 块，狼波接近 0.5")
+    return WaveIndexState(
+        height=h,
+        value=value,
+        phase=phase,
+        phase_label=phase_label,
+        progress_pct=round(progress * 100, 1),
+        blocks_to_turn=max(0, blocks_to_turn),
+        days_to_turn=days,
+        turn_label=turn_label,
+        alerts=tuple(notes),
+    )
+
+
+def fetch_tip_height(*, timeout: float = 8.0, max_age: float = 60.0) -> int:
+    """当前区块高度。mempool.space，与狼波站同一数据源。"""
+    import time
+
+    import httpx
+
+    global _tip_cache
+    now = time.time()
+    if _tip_cache and now - _tip_cache[0] < max_age:
+        return _tip_cache[1]
+    r = httpx.get(
+        "https://mempool.space/api/blocks/tip/height",
+        timeout=timeout,
+        headers={"User-Agent": "crypto-analyst/1.0"},
+    )
+    r.raise_for_status()
+    tip = int(r.text.strip())
+    _tip_cache = (now, tip)
+    return tip
+
+
+def wave_chart(height: int, *, now_ts: float | None = None) -> dict:
+    """当前高度前后各一轮的锯齿，供页面悬停。日期按平均 10 分钟一块估算。"""
+    import time
+
+    now_ts = time.time() if now_ts is None else float(now_ts)
+    h = int(height)
+    n = round((h + WAVE_BULL_HALF) / HALVING_INTERVAL)
+    start_n = max(1, n - 1)
+    end_n = n + 1
+    h0 = start_n * HALVING_INTERVAL - WAVE_BULL_HALF
+    h1 = end_n * HALVING_INTERVAL - WAVE_BULL_HALF
+    step = 2100
+
+    def point(x: int) -> dict:
+        return {
+            "height": x,
+            "value": round(wave_index_at(x), 4),
+            "future": x > h,
+            "ts": int(now_ts + (x - h) * _BLOCK_MINUTES * 60),
+        }
+
+    xs = set(range(h0, h1 + 1, step))
+    xs.add(h1)
+    markers: list[dict] = []
+    for i in range(start_n, end_n + 1):
+        bottom = i * HALVING_INTERVAL - WAVE_BULL_HALF
+        halv = i * HALVING_INTERVAL
+        top = i * HALVING_INTERVAL + WAVE_BULL_HALF
+        xs.add(bottom)
+        markers.append({**point(bottom), "kind": "bottom", "label": "熊底"})
+        if h0 <= halv <= h1:
+            xs.add(halv)
+            markers.append({**point(halv), "kind": "halving", "label": "减半"})
+        if h0 < top < h1:
+            xs.add(top)
+            markers.append({**point(top), "kind": "top", "label": "牛顶"})
+    points = [point(x) for x in sorted(xs)]
+    markers.sort(key=lambda m: m["height"])
+    return {"now_height": h, "points": points, "markers": markers}
+
+
+def attach_wave_index(outlook: CycleOutlook) -> WaveIndexState | None:
+    """拉当前高度并写到 outlook。失败时保持原样。"""
+    import logging
+
+    try:
+        state = wave_index_state(fetch_tip_height())
+    except Exception as e:
+        logging.getLogger("uvicorn.error").warning("狼波高度获取失败: %s", e)
+        return None
+    outlook.wave_index = state
+    return state
 
 
 def _rsi_series(values: list[float], period: int = 14) -> list[float]:
@@ -342,6 +490,23 @@ def outlook_to_api_dict(outlook: CycleOutlook, timeline: dict | None = None) -> 
             if wave
             else None
         ),
+        "wave_index": (
+            {
+                "height": outlook.wave_index.height,
+                "value": round(outlook.wave_index.value, 4),
+                "phase": outlook.wave_index.phase,
+                "phase_label": outlook.wave_index.phase_label,
+                "progress_pct": outlook.wave_index.progress_pct,
+                "blocks_to_turn": outlook.wave_index.blocks_to_turn,
+                "days_to_turn": outlook.wave_index.days_to_turn,
+                "turn_label": outlook.wave_index.turn_label,
+                "line": outlook.wave_index.line(),
+                "alerts": list(outlook.wave_index.alerts),
+                "chart": wave_chart(outlook.wave_index.height),
+            }
+            if outlook.wave_index
+            else None
+        ),
         "timeline": timeline,
     }
 
@@ -351,33 +516,14 @@ def evaluate_cycle_outlook(
     *,
     as_of: datetime | None = None,
 ) -> CycleOutlook:
-    """综合日历 + 狼波动能，生成提醒列表。"""
+    """按刻舟求剑日历生成周期位置与提醒。狼波指数不在本地计算。"""
     candles = series.candles
     ts = as_of or (candles[-1].timestamp if candles else datetime.utcnow())
     price = candles[-1].close if candles else 0.0
     cal = wolfy_calendar_phase(ts)
 
-    wave = None
-    if len(candles) >= 30:
-        wave = compute_wolfy_wave([c.close for c in candles])
-
     alerts = [format_milestone_countdown(cal)]
     alerts.extend(cal.alerts)
-    if wave:
-        alerts.extend(wave.alerts)
-        # 日历 × 动能交叉确认
-        if cal.phase == "bull" and cal.days_to_milestone <= WOLFY_ALERT_WINDOW_DAYS:
-            if wave.heat in ("extreme_hot", "hot"):
-                alerts.append(
-                    f"✅ 交叉确认：距「{cal.next_milestone.label}」还有 "
-                    f"{cal.days_to_milestone} 天 + 狼波偏热，顶部风险上升"
-                )
-        if cal.phase == "bear" and cal.days_to_milestone <= WOLFY_ALERT_WINDOW_DAYS:
-            if wave.heat in ("extreme_cold", "cool"):
-                alerts.append(
-                    f"✅ 交叉确认：距「{cal.next_milestone.label}」还有 "
-                    f"{cal.days_to_milestone} 天 + 狼波超卖，底部概率上升"
-                )
 
     zh_phase = "牛市" if cal.phase == "bull" else "熊市"
     pct = cal.phase_day / cal.phase_total_days * 100
@@ -386,14 +532,12 @@ def evaluate_cycle_outlook(
         f"距{cal.next_milestone.label}还有 {cal.days_to_milestone} 天"
         f"（{cal.next_milestone.date:%Y-%m-%d}）"
     )
-    if wave:
-        summary += f"；狼波 RSI={wave.rsi:.0f}（{wave.heat_label}）"
 
     return CycleOutlook(
         as_of=ts,
         price=price,
         calendar=cal,
-        wave=wave,
+        wave=None,
         summary=summary,
         alerts=alerts,
     )
@@ -409,8 +553,12 @@ def format_outlook_text(outlook: CycleOutlook, symbol: str = "BTC/USDT") -> str:
         f"现价 {outlook.price:.6g} · 截至 {outlook.as_of:%Y-%m-%d %H:%M} UTC",
         f"本周期牛市起点 {cal.cycle_bull_start:%Y-%m-%d}",
     ]
+    if outlook.wave_index:
+        w = outlook.wave_index
+        lines.append(w.line())
+        lines.extend(w.alerts)
     if outlook.alerts:
-        lines.append("—— 提醒 ——")
+        lines.append("—— 日历提醒 ——")
         lines.extend(outlook.alerts[:6])
-    lines.append("刻舟求剑日历 + 狼波近似，仅供参考")
+    lines.append("刻舟求剑日历 + 狼波指数（区块高度），仅供参考")
     return "\n".join(lines)

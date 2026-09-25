@@ -63,6 +63,10 @@ async def lifespan(app: FastAPI):
     news_task: asyncio.Task | None = None
     try:
         info = await hub.start_always_on_workers()
+        try:
+            await hub.ensure_price_alert_streams()
+        except Exception:
+            logger.exception("price alert streams failed")
         if info.get("enabled"):
             logger.info(
                 "常驻盯盘: tfs=%s symbols=%s tg=%s workers=%s",
@@ -132,7 +136,7 @@ def create_app() -> FastAPI:
     """创建 FastAPI 应用。"""
     app = FastAPI(
         title="Crypto Analyst",
-        description="U 本位合约监控 + AI 行情分析",
+        description="加密货币 K 线监控与分析",
         version="0.1.0",
         lifespan=lifespan,
     )

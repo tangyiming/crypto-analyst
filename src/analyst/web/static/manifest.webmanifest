@@ -1,7 +1,7 @@
 {
   "name": "Crypto Analyst",
   "short_name": "盯盘",
-  "description": "U 本位永续盯盘 + AI 行情分析",
+  "description": "加密货币 K 线监控与分析",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

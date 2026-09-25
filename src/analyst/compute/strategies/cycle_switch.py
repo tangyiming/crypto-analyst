@@ -22,7 +22,7 @@
   ─────────────────────────────────────
   · 组合回测：analyst backtest-classic BTC -s cycle_switch --days 1825
   · 实时相位：analyst cycle-status BTC,ETH,SOL
-  · 周期展望：analyst cycle-outlook（Wolfy 刻舟求剑 + 狼波提醒）
+  · 周期展望：analyst cycle-outlook（Wolfy 刻舟求剑日历）
   · 各盯盘币对在配置周期（默认 4h）收盘评估仓位；相位用 BTC 定调
   · 仓位相对上一根 K 线变化 → 页面告警 + AI 候选（不直推 TG；可交易由 AI→ai_plan）
   · 周期位置日更见 cycle_outlook（每天 1 条）

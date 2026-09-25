@@ -346,8 +346,9 @@ def monitor_analyze(req: MonitorAnalyzeRequest, background_tasks: BackgroundTask
 
 @router.get("/api/monitor/cycle-timeline")
 def cycle_timeline(days: int = Query(800, ge=200, le=2000)):
-    """Wolfy 四年周期时间轴 + 狼波动能（前端绘图用）。"""
+    """Wolfy 四年周期时间轴（刻舟求剑日历，前端绘图用）。"""
     from analyst.compute.cycle_theory import (
+        attach_wave_index,
         build_wolfy_timeline,
         evaluate_cycle_outlook,
         outlook_to_api_dict,
@@ -359,6 +360,7 @@ def cycle_timeline(days: int = Query(800, ge=200, le=2000)):
     if len(series.candles) < 30:
         raise HTTPException(400, "历史数据不足")
     outlook = evaluate_cycle_outlook(series)
+    attach_wave_index(outlook)
     ts = outlook.as_of
     timeline = build_wolfy_timeline(ts, past_cycles=1, future_cycles=1)
     payload = outlook_to_api_dict(outlook, timeline)
@@ -691,3 +693,59 @@ def paper_summary(journal: int = Query(default=100, ge=1, le=500), closed: int =
         "strategy": "jack_pullback（强势盘回踩 0.618 低多）",
         "report": rep,
     }
+
+
+class PriceAlertCreate(BaseModel):
+    symbol: str
+    kind: str
+    direction: str = "any"
+    price: float | None = None
+    threshold: float | None = None
+    window_sec: int = 0
+    repeat: bool = False
+    cooldown_sec: int = 300
+    note: str = ""
+
+
+class PriceAlertPatch(BaseModel):
+    enabled: bool | None = None
+    repeat: bool | None = None
+    note: str | None = None
+    cooldown_sec: int | None = None
+
+
+@router.get("/api/price-alerts")
+def list_price_alerts():
+    book = get_monitor_hub().price_alert_book()
+    return {"alerts": [a.to_public() for a in book.list_alerts()]}
+
+
+@router.post("/api/price-alerts")
+async def create_price_alert(body: PriceAlertCreate):
+    hub = get_monitor_hub()
+    try:
+        alert = hub.price_alert_book().add(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    await hub.ensure_price_alert_streams()
+    return alert.to_public()
+
+
+@router.patch("/api/price-alerts/{alert_id}")
+async def patch_price_alert(alert_id: str, body: PriceAlertPatch):
+    hub = get_monitor_hub()
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    alert = hub.price_alert_book().update(alert_id, patch)
+    if alert is None:
+        raise HTTPException(status_code=404, detail="告警不存在")
+    await hub.ensure_price_alert_streams()
+    return alert.to_public()
+
+
+@router.delete("/api/price-alerts/{alert_id}")
+async def delete_price_alert(alert_id: str):
+    hub = get_monitor_hub()
+    if not hub.price_alert_book().delete(alert_id):
+        raise HTTPException(status_code=404, detail="告警不存在")
+    await hub.ensure_price_alert_streams()
+    return {"ok": True}

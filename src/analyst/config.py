@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     monitor_cycle_switch_timeframe: str = Field(default="4h")
     # cycle_switch 评估/告警白名单；空=跟随盯盘品种（DEFAULT_SYMBOLS / DAEMON）
     monitor_cycle_symbols: str = Field(default="")
-    monitor_cycle_outlook_enabled: bool = Field(default=True)  # Wolfy 日历+狼波提醒
+    monitor_cycle_outlook_enabled: bool = Field(default=True)  # 刻舟求剑日历提醒
     # 收盘有规则/周期候选时才调 AI；long/short → 盯盘点评（仅提醒）
     monitor_ai_on_candidate: bool = Field(default=True)
     monitor_ai_cooldown_minutes: int = Field(default=240)

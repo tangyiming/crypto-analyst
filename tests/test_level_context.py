@@ -9,6 +9,7 @@ from analyst.compute.level_context import (
     distance_pct,
     in_zone,
     snapshot_from_series,
+    supplement_resistances,
     tf_priority,
 )
 from analyst.compute.structure import Structure
@@ -80,3 +81,34 @@ def test_try_short_near_resistance_downtrend():
 
 def test_tf_priority():
     assert tf_priority("4h") > tf_priority("15m")
+
+
+def test_supplement_resistances_when_structure_is_above_all_pivots():
+    """价格已在全部结构阻力之上时，用近阻力与枢轴阻力补行，不发明价位。"""
+    rows = supplement_resistances(
+        121.25,
+        [],
+        nearest_resistance=128.3,
+        pivot_resistances=(128.3, 110.0),
+    )
+    assert [r["price"] for r in rows] == [128.3]
+    assert rows[0]["dist_pct"] < 0
+
+
+def test_supplement_resistances_keeps_structure_and_caps_nearest_three():
+    rows = supplement_resistances(
+        154.0,
+        [{"kind": "resistance", "price": 163.82, "dist_pct": -6.0, "near": False}],
+        nearest_resistance=157.09,
+        pivot_resistances=(155.25, 163.82, 170.0),
+    )
+    assert [round(r["price"], 2) for r in rows] == [155.25, 157.09, 163.82]
+
+
+def test_supplement_resistances_empty_when_nothing_above_price():
+    assert supplement_resistances(
+        100.0,
+        [{"kind": "resistance", "price": 90.0, "dist_pct": 11.1, "near": False}],
+        nearest_resistance=95.0,
+        pivot_resistances=(80.0,),
+    ) == []
