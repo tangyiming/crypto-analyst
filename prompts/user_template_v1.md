@@ -42,11 +42,11 @@
 
 # 波段锁点（代码预计算，请直接采用，勿重算）
 
-{jack_block}
+{swing_block}
 
 # 盘面分类与 Playbook（代码预计算）
 
-{jack_regime_block}
+{market_regime_block}
 
 # 账户参数
 

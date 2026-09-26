@@ -809,8 +809,8 @@ def _build_user_message(
     derivatives_block = _format_derivatives_block(market.get("derivatives"))
     macro_block = _format_macro_block(market.get("macro"))
     recent_lessons = _recent_ai_lessons_markdown(max_items=recent_lessons_max_items)
-    jack_block = _format_jack_block(market, compact=recent_lessons_max_items <= 3)
-    regime_block = _format_jack_regime_block(market, compact=recent_lessons_max_items <= 3)
+    swing_block = _format_swing_block(market, compact=recent_lessons_max_items <= 3)
+    regime_block = _format_market_regime_block(market, compact=recent_lessons_max_items <= 3)
 
     # 盯盘候选确认时带上触发规则（模板尾部追加，兼容全部 prompt 版本）
     trigger_suffix = ""
@@ -876,8 +876,8 @@ def _build_user_message(
         # 资金面 + 宏观 + 锁点
         derivatives_block=derivatives_block,
         macro_block=macro_block,
-        jack_block=jack_block,
-        jack_regime_block=regime_block,
+        swing_block=swing_block,
+        market_regime_block=regime_block,
         recent_lessons=recent_lessons,
         # 账户
         account_usd=account.get("account_usd", settings.default_account_usd),
@@ -887,28 +887,28 @@ def _build_user_message(
     return filled + trigger_suffix
 
 
-def _format_jack_regime_block(market: dict, *, compact: bool = False) -> str:
-    raw = market.get("jack_regime")
+def _format_market_regime_block(market: dict, *, compact: bool = False) -> str:
+    raw = market.get("market_regime")
     if isinstance(raw, dict) and raw.get("regime"):
         try:
-            from analyst.compute.jack_regime import JackRegime
+            from analyst.compute.market_regime import MarketRegime
 
-            reg = JackRegime(**{k: raw[k] for k in JackRegime.__dataclass_fields__ if k in raw})
+            reg = MarketRegime(**{k: raw[k] for k in MarketRegime.__dataclass_fields__ if k in raw})
             return reg.prompt_block(compact=compact)
         except Exception:
             pass
     return "（盘面分类数据不可用）"
 
 
-def _format_jack_block(market: dict, *, compact: bool = False) -> str:
-    """从快照中的 jack_levels 生成提示词块；缺失时回退简述。"""
-    raw = market.get("jack_levels")
+def _format_swing_block(market: dict, *, compact: bool = False) -> str:
+    """从快照中的 swing_levels 生成提示词块；缺失时回退简述。"""
+    raw = market.get("swing_levels")
     if isinstance(raw, dict) and raw.get("swing_high") is not None:
         try:
-            from analyst.compute.jack_levels import JackLevels
+            from analyst.compute.swing_levels import SwingLevels
 
-            jack = JackLevels(**{k: raw[k] for k in JackLevels.__dataclass_fields__ if k in raw})
-            return jack.prompt_block(compact=compact)
+            swing = SwingLevels(**{k: raw[k] for k in SwingLevels.__dataclass_fields__ if k in raw})
+            return swing.prompt_block(compact=compact)
         except Exception:
             pass
     # 兼容旧快照：用 30d 高低粗算反弹位

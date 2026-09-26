@@ -2,7 +2,7 @@
 
 这是给 AI 之外的"基线"，让用户对比 AI 是否真的更聪明，
 还是只是看起来更聪明。
-可选融合「波段锁点」(JackLevels)：日线定调 + 反弹 0.382/0.618 目标。
+可选融合「波段锁点」：日线定调 + 反弹 0.382/0.618 目标。
 """
 
 from dataclasses import dataclass
@@ -11,11 +11,11 @@ from analyst.compute.fibonacci import FibLevels
 from analyst.compute.structure import Structure
 
 try:
-    from analyst.compute.jack_levels import JackLevels
-    from analyst.compute.jack_regime import JackRegime
+    from analyst.compute.swing_levels import SwingLevels
+    from analyst.compute.market_regime import MarketRegime
 except ImportError:  # pragma: no cover
-    JackLevels = None  # type: ignore
-    JackRegime = None  # type: ignore
+    SwingLevels = None  # type: ignore
+    MarketRegime = None  # type: ignore
 
 
 @dataclass
@@ -65,77 +65,77 @@ def generate_baseline_plan(
     fib: FibLevels,
     structure: Structure,
     min_rr: float = 2.0,
-    jack: "JackLevels | None" = None,
-    jack_regime: "JackRegime | None" = None,
+    swing: "SwingLevels | None" = None,
+    market_regime: "MarketRegime | None" = None,
 ) -> TradePlan:
     """规则基线计划。
 
     规则：
-    - 大方向跟随 trend（若有 jack，则日线定调优先）
+    - 大方向跟随 trend（若有 swing，则日线定调优先）
     - 入场区 = 0.5-0.618 fib
-    - 止损 = 0.786 外 / jack.defense
+    - 止损 = 0.786 外 / swing.defense
     - 止盈 1 = 最近反向关键位或 rebound_382/618
     - 止盈 2 = 1.272 扩展或 rebound_618
     - R:R < min_rr → wait
-    - jack.htf_ready=False 时 rationale 标明「只做短线反抽」
+    - swing.htf_ready=False 时 rationale 标明「只做短线反抽」
     """
     bias = structure.trend
-    if jack is not None and jack.daily_bias in ("up", "down", "range"):
+    if swing is not None and swing.daily_bias in ("up", "down", "range"):
         bias = (
-            "up" if jack.daily_bias == "up"
-            else "down" if jack.daily_bias == "down"
+            "up" if swing.daily_bias == "up"
+            else "down" if swing.daily_bias == "down"
             else "range"
         )
 
     horizon_note = ""
-    if jack is not None and not jack.htf_ready:
+    if swing is not None and not swing.htf_ready:
         horizon_note = "高周期未成熟，只做短线反抽。"
     regime_note = ""
-    if jack_regime is not None:
-        regime_note = f"{jack_regime.regime_zh}：{jack_regime.playbook_line} "
+    if market_regime is not None:
+        regime_note = f"{market_regime.regime_zh}：{market_regime.playbook_line} "
     suffix = f"{horizon_note}{regime_note}"
 
     if bias == "up":
         entry_low = fib.retr_618
         entry_high = fib.retr_500
-        stop_loss = jack.defense_level if jack is not None else fib.retr_786
+        stop_loss = swing.defense_level if swing is not None else fib.retr_786
         # 下半区=超卖反弹锁点；上半区=趋势回踩，目标用结构阻力/扩展
         range_mid = (fib.high + fib.low) / 2
         bounce_mode = current_price <= range_mid
-        if jack_regime is not None and jack_regime.tp_style == "intraday_618":
-            if jack_regime.tp_intraday_618 is not None and jack_regime.tp_intraday_618 > current_price:
-                target1 = jack_regime.tp_intraday_618
-            elif jack_regime.tp_intraday_50 is not None and jack_regime.tp_intraday_50 > current_price:
-                target1 = jack_regime.tp_intraday_50
-        if jack is not None and bounce_mode:
+        if market_regime is not None and market_regime.tp_style == "intraday_618":
+            if market_regime.tp_intraday_618 is not None and market_regime.tp_intraday_618 > current_price:
+                target1 = market_regime.tp_intraday_618
+            elif market_regime.tp_intraday_50 is not None and market_regime.tp_intraday_50 > current_price:
+                target1 = market_regime.tp_intraday_50
+        if swing is not None and bounce_mode:
             # 已越过 0.382 则主看 0.618；仍在下方则近压 0.382
-            if current_price >= jack.rebound_382:
-                target1 = jack.rebound_618
+            if current_price >= swing.rebound_382:
+                target1 = swing.rebound_618
                 target2 = structure.resistances[0] if structure.resistances else fib.high
                 if target2 <= target1:
                     target2 = fib.high
             else:
-                target1 = jack.rebound_382
-                target2 = jack.rebound_618
+                target1 = swing.rebound_382
+                target2 = swing.rebound_618
                 if structure.resistances:
                     r0 = structure.resistances[0]
                     if current_price < r0 < target1:
                         target1 = r0
-        elif jack is not None:
+        elif swing is not None:
             target1 = structure.resistances[0] if structure.resistances else fib.high
-            target2 = jack.rebound_618 if jack.rebound_618 > current_price else fib.ext_1272
+            target2 = swing.rebound_618 if swing.rebound_618 > current_price else fib.ext_1272
         else:
             target1 = structure.resistances[0] if structure.resistances else fib.high
             target2 = fib.ext_1272
 
         entry_mid = (entry_low + entry_high) / 2
-        if bounce_mode and jack is not None:
+        if bounce_mode and swing is not None:
             # 反弹模式：现价附近低多，目标锁 0.382/0.618
             trial_entry = current_price
             rr = calculate_rr(trial_entry, stop_loss, target1, "long")
             if rr >= min_rr and stop_loss < trial_entry < target1:
                 conf = ""
-                if jack.confluence_382 or jack.confluence_618:
+                if swing.confluence_382 or swing.confluence_618:
                     conf = "斐波与 BOLL 中轨共振。"
                 return TradePlan(
                     direction="long",
@@ -157,8 +157,8 @@ def generate_baseline_plan(
                 rr=rr,
             )
 
-        # 仅在有 jack 时允许「现价头仓」；否则保持经典回踩区入场
-        if current_price > entry_high and jack is not None:
+        # 仅在有 swing 时允许「现价头仓」；否则保持经典回踩区入场
+        if current_price > entry_high and swing is not None:
             trial_entry = current_price
             rr = calculate_rr(trial_entry, stop_loss, target1, "long")
             if rr >= min_rr and stop_loss < trial_entry < target1:
@@ -191,7 +191,7 @@ def generate_baseline_plan(
             )
 
         conf = ""
-        if jack is not None and (jack.confluence_382 or jack.confluence_618):
+        if swing is not None and (swing.confluence_382 or swing.confluence_618):
             conf = "斐波与 BOLL 中轨共振。"
         return TradePlan(
             direction="long",
@@ -210,13 +210,13 @@ def generate_baseline_plan(
         )
 
     if bias == "down":
-        if jack_regime is not None and jack_regime.below_waist:
+        if market_regime is not None and market_regime.below_waist:
             return _wait_plan(
-                f"已近腰斩线 {_fmt(jack_regime.waist_line)}，穷寇莫追，不再加空。{suffix}"
+                f"已近腰斩线 {_fmt(market_regime.waist_line)}，穷寇莫追，不再加空。{suffix}"
             )
         entry_low = fib.rebound_500
         entry_high = fib.rebound_618
-        stop_loss = jack.defense_level if jack is not None else fib.rebound_786
+        stop_loss = swing.defense_level if swing is not None else fib.rebound_786
         target1 = structure.supports[0] if structure.supports else fib.low
         target2 = fib.low - fib.range * 0.272
 
@@ -244,10 +244,10 @@ def generate_baseline_plan(
             ),
         )
 
-    if jack is not None:
+    if swing is not None:
         return _wait_plan(
-            f"震荡定调。反抽观察 {_fmt(jack.rebound_382)}，"
-            f"大反弹观察 {_fmt(jack.rebound_618)}；"
+            f"震荡定调。反抽观察 {_fmt(swing.rebound_382)}，"
+            f"大反弹观察 {_fmt(swing.rebound_618)}；"
             f"上破/下破边界再动手。{suffix}"
         )
     return _wait_plan("震荡市无明确方向，建议观望。")

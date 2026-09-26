@@ -5,7 +5,7 @@
 2) EMA21/55 回踩做多 / 拒绝做空或止盈
 3) 多周期共振（本周期 + 更高周期过滤器同向极值）
 
-数据源与 Jack 隔离：.cache/cyclestudies_tweets/
+数据源独立存放：.cache/cyclestudies_tweets/
 """
 
 from __future__ import annotations

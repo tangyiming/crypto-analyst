@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Jack「强势盘低多」事件式回测（限价回踩入场 / 止损 / 一半止盈 / 4h 中轨离场，含费率+滑点+资金费）。
+"""「强势盘低多」事件式回测（限价回踩入场 / 止损 / 一半止盈 / 4h 中轨离场，含费率+滑点+资金费）。
 
 用法（项目根）：
-  .venv/bin/python scripts/backtest_jack_pullback.py                       # BTC ETH SOL, 2023-01 起
-  .venv/bin/python scripts/backtest_jack_pullback.py SOL/USDT --start 2024-01-01 --risk 1 --lev 3
+  .venv/bin/python scripts/backtest_pullback_long.py                       # BTC ETH SOL, 2023-01 起
+  .venv/bin/python scripts/backtest_pullback_long.py SOL/USDT --start 2024-01-01 --risk 1 --lev 3
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from analyst.compute.strategies.jack_pullback import JackPullbackConfig, run_backtest  # noqa: E402
+from analyst.compute.strategies.pullback_long import PullbackLongConfig, run_backtest  # noqa: E402
 from analyst.data.fetcher import fetch_candles_history  # noqa: E402
 
 
@@ -30,7 +30,7 @@ def main() -> None:
     ap.add_argument("--no-funding", action="store_true")
     ap.add_argument("--trades", action="store_true", help="打印每笔")
     a = ap.parse_args()
-    cfg = JackPullbackConfig(risk_pct=a.risk, max_leverage=a.lev)
+    cfg = PullbackLongConfig(risk_pct=a.risk, max_leverage=a.lev)
     start = datetime.fromisoformat(a.start)
     for sym in a.symbols:
         hourly = fetch_candles_history(sym, "1h", days=a.days, market="futures")

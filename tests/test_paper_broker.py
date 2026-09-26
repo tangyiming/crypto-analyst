@@ -1,9 +1,9 @@
-"""纸面交易引擎 + Jack 强势盘低多计划生成。"""
+"""纸面交易引擎 + 强势盘低多计划生成。"""
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from analyst.compute.strategies.jack_pullback import JackPullbackConfig, OrderPlan, build_plan, position_size
+from analyst.compute.strategies.pullback_long import PullbackLongConfig, OrderPlan, build_plan, position_size
 from analyst.exec.paper import PaperBroker
 
 
@@ -13,7 +13,7 @@ def _plan(entry=100.0, stop=97.0, tp1=106.0, sym="SOL/USDT", now=None):
 
 
 def test_position_size_by_risk_and_leverage_cap():
-    cfg = JackPullbackConfig(risk_pct=1.0, max_leverage=3.0)
+    cfg = PullbackLongConfig(risk_pct=1.0, max_leverage=3.0)
     p = _plan(100, 97, 106)
     qty = position_size(10_000, p, cfg)
     assert abs(qty - 100 / 3) < 1e-9  # 风险 100U / 每单位 3U
@@ -22,7 +22,7 @@ def test_position_size_by_risk_and_leverage_cap():
 
 
 def test_paper_flow_fill_tp1_be_stop(tmp_path):
-    b = PaperBroker(tmp_path / "s.json", equity0=10_000, cfg=JackPullbackConfig(risk_pct=1.0), daily_fuse_pct=0)
+    b = PaperBroker(tmp_path / "s.json", equity0=10_000, cfg=PullbackLongConfig(risk_pct=1.0), daily_fuse_pct=0)
     t0 = datetime(2026, 8, 27, 4, tzinfo=timezone.utc)
     ev = b.submit(_plan(100, 97, 106, now=t0), t0)
     assert ev and ev.kind == "submit" and "SOL/USDT" in b.state["pending"]
@@ -44,7 +44,7 @@ def test_paper_flow_fill_tp1_be_stop(tmp_path):
 
 
 def test_paper_expire_reject_and_fuse(tmp_path):
-    b = PaperBroker(tmp_path / "s.json", equity0=10_000, cfg=JackPullbackConfig(risk_pct=5.0, max_leverage=10), daily_fuse_pct=3.0, max_positions=1)
+    b = PaperBroker(tmp_path / "s.json", equity0=10_000, cfg=PullbackLongConfig(risk_pct=5.0, max_leverage=10), daily_fuse_pct=3.0, max_positions=1)
     t0 = datetime(2026, 8, 27, 4, tzinfo=timezone.utc)
     b.submit(_plan(100, 97, 106, now=t0), t0)
     evs = b.on_mark("SOL/USDT", 101.0, t0 + timedelta(hours=25))
@@ -61,31 +61,31 @@ def test_paper_expire_reject_and_fuse(tmp_path):
 
 
 def test_build_plan_only_in_strong_long_regime():
-    from analyst.compute.jack_regime import JackRegime
-    from analyst.compute.jack_levels import JackLevels
+    from analyst.compute.market_regime import MarketRegime
+    from analyst.compute.swing_levels import SwingLevels
 
-    jack = JackLevels(
+    swing = SwingLevels(
         swing_high=110, swing_low=90, rebound_382=97.6, rebound_500=100, rebound_618=102.4, retr_382=102.4, retr_618=97.6,
         boll_mid=None, confluence_382=False, confluence_618=False, daily_bias="up", defense_level=95, htf_ready=True,
         horizon="swing", touch_level=None, touch_count=0, rs_note="", summary_line="",
     )
-    base = JackRegime(
+    base = MarketRegime(
         regime="strong_trend", regime_zh="强势盘", trade_side="long", seed_style="market", add_mode="breakout", tp_style="new_high",
         defense_broken=False, continuation_intact=True, nearest_support=96.0, nearest_resistance=105.0, prev_day_high=None, prev_day_low=None,
         intraday_high=None, intraday_low=None, tp_intraday_50=None, tp_intraday_618=None, ema12h_6=None, spike_stop_recent=False,
         pullback_618=98.0, pullback_50=99.0, pivot_supports=(96.5, 94.0), boll_4h_lower=95.0, boll_4h_upper=104.0, ext_150=108.0,
     )
     now = datetime(2026, 8, 27, tzinfo=timezone.utc)
-    p = build_plan("SOL/USDT", 100.0, jack, base, now)
+    p = build_plan("SOL/USDT", 100.0, swing, base, now)
     assert p is not None and p.entry == 98.0 and p.stop < 96.5 and p.tp1 == 105.0 and p.rr >= 1.2
-    assert build_plan("SOL/USDT", 100.0, jack, replace(base, regime="range"), now) is None
-    assert build_plan("SOL/USDT", 100.0, jack, replace(base, trade_side="wait"), now) is None
+    assert build_plan("SOL/USDT", 100.0, swing, replace(base, regime="range"), now) is None
+    assert build_plan("SOL/USDT", 100.0, swing, replace(base, trade_side="wait"), now) is None
     # 回踩位太近（<0.4%）且近支撑太远（>4%）→ 不出计划
-    assert build_plan("SOL/USDT", 100.0, jack, replace(base, pullback_618=99.8, nearest_support=90.0), now) is None
+    assert build_plan("SOL/USDT", 100.0, swing, replace(base, pullback_618=99.8, nearest_support=90.0), now) is None
 
 
 def test_report_view_fields(tmp_path):
-    b = PaperBroker(tmp_path / "s.json", equity0=10_000, cfg=JackPullbackConfig(risk_pct=1.0), daily_fuse_pct=3.0)
+    b = PaperBroker(tmp_path / "s.json", equity0=10_000, cfg=PullbackLongConfig(risk_pct=1.0), daily_fuse_pct=3.0)
     t0 = datetime(2026, 8, 27, 4, tzinfo=timezone.utc)
     b.submit(_plan(100, 97, 106, now=t0), t0)
     b.submit(_plan(2000, 1950, 2200, sym="ETH/USDT", now=t0), t0)

@@ -1,4 +1,4 @@
-"""头仓 / 补仓仓位模型（零下二度风格）。
+"""头仓 / 补仓仓位模型。
 
 防踏空用小头仓；总短线仓位封顶；回踩补仓与突破补仓二选一，不可叠加。
 与 Kelly 模块互补：本模块管「分层结构」，Kelly 管「单笔风险比例」。
@@ -52,8 +52,8 @@ def plan_seed_position(
         raise ValueError("leverage 必须 > 0")
     seed_pct = min(max(seed_pct, 0.01), 0.10)
     # 推文仓位：25x 基准头仓+补仓≤25%；杠杆加倍则仓位减半（50x→12.5%，100x→6.25%）
-    jack_cap = min(0.25, 0.25 * (25.0 / leverage))
-    max_total_pct = min(max(max_total_pct, seed_pct), 0.50, jack_cap)
+    exposure_cap = min(0.25, 0.25 * (25.0 / leverage))
+    max_total_pct = min(max(max_total_pct, seed_pct), 0.50, exposure_cap)
     add_mode = add_mode if add_mode in ("pullback", "breakout", "none") else "pullback"
 
     add_pct = 0.0 if add_mode == "none" else max(0.0, max_total_pct - seed_pct)

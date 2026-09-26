@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     monitor_rule_baseline: bool = Field(default=True)
     monitor_rule_funding: bool = Field(default=True)
     monitor_rule_premium: bool = Field(default=True)
-    monitor_rule_jack: bool = Field(default=True)
+    monitor_rule_market_regime: bool = Field(default=True)
     # CycleStudies / 百萬Eric：RSI 超卖超买 + 背离（反弹≠反转）
     monitor_rule_eric: bool = Field(default=True)
     monitor_eric_rsi_oversold: float = Field(default=30.0)
@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     monitor_eric_swing_risk_pct: float = Field(default=2.0)
     # 只对这些品种运行波段计划（回测只有 BTC/ETH 成立；BNB/SOL 证伪）
     monitor_eric_swing_symbols: str = Field(default="BTC/USDT,ETH/USDT")
-    # 纸面交易（Jack 强势盘低多计划 → 限价/止损/一半止盈，实时标记价撮合）
+    # 纸面交易（强势盘低多计划 → 限价/止损/一半止盈，实时标记价撮合）
     paper_enabled: bool = Field(default=True)
     paper_symbols: str = Field(default="BTC/USDT,ETH/USDT,SOL/USDT")
     paper_equity_usd: float = Field(default=10_000.0)
@@ -170,7 +170,7 @@ class Settings(BaseSettings):
     monitor_digest_enabled: bool = Field(default=True)
     monitor_digest_utc_hour: int = Field(default=5)  # UTC 5 点 = 迪拜早 9 点
 
-    # 币安广场：Jack 三盘变化时自动发短评（真发；需 OpenAPI Key）
+    # 币安广场：三盘变化时自动发短评（真发；需 OpenAPI Key）
     # 申请：https://www.binance.com/square/creator-center/home
     binance_square_openapi_key: str = Field(default="")
     square_post_enabled: bool = Field(default=False)
@@ -188,7 +188,7 @@ class Settings(BaseSettings):
     square_post_eric_enabled: bool = Field(default=True)
     # 发帖前 LLM 润色（compact 短讯用短评 prompt；强制保留 $ 标签与 CTA）
     square_post_ai_polish: bool = Field(default=True)
-    # Jack 打法提示（jack_setup）发帖
+    # 打法提示（playbook_setup）发帖
     square_post_setup_enabled: bool = Field(default=True)
     square_post_setup_cooldown_hours: float = Field(default=6.0)
     # 关键位触碰（structure_touch）发帖
@@ -203,7 +203,7 @@ class Settings(BaseSettings):
     square_move_pct_alt: float = Field(default=3.0)
     square_move_vol_ratio: float = Field(default=2.0)
     square_move_cooldown_hours: float = Field(default=4.0)
-    # 广场帖配图：Playwright 截 lightweight-charts DOM + Jack 点位线（需 playwright）
+    # 广场帖配图：Playwright 截 lightweight-charts DOM + 锁点线（需 playwright）
     square_post_chart_enabled: bool = Field(default=True)
     square_post_chart_bars: int = Field(default=120)
     square_post_chart_width: int = Field(default=900)

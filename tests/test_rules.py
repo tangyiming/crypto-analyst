@@ -39,7 +39,7 @@ def _only_volume_cfg() -> RuleConfig:
         enable_fib_zone=False,
         enable_baseline=False,
         enable_eric=False,
-        enable_jack=False,
+        enable_market_regime=False,
         enable_cvd=False,
     )
 

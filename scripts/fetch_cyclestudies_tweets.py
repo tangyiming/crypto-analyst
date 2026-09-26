@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """拉取 @CycleStudies（百萬Eric）推文到 .cache/cyclestudies_tweets/。
 
-与 Jack（jackli727）缓存完全隔离，不会写入 .cache/jack_tweets/。
+与锁点推文缓存完全隔离，不会写入 .cache/reference_tweets/。
 
 用法（项目根）：
   .venv/bin/python scripts/fetch_cyclestudies_tweets.py --refresh --max 800
@@ -20,7 +20,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # 复用官方 API / Nitter 工具，但覆盖输出目录
-import fetch_jack_tweets as fj  # noqa: E402
+import fetch_reference_tweets as fj  # noqa: E402
 OUT = ROOT / ".cache" / "cyclestudies_tweets"
 USERNAME = "CycleStudies"
 
@@ -89,7 +89,7 @@ def main() -> None:
             print(str(exc), file=sys.stderr)
             user, tweets = fj.fetch_via_nitter(USERNAME, max_tweets=max(1, args.max))
 
-    # 二次校验：绝不能写成 jack
+    # 二次校验：绝不能写成 swing
     if (user.get("username") or "").lower() not in (USERNAME.lower(), "cyclestudies"):
         print(f"警告：用户字段={user.get('username')}", file=sys.stderr)
 
@@ -101,7 +101,7 @@ def main() -> None:
         f"已拉取 @{user.get('username')} {len(tweets)} 条，配图 {n_media} 张。"
         f" 区间 {oldest} → {newest}"
     )
-    print(f"输出目录：{OUT}（与 .cache/jack_tweets 隔离）")
+    print(f"输出目录：{OUT}（与 .cache/reference_tweets 隔离）")
 
 
 def _fetch_with_start(

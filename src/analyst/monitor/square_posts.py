@@ -1,6 +1,6 @@
-"""Jack 三盘变化 → 币安广场短评（真发）。
+"""三盘变化 → 币安广场短评（真发）。
 
-仅处理 rule=jack_regime；品种/周期白名单与冷却由 Settings 控制。
+仅处理 rule=market_regime；品种/周期白名单与冷却由 Settings 控制。
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from analyst.compute.jack_levels import JackLevels
-from analyst.compute.jack_regime import JackRegime
+from analyst.compute.swing_levels import SwingLevels
+from analyst.compute.market_regime import MarketRegime
 from analyst.config import get_settings
 from analyst.integrations.binance_square import SquareApiError, mask_key, post_content, upload_image
 
@@ -132,7 +132,7 @@ def _fmt_price(x: float | None) -> str:
         return "—"
     ax = abs(float(x))
     if ax >= 10:
-        return f"{x:.2f}"  # Jack 写法：SOL 106.75 / BNB 812.34 / BTC 63750.00
+        return f"{x:.2f}"  # 两位小数：SOL 106.75 / BNB 812.34 / BTC 63750.00
     if ax >= 1:
         return f"{x:.3f}"
     return f"{x:.6f}"
@@ -146,7 +146,7 @@ def _side_zh(side: str) -> str:
     return "观望"
 
 
-def _prediction_hook(regime: JackRegime, tf: str) -> str:
+def _prediction_hook(regime: MarketRegime, tf: str) -> str:
     """首行钩子：明确涨跌倾向，提高点击；结论仍绑三盘事实。"""
     side = regime.trade_side
     zh = regime.regime_zh or regime.regime
@@ -165,17 +165,17 @@ def _prediction_hook(regime: JackRegime, tf: str) -> str:
     return f"👀 观望｜{zh} · {tf} 等边界再动手"
 
 
-def _post_levels(regime: JackRegime, jack: JackLevels | None, price: float) -> tuple[float | None, float | None, float | None]:
+def _post_levels(regime: MarketRegime, swing: SwingLevels | None, price: float) -> tuple[float | None, float | None, float | None]:
     """帖子用（防守, 近压, 目标）：按方向做合理性过滤——多头目标/近压必须在现价上方，防守在下方。
 
     24h 锁点的 rebound_382/618 只在「跌后反弹」语境有意义，涨势里会落在现价下方，不能直接拿来当近压/目标。
     """
     above = lambda x: x is not None and x > price * 1.001  # noqa: E731
     below = lambda x: x is not None and x < price * 0.999  # noqa: E731
-    j_def = getattr(jack, "defense_level", None) if jack is not None else None
-    j_382 = getattr(jack, "rebound_382", None) if jack is not None else None
-    j_618 = getattr(jack, "rebound_618", None) if jack is not None else None
-    j_touch = getattr(jack, "touch_level", None) if jack is not None else None
+    j_def = getattr(swing, "defense_level", None) if swing is not None else None
+    j_382 = getattr(swing, "rebound_382", None) if swing is not None else None
+    j_618 = getattr(swing, "rebound_618", None) if swing is not None else None
+    j_touch = getattr(swing, "touch_level", None) if swing is not None else None
     if regime.trade_side == "short":
         defense = next((x for x in (j_def, regime.nearest_resistance) if above(x)), None)
         near = next((x for x in (regime.nearest_support, j_618, j_382) if below(x)), None)
@@ -202,11 +202,11 @@ def _clip_sentence(text: str, n: int) -> str:
     return cut[: k + 1] if k >= n // 3 else cut.rstrip("，、,") + "…"
 
 
-def _outlook_line(regime: JackRegime, jack: JackLevels | None, price: float) -> str:
+def _outlook_line(regime: MarketRegime, swing: SwingLevels | None, price: float) -> str:
     """一句话涨跌预测 + 关键点位（数字来自预计算）。"""
     side = regime.trade_side
     if side == "long":
-        stop, near, tgt = _post_levels(regime, jack, price)
+        stop, near, tgt = _post_levels(regime, swing, price)
         tgt = tgt or near
         if tgt is not None and stop is not None:
             return (
@@ -217,7 +217,7 @@ def _outlook_line(regime: JackRegime, jack: JackLevels | None, price: float) -> 
     if side == "short":
         if regime.below_waist:
             return "预测：已近腰斩，暂不看更深下跌，宁可空仓等反抽"
-        stop, near, tgt = _post_levels(regime, jack, price)
+        stop, near, tgt = _post_levels(regime, swing, price)
         tgt = tgt or near
         if tgt is not None and stop is not None:
             return (
@@ -228,18 +228,18 @@ def _outlook_line(regime: JackRegime, jack: JackLevels | None, price: float) -> 
     return "预测：方向不明，先观望，不追涨杀跌"
 
 
-def _compose_jack_compact(
+def _compose_regime_compact(
     *,
     symbol: str,
     timeframe: str,
     price: float,
-    jack: JackLevels | None,
-    regime: JackRegime,
+    swing: SwingLevels | None,
+    regime: MarketRegime,
 ) -> str:
     """短讯：钩子 + 现价/方向 + 关键位 + CTA（内容挖矿转化向）。"""
     tag = _cashtag(symbol)
     tf = (timeframe or "").strip().lower()
-    defense, near, target = _post_levels(regime, jack, float(price))
+    defense, near, target = _post_levels(regime, swing, float(price))
     tgt = target or near
     lines = [
         f"{_prediction_hook(regime, tf)} {tag}",
@@ -274,20 +274,20 @@ def _compose_jack_compact(
     return text
 
 
-def compose_jack_setup_post(
+def compose_playbook_setup_post(
     *,
     symbol: str,
     timeframe: str,
     price: float,
-    jack: JackLevels | None,
-    regime: JackRegime,
+    swing: SwingLevels | None,
+    regime: MarketRegime,
     flag_labels: list[str] | None = None,
 ) -> str:
-    """Jack 打法提示（jack_setup）：新 flag 出现时的短讯。"""
+    """打法提示（playbook_setup）：新 flag 出现时的短讯。"""
     tag = _cashtag(symbol)
     tf = (timeframe or "").strip().lower()
     hint = " · ".join((flag_labels or [])[:2]) or "打法更新"
-    defense, near, target = _post_levels(regime, jack, float(price))
+    defense, near, target = _post_levels(regime, swing, float(price))
     tgt = target or near
     lines = [
         f"⚡ {tag} {tf} 打法：{hint}",
@@ -317,8 +317,8 @@ def compose_level_touch_post(
     price: float,
     level: float,
     kind: str,
-    jack: JackLevels | None,
-    regime: JackRegime | None,
+    swing: SwingLevels | None,
+    regime: MarketRegime | None,
 ) -> str:
     """关键位触碰短讯。"""
     tag = _cashtag(symbol)
@@ -335,7 +335,7 @@ def compose_level_touch_post(
         f"现价 {_fmt_price(price)} · {side_zh} · {regime_zh}",
     ]
     if reg is not None:
-        defense, near, target = _post_levels(reg, jack, float(price))
+        defense, near, target = _post_levels(reg, swing, float(price))
         if is_support:
             hold = level if level < price * 0.999 else (defense if defense else level)
             if cta_side == "long":
@@ -466,23 +466,23 @@ def _fetch_24h_movers(symbols: set[str]) -> list[tuple[str, float, float]]:
     return out
 
 
-def compose_jack_square_post(
+def compose_regime_square_post(
     *,
     symbol: str,
     timeframe: str,
     price: float,
-    jack: JackLevels | None,
-    regime: JackRegime,
+    swing: SwingLevels | None,
+    regime: MarketRegime,
     compact: bool | None = None,
 ) -> str:
     """生成带币种标签 + 涨跌预测 + 点位的广场短评。"""
     use_compact = compact if compact is not None else _is_compact()
     if use_compact:
-        return _compose_jack_compact(
+        return _compose_regime_compact(
             symbol=symbol,
             timeframe=timeframe,
             price=price,
-            jack=jack,
+            swing=swing,
             regime=regime,
         )
     tag = _cashtag(symbol)
@@ -491,9 +491,9 @@ def compose_jack_square_post(
     lines = [
         f"{_prediction_hook(regime, tf)} {tag}",
         f"现价 {_fmt_price(price)} · 方向 {side}",
-        _outlook_line(regime, jack, float(price)),
+        _outlook_line(regime, swing, float(price)),
     ]
-    defense, near, target = _post_levels(regime, jack, float(price))
+    defense, near, target = _post_levels(regime, swing, float(price))
     if regime.trade_side == "short":
         parts = [f"防守 {_fmt_price(defense)}" if defense else None, f"近支 {_fmt_price(near)}" if near else None,
                  f"下看 {_fmt_price(target)}" if target and target != near else None]
@@ -511,7 +511,7 @@ def compose_jack_square_post(
     elif regime.trade_side == "short" and not regime.below_waist:
         lines.append("想开空等反弹靠近阻力，别贴着支撑追空。")
     lines.append("")
-    lines.extend(indicator_block(regime, jack, price=price, timeframe=timeframe))
+    lines.extend(indicator_block(regime, swing, price=price, timeframe=timeframe))
     text = "\n".join(lines)
     if len(text) > MAX_POST_LEN:
         text = text[: MAX_POST_LEN - 1] + "…"
@@ -547,8 +547,8 @@ def _near_threshold(timeframe: str | None) -> float:
 
 
 def indicator_block(
-    regime: JackRegime,
-    jack: JackLevels | None,
+    regime: MarketRegime,
+    swing: SwingLevels | None,
     eric_readings: list[str] | None = None,
     price: float = 0.0,
     timeframe: str = "4h",
@@ -946,7 +946,7 @@ def polish_square_text(text: str, *, settings=None, compact: bool = False) -> tu
 
 
 def _cooldown_path() -> Path:
-    return Path(get_settings().data_cache_dir) / "square_jack_cooldown.json"
+    return Path(get_settings().data_cache_dir) / "square_regime_cooldown.json"
 
 
 def _load_cooldown() -> dict[str, float]:
@@ -997,8 +997,8 @@ def _chart_for_post(
     symbol: str,
     timeframe: str,
     price: float,
-    jack: JackLevels | None = None,
-    regime: JackRegime | None = None,
+    swing: SwingLevels | None = None,
+    regime: MarketRegime | None = None,
     title: str | None = None,
     subtitle: str | None = None,
     extra_levels: list[dict[str, Any]] | None = None,
@@ -1010,7 +1010,7 @@ def _chart_for_post(
         symbol=symbol,
         timeframe=timeframe,
         price=price,
-        jack=jack,
+        swing=swing,
         regime=regime,
         title=title,
         subtitle=subtitle,
@@ -1156,13 +1156,13 @@ def square_timeframes_set(settings=None) -> set[str]:
     return {x.strip().lower() for x in raw.split(",") if x.strip()}
 
 
-def maybe_post_jack_regime(
+def maybe_post_market_regime(
     *,
     symbol: str,
     timeframe: str,
     price: float,
-    jack: JackLevels | None,
-    regime: JackRegime,
+    swing: SwingLevels | None,
+    regime: MarketRegime,
 ) -> dict[str, Any] | None:
     """三盘变化时发广场短文。未启用/不在白名单/冷却中 → None。"""
     settings = get_settings()
@@ -1173,35 +1173,35 @@ def maybe_post_jack_regime(
     if tf not in square_timeframes_set(settings):
         return None
     cool_h = float(getattr(settings, "square_post_cooldown_hours", 2) or 0)
-    cool_key = f"jack|{sym}|{tf}"
-    text = compose_jack_square_post(
+    cool_key = f"swing|{sym}|{tf}"
+    text = compose_regime_square_post(
         symbol=sym,
         timeframe=tf,
         price=price,
-        jack=jack,
+        swing=swing,
         regime=regime,
     )
     chart = _chart_for_post(
-        symbol=sym, timeframe=tf, price=price, jack=jack, regime=regime
+        symbol=sym, timeframe=tf, price=price, swing=swing, regime=regime
     )
     out = _publish_square_post(
         text, cool_key=cool_key, cooldown_hours=cool_h, settings=settings, chart=chart
     )
     if out:
-        out.update({"symbol": sym, "timeframe": tf, "kind": "jack_regime"})
+        out.update({"symbol": sym, "timeframe": tf, "kind": "market_regime"})
     return out
 
 
-def maybe_post_jack_setup(
+def maybe_post_playbook_setup(
     *,
     symbol: str,
     timeframe: str,
     price: float,
-    jack: JackLevels | None,
-    regime: JackRegime,
+    swing: SwingLevels | None,
+    regime: MarketRegime,
     flag_labels: list[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Jack 打法提示 jack_setup 发帖。"""
+    """打法提示 playbook_setup 发帖。"""
     settings = get_settings()
     if not getattr(settings, "square_post_setup_enabled", True):
         return None
@@ -1213,16 +1213,16 @@ def maybe_post_jack_setup(
         return None
     cool_h = float(getattr(settings, "square_post_setup_cooldown_hours", 6) or 0)
     cool_key = f"setup|{sym}|{tf}"
-    text = compose_jack_setup_post(
+    text = compose_playbook_setup_post(
         symbol=sym,
         timeframe=tf,
         price=price,
-        jack=jack,
+        swing=swing,
         regime=regime,
         flag_labels=flag_labels,
     )
     chart = _chart_for_post(
-        symbol=sym, timeframe=tf, price=price, jack=jack, regime=regime
+        symbol=sym, timeframe=tf, price=price, swing=swing, regime=regime
     )
     out = _publish_square_post(
         text,
@@ -1233,7 +1233,7 @@ def maybe_post_jack_setup(
         chart=chart,
     )
     if out:
-        out.update({"symbol": sym, "timeframe": tf, "kind": "jack_setup"})
+        out.update({"symbol": sym, "timeframe": tf, "kind": "playbook_setup"})
     return out
 
 
@@ -1244,8 +1244,8 @@ def maybe_post_level_touch(
     price: float,
     level: float,
     kind: str,
-    jack: JackLevels | None,
-    regime: JackRegime | None,
+    swing: SwingLevels | None,
+    regime: MarketRegime | None,
 ) -> dict[str, Any] | None:
     """关键位触碰 structure_touch 发帖。"""
     settings = get_settings()
@@ -1266,14 +1266,14 @@ def maybe_post_level_touch(
         price=price,
         level=level,
         kind=kind,
-        jack=jack,
+        swing=swing,
         regime=regime,
     )
     chart = _chart_for_post(
         symbol=sym,
         timeframe=tf,
         price=price,
-        jack=jack,
+        swing=swing,
         regime=regime,
         extra_levels=[
             {
@@ -1500,8 +1500,8 @@ def compose_move_square_post(
     price: float,
     change_pct: float,
     vol_ratio: float,
-    jack: JackLevels | None,
-    regime: JackRegime,
+    swing: SwingLevels | None,
+    regime: MarketRegime,
     eric_readings: list[str] | None = None,
     compact: bool | None = None,
 ) -> str:
@@ -1517,7 +1517,7 @@ def compose_move_square_post(
         else f"{tag} 这根 {tf} 直接砸了 {change_pct:+.1f}%，量放到平时的 {vol_ratio:.1f} 倍，加速下跌"
     )
     if use_compact:
-        defense, near, target = _post_levels(regime, jack, float(price))
+        defense, near, target = _post_levels(regime, swing, float(price))
         tgt = target or near
         lines = [
             hook,
@@ -1579,7 +1579,7 @@ def compose_move_square_post(
     if play:
         lines.append(f"打法：{_clip_sentence(play, 200)}")
     lines.append("")
-    lines.extend(indicator_block(regime, jack, eric_readings, price=price, timeframe=timeframe))
+    lines.extend(indicator_block(regime, swing, eric_readings, price=price, timeframe=timeframe))
     text = "\n".join(lines)
     if len(text) > MAX_POST_LEN:
         text = text[: MAX_POST_LEN - 1] + "…"
@@ -1593,8 +1593,8 @@ def maybe_post_market_move(
     price: float,
     change_pct: float,
     vol_ratio: float,
-    jack: JackLevels | None,
-    regime: JackRegime,
+    swing: SwingLevels | None,
+    regime: MarketRegime,
     eric_readings: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """加速行情发帖：受 square_post_enabled / 品种白名单 / 冷却约束。"""
@@ -1612,13 +1612,13 @@ def maybe_post_market_move(
         price=price,
         change_pct=change_pct,
         vol_ratio=vol_ratio,
-        jack=jack,
+        swing=swing,
         regime=regime,
         eric_readings=eric_readings,
     )
     tf = (timeframe or "4h").strip().lower()
     chart = _chart_for_post(
-        symbol=sym, timeframe=tf, price=price, jack=jack, regime=regime
+        symbol=sym, timeframe=tf, price=price, swing=swing, regime=regime
     )
     out = _publish_square_post(
         text, cool_key=cool_key, cooldown_hours=cool_h, settings=settings, chart=chart

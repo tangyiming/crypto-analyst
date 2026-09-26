@@ -1,12 +1,12 @@
-"""零下二度三盘分类测试。"""
+"""三盘分类测试。"""
 
 from datetime import datetime, timezone
 
 import pytest
 
 from analyst.compute.fibonacci import compute_fib
-from analyst.compute.jack_levels import compute_jack_levels
-from analyst.compute.jack_regime import compute_jack_regime
+from analyst.compute.swing_levels import compute_swing_levels
+from analyst.compute.market_regime import compute_market_regime
 from analyst.compute.plan import generate_baseline_plan
 from analyst.compute.structure import Structure
 from analyst.data.fetcher import Candle, CandleSeries
@@ -63,7 +63,7 @@ def test_eth_rebound_618_matches_tweet():
 def test_defense_break_switches_to_range_playbook():
     st = _eth_structure()
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=1755.0,
         structure=st,
         fib=fib,
@@ -73,9 +73,9 @@ def test_defense_break_switches_to_range_playbook():
         },
         symbol="ETH/USDT",
     )
-    reg = compute_jack_regime(
+    reg = compute_market_regime(
         current_price=1748.0,
-        jack=jack,
+        swing=swing,
         structure=st,
         primary_series=_hourly_with_spike(),
     )
@@ -83,7 +83,7 @@ def test_defense_break_switches_to_range_playbook():
     assert reg.regime_zh == "震荡盘"
     assert reg.seed_style == "pullback"
     assert reg.tp_style == "intraday_618"
-    assert "1828" in reg.summary_line or "2098" in str(jack.rebound_618)
+    assert "1828" in reg.summary_line or "2098" in str(swing.rebound_618)
 
 
 def test_strong_trend_when_continuation_intact():
@@ -96,7 +96,7 @@ def test_strong_trend_when_continuation_intact():
         recent_low=57758.0,
     )
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=72000.0,
         structure=st,
         fib=fib,
@@ -106,9 +106,9 @@ def test_strong_trend_when_continuation_intact():
         },
         symbol="BTC/USDT",
     )
-    reg = compute_jack_regime(
+    reg = compute_market_regime(
         current_price=72000.0,
-        jack=jack,
+        swing=swing,
         structure=st,
     )
     assert reg.regime_zh == "强势盘"
@@ -127,7 +127,7 @@ def test_weak_trend_daily_down():
         recent_low=55000.0,
     )
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=61000.0,
         structure=st,
         fib=fib,
@@ -137,9 +137,9 @@ def test_weak_trend_daily_down():
         },
         symbol="BTC/USDT",
     )
-    reg = compute_jack_regime(
+    reg = compute_market_regime(
         current_price=61000.0,
-        jack=jack,
+        swing=swing,
         structure=st,
     )
     assert reg.regime_zh == "弱势盘"
@@ -149,7 +149,7 @@ def test_weak_trend_daily_down():
     assert reg.below_waist is False
 
 
-def _down_jack(price: float, high: float = 70000.0, low: float = 55000.0):
+def _down_swing(price: float, high: float = 70000.0, low: float = 55000.0):
     st = Structure(
         trend="down",
         supports=[60000.0],
@@ -159,7 +159,7 @@ def _down_jack(price: float, high: float = 70000.0, low: float = 55000.0):
         recent_low=low,
     )
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=price,
         structure=st,
         fib=fib,
@@ -169,25 +169,25 @@ def _down_jack(price: float, high: float = 70000.0, low: float = 55000.0):
         },
         symbol="BTC/USDT",
     )
-    return st, fib, jack
+    return st, fib, swing
 
 
 def test_waist_line_is_half_swing_high():
-    st, _fib, jack = _down_jack(61000.0, high=70000.0)
-    reg = compute_jack_regime(current_price=61000.0, jack=jack, structure=st)
-    assert reg.waist_line == pytest.approx(jack.swing_high * 0.5)
-    assert jack.swing_high == pytest.approx(70000.0)
+    st, _fib, swing = _down_swing(61000.0, high=70000.0)
+    reg = compute_market_regime(current_price=61000.0, swing=swing, structure=st)
+    assert reg.waist_line == pytest.approx(swing.swing_high * 0.5)
+    assert swing.swing_high == pytest.approx(70000.0)
 
 
 def test_below_waist_stops_chase_short():
     price = 34000.0
-    st, fib, jack = _down_jack(price, high=70000.0)
-    reg = compute_jack_regime(current_price=price, jack=jack, structure=st)
+    st, fib, swing = _down_swing(price, high=70000.0)
+    reg = compute_market_regime(current_price=price, swing=swing, structure=st)
     assert reg.below_waist is True
     assert reg.add_mode == "none"
     assert reg.trade_side == "wait"
     assert "穷寇莫追" in reg.playbook_line
-    plan = generate_baseline_plan(price, fib, st, jack=jack, jack_regime=reg)
+    plan = generate_baseline_plan(price, fib, st, swing=swing, market_regime=reg)
     assert plan.direction == "wait"
     assert "腰斩" in plan.rationale
 
@@ -195,7 +195,7 @@ def test_below_waist_stops_chase_short():
 def test_wick_hold_allows_seed():
     st = _eth_structure()
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=1775.0,
         structure=st,
         fib=fib,
@@ -206,9 +206,9 @@ def test_wick_hold_allows_seed():
         symbol="ETH/USDT",
     )
     series = _hourly_with_spike()
-    reg = compute_jack_regime(
+    reg = compute_market_regime(
         current_price=1775.0,
-        jack=jack,
+        swing=swing,
         structure=st,
         primary_series=series,
     )
@@ -219,7 +219,7 @@ def test_wick_hold_allows_seed():
 def test_hollow_daily_accel_flag():
     st = _eth_structure()
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=1800.0,
         structure=st,
         fib=fib,
@@ -251,9 +251,9 @@ def test_hollow_daily_accel_flag():
         volume=80.0,
     )
     daily = CandleSeries(symbol="ETH/USDT", timeframe="1d", candles=candles)
-    reg = compute_jack_regime(
+    reg = compute_market_regime(
         current_price=1815.0,
-        jack=jack,
+        swing=swing,
         structure=st,
         daily_series=daily,
     )
@@ -263,7 +263,7 @@ def test_hollow_daily_accel_flag():
 def test_near_rebound_618_no_add():
     st = _eth_structure()
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=2100.0,
         structure=st,
         fib=fib,
@@ -274,8 +274,8 @@ def test_near_rebound_618_no_add():
         symbol="ETH/USDT",
     )
     # 0.618 ≈ 2098；现价贴着鱼尾
-    reg = compute_jack_regime(current_price=2100.0, jack=jack, structure=st)
-    assert jack.rebound_618 == pytest.approx(2098, abs=2)
+    reg = compute_market_regime(current_price=2100.0, swing=swing, structure=st)
+    assert swing.rebound_618 == pytest.approx(2098, abs=2)
     assert reg.near_rebound_618 is True
     assert reg.add_mode == "none"
 
@@ -290,7 +290,7 @@ def test_second_break_when_touch_count_ge_2():
         recent_low=57758.0,
     )
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=72000.0,
         structure=st,
         fib=fib,
@@ -300,7 +300,7 @@ def test_second_break_when_touch_count_ge_2():
         },
         symbol="BTC/USDT",
     )
-    jack.touch_count = 2
-    reg = compute_jack_regime(current_price=72000.0, jack=jack, structure=st)
+    swing.touch_count = 2
+    reg = compute_market_regime(current_price=72000.0, swing=swing, structure=st)
     assert reg.second_break is True
     assert "假突破" in reg.playbook_line or "二次突破" in reg.summary_line

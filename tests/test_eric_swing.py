@@ -244,10 +244,10 @@ def test_square_polish_keeps_numbers_or_falls_back(monkeypatch):
 
 
 def test_move_post_composer_has_indicator_block():
-    from analyst.compute.jack_regime import JackRegime
+    from analyst.compute.market_regime import MarketRegime
     from analyst.monitor.square_posts import DISCLAIMER, compose_move_square_post
 
-    reg = JackRegime(
+    reg = MarketRegime(
         regime="strong_trend", regime_zh="强势盘", trade_side="long", seed_style="market", add_mode="breakout", tp_style="new_high",
         defense_broken=False, continuation_intact=True, nearest_support=96.6, nearest_resistance=102.84, prev_day_high=None, prev_day_low=None,
         intraday_high=None, intraday_low=None, tp_intraday_50=None, tp_intraday_618=None, ema12h_6=96.6, spike_stop_recent=False,
@@ -257,7 +257,7 @@ def test_move_post_composer_has_indicator_block():
     )
     t = compose_move_square_post(
         symbol="SOL/USDT", timeframe="4h", price=101.06, change_pct=5.5, vol_ratio=1.5,
-        jack=None, regime=reg, eric_readings=["日线 BF +49.5（超买）"], compact=False,
+        swing=None, regime=reg, eric_readings=["日线 BF +49.5（超买）"], compact=False,
     )
     assert t.startswith("$SOL") and "+5.5%" in t and "指标怎么看" in t
     assert "4h BOLL" in t and "腰斩线 127.8" in t and "波段过滤器" in t and "133.9" in t

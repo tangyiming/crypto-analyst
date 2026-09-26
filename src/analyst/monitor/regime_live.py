@@ -1,4 +1,4 @@
-"""盯盘侧预计算 Jack 锁点 / 三盘（无 LLM）。
+"""盯盘侧预计算锁点 / 三盘（无 LLM）。
 
 优先用 4h 结构定调，日线/1h/5m 只补 playbook 所需序列。
 """
@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from analyst.compute.fibonacci import compute_fib
 from analyst.compute.indicators import compute_all
-from analyst.compute.jack_levels import JackLevels, compute_jack_levels
-from analyst.compute.jack_regime import JackRegime, compute_jack_regime
+from analyst.compute.swing_levels import SwingLevels, compute_swing_levels
+from analyst.compute.market_regime import MarketRegime, compute_market_regime
 from analyst.compute.structure import detect_structure
 from analyst.data.fetcher import CandleSeries
 
@@ -48,7 +48,7 @@ def _structure_series(
     return worker_series
 
 
-def compute_monitor_jack(
+def compute_monitor_regime(
     *,
     symbol: str,
     current_price: float,
@@ -60,12 +60,12 @@ def compute_monitor_jack(
     btc_series: CandleSeries | None = None,
     high_24h: float | None = None,
     low_24h: float | None = None,
-) -> tuple[JackLevels, JackRegime]:
+) -> tuple[SwingLevels, MarketRegime]:
     """用盯盘内存序列 + 日线补丁算出锁点与三盘。"""
     structure_src = _structure_series(worker_series, hourly_series, h4_series)
     structure = detect_structure(structure_src)
     fib = compute_fib(structure.recent_high, structure.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=current_price,
         structure=structure,
         fib=fib,
@@ -74,9 +74,9 @@ def compute_monitor_jack(
         btc_series=btc_series,
         symbol=symbol,
     )
-    regime = compute_jack_regime(
+    regime = compute_market_regime(
         current_price=current_price,
-        jack=jack,
+        swing=swing,
         structure=structure,
         primary_series=worker_series,
         daily_series=daily_series,
@@ -86,4 +86,4 @@ def compute_monitor_jack(
         high_24h=high_24h,
         low_24h=low_24h,
     )
-    return jack, regime
+    return swing, regime

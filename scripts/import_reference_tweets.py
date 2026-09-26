@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""把第三方导出的 @jackli727 推文 JSON（列表，字段 id/created_at/full_text/media[].original …）
-合并进 .cache/jack_tweets/（与官方 API 缓存同一 schema），按推文 id 去重、配图按 pbs 媒体 id 去重后下载。
+"""把第三方导出的参考账号推文 JSON（列表，字段 id/created_at/full_text/media[].original …）
+合并进 .cache/reference_tweets/（与官方 API 缓存同一 schema），按推文 id 去重、配图按 pbs 媒体 id 去重后下载。
 
 用法（项目根）：
-  .venv/bin/python scripts/import_jack_export.py ~/Downloads/twitter-用户推文-xxx.json [more.json ...]
-  .venv/bin/python scripts/import_jack_export.py export.json --skip-media
+  .venv/bin/python scripts/import_reference_tweets.py ~/Downloads/twitter-用户推文-xxx.json [more.json ...]
+  .venv/bin/python scripts/import_reference_tweets.py export.json --skip-media
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / ".cache" / "jack_tweets"
+OUT = ROOT / ".cache" / "reference_tweets"
 MEDIA = OUT / "media"
 USERNAME = "jackli727"
 
@@ -80,7 +80,7 @@ def _media_pid(m: dict) -> str | None:
 
 def _normalize(item: dict) -> dict | None:
     if item.get("retweeted_status"):
-        return None  # 转发别人的内容不算他的分析
+        return None  # 转发内容不计入分析样本
     if str(item.get("screen_name") or "").lower() not in ("", USERNAME):
         return None
     text = item.get("full_text") or item.get("text") or ""

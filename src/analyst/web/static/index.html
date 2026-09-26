@@ -1707,7 +1707,7 @@
       <div class="app-page-inner" style="max-width:1200px">
         <div class="app-page-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
-            <h1>纸面交易 · Jack 强势盘低多</h1>
+            <h1>纸面交易 · 强势盘低多</h1>
             <p id="paperSubline">4h 收盘评估 → 回踩 0.618 挂限价多 → 标记价撮合；止损/一半止盈/保本/BOLL 中轨离场全部按实盘费率模拟。</p>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
@@ -3349,7 +3349,7 @@
   }
 
   function decisionText(ctx) {
-    const jr = ctx?.jack_regime || {};
+    const jr = ctx?.market_regime || {};
     if (jr.playbook_line) return jr.playbook_line;
     const z = ctx?.zone || {};
     if (z.dip_buy && z.try_short) return '震荡分向，等确认';
@@ -3361,7 +3361,7 @@
   }
 
   function riskText(ctx) {
-    const jr = ctx?.jack_regime || {};
+    const jr = ctx?.market_regime || {};
     if (jr.below_waist) {
       return `已近腰斩线 ${fmtNum(jr.waist_line)}，穷寇莫追，不再加空。`;
     }
@@ -3392,7 +3392,7 @@
     }
     board.classList.remove('hidden');
     empty?.classList.add('hidden');
-    const liveJr = rows[0]?.jack_regime || {};
+    const liveJr = rows[0]?.market_regime || {};
     if (hint) hint.textContent = liveJr.regime_zh
       ? `${active.split('/')[0]} · ${liveJr.regime_zh}`
       : `${active.split('/')[0]} · 当前选中币`;
@@ -3404,7 +3404,7 @@
       const longZone = fib.long || {};
       const shortZone = fib.short || {};
       const cyc = cycleStore[sym] || {};
-      const jr = ctx.jack_regime || {};
+      const jr = ctx.market_regime || {};
       const recentAlert = alertStore.slice().reverse().find((a) => normalizeSymbol(a.symbol) === sym);
       const zCls = zoneClass(ctx);
       const reason = (z.reasons || []).slice(0, 2).join(' · ');
@@ -4022,7 +4022,7 @@
   }
 
   const LEVEL_SIDE_RULES = new Set([
-    'structure_touch', 'structure_flip', 'fib_zone', 'jack_setup', 'jack_regime',
+    'structure_touch', 'structure_flip', 'fib_zone', 'playbook_setup', 'market_regime',
   ]);
 
   function sidePref() {
@@ -4422,43 +4422,43 @@
     const ema = ind.ema || {};
     const vol = ind.volume || {};
     const fib = session.fib || {};
-    const jack = session.jack_levels || {};
-    const jreg = session.jack_regime || {};
+    const swing = session.swing_levels || {};
+    const jreg = session.market_regime || {};
 
-    const biasZh = { up: '偏多', down: '偏空', range: '震荡' }[jack.daily_bias] || (jack.daily_bias || '—');
-    const horizonZh = jack.horizon === 'swing' ? '波段' : (jack.horizon === 'short' ? '短线反抽' : (jack.horizon || '—'));
+    const biasZh = { up: '偏多', down: '偏空', range: '震荡' }[swing.daily_bias] || (swing.daily_bias || '—');
+    const horizonZh = swing.horizon === 'swing' ? '波段' : (swing.horizon === 'short' ? '短线反抽' : (swing.horizon || '—'));
     const confBits = [];
-    if (jack.confluence_382) confBits.push('0.382↔BOLL');
-    if (jack.confluence_618) confBits.push('0.618↔BOLL');
+    if (swing.confluence_382) confBits.push('0.382↔BOLL');
+    if (swing.confluence_618) confBits.push('0.618↔BOLL');
     const confStr = confBits.length ? confBits.join(' · ') : '无';
-    const touchStr = (jack.touch_level != null && jack.touch_count > 0)
-      ? `${fmtNum(jack.touch_level)} ×${jack.touch_count}`
+    const touchStr = (swing.touch_level != null && swing.touch_count > 0)
+      ? `${fmtNum(swing.touch_level)} ×${swing.touch_count}`
       : '—';
 
-    const hasJack = jack.swing_high != null || jack.rebound_618 != null;
+    const hasSwing = swing.swing_high != null || swing.rebound_618 != null;
 
     // 锁点：完整键值 + 顶部摘要 chips（信息量与可读性兼顾）
-    const jackSec = hasJack ? `<div class="ai-sec">
+    const swingSec = hasSwing ? `<div class="ai-sec">
       <h3>波段锁点</h3>
       <div class="ai-chips">
         <span class="ai-chip"><b>定调</b>${escapeHtml(biasZh)}</span>
-        <span class="ai-chip"><b>视野</b>${escapeHtml(horizonZh)}${jack.htf_ready === false ? ' · 未成熟' : ''}</span>
-        <span class="ai-chip mono"><b>0.382</b>${fmtNum(jack.rebound_382)}</span>
-        <span class="ai-chip mono"><b>0.618</b>${fmtNum(jack.rebound_618)}</span>
-        <span class="ai-chip mono"><b>防守</b>${fmtNum(jack.defense_level)}</span>
+        <span class="ai-chip"><b>视野</b>${escapeHtml(horizonZh)}${swing.htf_ready === false ? ' · 未成熟' : ''}</span>
+        <span class="ai-chip mono"><b>0.382</b>${fmtNum(swing.rebound_382)}</span>
+        <span class="ai-chip mono"><b>0.618</b>${fmtNum(swing.rebound_618)}</span>
+        <span class="ai-chip mono"><b>防守</b>${fmtNum(swing.defense_level)}</span>
       </div>
       <div class="mt-2">
-        <div class="ai-kv"><span class="k">波段 H/L</span><span class="v">${fmtNum(jack.swing_high)} / ${fmtNum(jack.swing_low)}</span></div>
-        <div class="ai-kv"><span class="k">反抽 0.382</span><span class="v">${fmtNum(jack.rebound_382)}</span></div>
-        <div class="ai-kv"><span class="k">目标 0.618</span><span class="v">${fmtNum(jack.rebound_618)}</span></div>
-        <div class="ai-kv"><span class="k">回撤 0.382/0.618</span><span class="v">${fmtNum(jack.retr_382)} / ${fmtNum(jack.retr_618)}</span></div>
-        <div class="ai-kv"><span class="k">BOLL 中轨</span><span class="v">${jack.boll_mid != null ? fmtNum(jack.boll_mid) : '—'} · 共振 ${escapeHtml(confStr)}</span></div>
-        <div class="ai-kv"><span class="k">日线定调</span><span class="v">${escapeHtml(biasZh)} · 防守 ${fmtNum(jack.defense_level)}</span></div>
-        <div class="ai-kv"><span class="k">视野</span><span class="v">${escapeHtml(horizonZh)}${jack.htf_ready === false ? '（高周期未成熟）' : ''}</span></div>
+        <div class="ai-kv"><span class="k">波段 H/L</span><span class="v">${fmtNum(swing.swing_high)} / ${fmtNum(swing.swing_low)}</span></div>
+        <div class="ai-kv"><span class="k">反抽 0.382</span><span class="v">${fmtNum(swing.rebound_382)}</span></div>
+        <div class="ai-kv"><span class="k">目标 0.618</span><span class="v">${fmtNum(swing.rebound_618)}</span></div>
+        <div class="ai-kv"><span class="k">回撤 0.382/0.618</span><span class="v">${fmtNum(swing.retr_382)} / ${fmtNum(swing.retr_618)}</span></div>
+        <div class="ai-kv"><span class="k">BOLL 中轨</span><span class="v">${swing.boll_mid != null ? fmtNum(swing.boll_mid) : '—'} · 共振 ${escapeHtml(confStr)}</span></div>
+        <div class="ai-kv"><span class="k">日线定调</span><span class="v">${escapeHtml(biasZh)} · 防守 ${fmtNum(swing.defense_level)}</span></div>
+        <div class="ai-kv"><span class="k">视野</span><span class="v">${escapeHtml(horizonZh)}${swing.htf_ready === false ? '（高周期未成熟）' : ''}</span></div>
         <div class="ai-kv"><span class="k">关键位触及</span><span class="v">${touchStr}</span></div>
-        <div class="ai-kv"><span class="k">vs BTC</span><span class="v">${escapeHtml(jack.rs_note || '—')}</span></div>
+        <div class="ai-kv"><span class="k">vs BTC</span><span class="v">${escapeHtml(swing.rs_note || '—')}</span></div>
       </div>
-      ${jack.summary_line ? `<div class="ai-rationale mt-2" style="max-height:none">${escapeHtml(jack.summary_line)}</div>` : ''}
+      ${swing.summary_line ? `<div class="ai-rationale mt-2" style="max-height:none">${escapeHtml(swing.summary_line)}</div>` : ''}
     </div>` : '';
 
     const hasRegime = jreg.regime_zh || jreg.regime;
@@ -4502,7 +4502,7 @@
       <div class="ai-kv"><span class="k">支撑</span><span class="v">${(st.supports || []).slice(0, 3).map((x) => fmtNum(x)).join(' / ') || '—'}</span></div>
       <div class="ai-kv"><span class="k">阻力</span><span class="v">${(st.resistances || []).slice(0, 3).map((x) => fmtNum(x)).join(' / ') || '—'}</span></div>
       <div class="ai-kv"><span class="k">Fib 回撤 0.5/0.618</span><span class="v">${fmtNum(fib.retr_500)} / ${fmtNum(fib.retr_618)}</span></div>
-      <div class="ai-kv"><span class="k">Fib 反弹 0.382/0.618</span><span class="v">${fmtNum(fib.rebound_382 ?? jack.rebound_382)} / ${fmtNum(fib.rebound_618 ?? jack.rebound_618)}</span></div>
+      <div class="ai-kv"><span class="k">Fib 反弹 0.382/0.618</span><span class="v">${fmtNum(fib.rebound_382 ?? swing.rebound_382)} / ${fmtNum(fib.rebound_618 ?? swing.rebound_618)}</span></div>
       <div class="ai-kv"><span class="k">MACD</span><span class="v">${macd.cross_signal || '—'} · hist ${fmtNum(macd.histogram, 6)}</span></div>
       <div class="ai-kv"><span class="k">EMA</span><span class="v">7 ${fmtNum(ema.ema7)} · 30 ${fmtNum(ema.ema30)}</span></div>
       <div class="ai-kv"><span class="k">量能</span><span class="v">${vol.signal || '—'} · ×${vol.ratio != null ? vol.ratio : '—'}</span></div>
@@ -4528,7 +4528,7 @@
     // AI 优先，但锁点/指标恢复完整展开（不折叠）
     box.innerHTML = aiHtml
       + advice
-      + jackSec
+      + swingSec
       + regimeSec
       + quant
       + planBlock('规则基线（非 AI）', session.baseline_plan, { muted: true });
@@ -4578,8 +4578,8 @@
       current_price: s.current_price,
       structure: s.structure,
       fib: s.fib,
-      jack_levels: s.jack_levels,
-      jack_regime: s.jack_regime,
+      swing_levels: s.swing_levels,
+      market_regime: s.market_regime,
       indicators: s.indicators,
       baseline_plan: s.baseline_plan,
       ai_plan: s.ai_plan,

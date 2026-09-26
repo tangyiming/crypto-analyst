@@ -1088,19 +1088,19 @@ def square_post_cmd(
         False, "--publish", help="真发到币安广场（默认只预览文案）"
     ),
 ):
-    """广场短评：预览 Jack 文案，或用 --publish / --text 真发。"""
+    """广场短评：预览文案，或用 --publish / --text 真发。"""
     from analyst.config import get_settings
     from analyst.integrations.binance_square import mask_key, post_text
-    from analyst.monitor.square_posts import compose_jack_square_post
+    from analyst.monitor.square_posts import compose_regime_square_post
 
     s = get_settings()
     body = (text or "").strip()
     if not body:
-        # 最小可预览：用假锁点结构拼一版示意（真链路走盯盘 jack_regime）
-        from analyst.compute.jack_levels import JackLevels
-        from analyst.compute.jack_regime import JackRegime
+        # 最小可预览：用假锁点结构拼一版示意（真链路走盯盘 market_regime）
+        from analyst.compute.swing_levels import SwingLevels
+        from analyst.compute.market_regime import MarketRegime
 
-        jack = JackLevels(
+        swing = SwingLevels(
             swing_high=70000,
             swing_low=60000,
             rebound_382=63820,
@@ -1120,7 +1120,7 @@ def square_post_cmd(
             rs_note="—",
             summary_line="预览",
         )
-        reg = JackRegime(
+        reg = MarketRegime(
             regime="strong_trend",
             regime_zh="强势盘",
             trade_side="long",
@@ -1142,10 +1142,10 @@ def square_post_cmd(
             playbook_line="市价小头仓 + 突破近阻力加仓",
             summary_line="预览短评",
         )
-        body = compose_jack_square_post(
-            symbol=symbol, timeframe=timeframe, price=65000.0, jack=jack, regime=reg
+        body = compose_regime_square_post(
+            symbol=symbol, timeframe=timeframe, price=65000.0, swing=swing, regime=reg
         )
-        console.print("[dim]（示意文案；真发帖由盯盘 jack_regime 触发）[/dim]\n")
+        console.print("[dim]（示意文案；真发帖由盯盘 market_regime 触发）[/dim]\n")
 
     console.print(body)
     if not publish and not text:

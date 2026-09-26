@@ -10,8 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 from analyst.compute import indicators as ind
 from analyst.compute.fibonacci import FibLevels, compute_fib
-from analyst.compute.jack_levels import JackLevels, compute_jack_levels
-from analyst.compute.jack_regime import JackRegime, compute_jack_regime
+from analyst.compute.swing_levels import SwingLevels, compute_swing_levels
+from analyst.compute.market_regime import MarketRegime, compute_market_regime
 from analyst.compute.structure import Structure, detect_structure
 from analyst.compute.volume import analyze_volume
 from analyst.config import get_settings
@@ -28,8 +28,8 @@ class SessionContext:
     indicators: dict
     fib: FibLevels
     structure: Structure
-    jack: JackLevels | None = None
-    jack_regime: JackRegime | None = None
+    swing: SwingLevels | None = None
+    market_regime: MarketRegime | None = None
 
 
 # ─────────────────────────────────────
@@ -43,7 +43,7 @@ _DEFAULT_VERIFY_HOURS = {
     "30m": 6,    # 12 根
     "1h": 12,    # 12 根
     "2h": 24,    # 12 根
-    "4h": 24,    # 6 根 = 1 天（与 Jack Li 实践一致）
+    "4h": 24,    # 6 根 = 1 天
     "1d": 144,   # 6 天
 }
 
@@ -106,7 +106,7 @@ def create_session(
         except Exception:
             btc_series = None
 
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=market_snap.current_price,
         structure=structure,
         fib=fib,
@@ -115,9 +115,9 @@ def create_session(
         btc_series=btc_series,
         symbol=symbol,
     )
-    jack_regime = compute_jack_regime(
+    market_regime = compute_market_regime(
         current_price=market_snap.current_price,
-        jack=jack,
+        swing=swing,
         structure=structure,
         primary_series=primary_series,
         daily_series=market_snap.timeframes.get("1d"),
@@ -132,8 +132,8 @@ def create_session(
     verify_hours = verify_after_hours or default_verify_hours(timeframe)
 
     snap_dict = market_snap.to_dict()
-    snap_dict["jack_levels"] = jack.to_dict()
-    snap_dict["jack_regime"] = jack_regime.to_dict()
+    snap_dict["swing_levels"] = swing.to_dict()
+    snap_dict["market_regime"] = market_regime.to_dict()
     snap_dict["primary_timeframe"] = timeframe
 
     db_session = repo.create_session(
@@ -151,8 +151,8 @@ def create_session(
         indicators=indicators_snap,
         fib=fib,
         structure=structure,
-        jack=jack,
-        jack_regime=jack_regime,
+        swing=swing,
+        market_regime=market_regime,
     )
 
 
@@ -167,8 +167,8 @@ def _ctx_to_market_extras(ctx: SessionContext, latency_ms: int | None = None) ->
         ctx.market.current_price,
         ctx.fib,
         ctx.structure,
-        jack=ctx.jack,
-        jack_regime=ctx.jack_regime,
+        swing=ctx.swing,
+        market_regime=ctx.market_regime,
     )
     out = {
         "current_price": ctx.market.current_price,
@@ -193,8 +193,8 @@ def _ctx_to_market_extras(ctx: SessionContext, latency_ms: int | None = None) ->
             "rebound_382": ctx.fib.rebound_382,
             "rebound_618": ctx.fib.rebound_618,
         },
-        "jack_levels": ctx.jack.to_dict() if ctx.jack else None,
-        "jack_regime": ctx.jack_regime.to_dict() if ctx.jack_regime else None,
+        "swing_levels": ctx.swing.to_dict() if ctx.swing else None,
+        "market_regime": ctx.market_regime.to_dict() if ctx.market_regime else None,
         "indicators": ctx.indicators.get(tf) or next(iter(ctx.indicators.values()), None),
         "baseline_plan": asdict(baseline),
     }
@@ -385,7 +385,7 @@ def run_monitor_ai_confirm(
         if isinstance(ctx.db_session.market_snapshot, dict)
         else {}
     )
-    for key in ("jack_levels", "jack_regime"):
+    for key in ("swing_levels", "market_regime"):
         if key not in market_dict and snap.get(key):
             market_dict[key] = snap[key]
 
@@ -471,8 +471,8 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
     from typing import Any
 
     from analyst.compute.fibonacci import compute_fib
-    from analyst.compute.jack_levels import JackLevels, compute_jack_levels
-    from analyst.compute.jack_regime import JackRegime, compute_jack_regime
+    from analyst.compute.swing_levels import SwingLevels, compute_swing_levels
+    from analyst.compute.market_regime import MarketRegime, compute_market_regime
     from analyst.compute.plan import generate_baseline_plan
     from analyst.compute.structure import detect_structure
     from analyst.data.fetcher import Candle, CandleSeries
@@ -486,8 +486,8 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
         "high_24h": ms.get("high_24h"),
         "low_24h": ms.get("low_24h"),
         "indicators": indicators_all.get(tf) or next(iter(indicators_all.values()), None),
-        "jack_levels": ms.get("jack_levels"),
-        "jack_regime": ms.get("jack_regime"),
+        "swing_levels": ms.get("swing_levels"),
+        "market_regime": ms.get("market_regime"),
     }
     if latency_ms is not None:
         base["latency_ms"] = latency_ms
@@ -514,15 +514,15 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
     fib = compute_fib(structure.recent_high, structure.recent_low)
     price = float(base["current_price"] or candles[-1].close)
 
-    jack = None
-    raw_jack = ms.get("jack_levels")
-    if isinstance(raw_jack, dict) and raw_jack.get("swing_high") is not None:
+    swing = None
+    raw_swing = ms.get("swing_levels")
+    if isinstance(raw_swing, dict) and raw_swing.get("swing_high") is not None:
         try:
-            jack = JackLevels(**{k: raw_jack[k] for k in JackLevels.__dataclass_fields__ if k in raw_jack})
+            swing = SwingLevels(**{k: raw_swing[k] for k in SwingLevels.__dataclass_fields__ if k in raw_swing})
         except TypeError:
-            jack = None
-    if jack is None:
-        jack = compute_jack_levels(
+            swing = None
+    if swing is None:
+        swing = compute_swing_levels(
             current_price=price,
             structure=structure,
             fib=fib,
@@ -530,7 +530,7 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
             primary_series=series,
             symbol=s.symbol or "",
         )
-        base["jack_levels"] = jack.to_dict()
+        base["swing_levels"] = swing.to_dict()
 
     daily_tfd = (ms.get("timeframes") or {}).get("1d")
     hourly_tfd = (ms.get("timeframes") or {}).get("1h")
@@ -545,12 +545,12 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
         h4_series = _series_from_snapshot_tfd(h4_tfd, s.symbol or "")
     if m5_tfd and m5_tfd.get("candles"):
         m5_series = _series_from_snapshot_tfd(m5_tfd, s.symbol or "")
-    jack_regime = None
-    raw_regime = ms.get("jack_regime")
-    if jack is not None:
-        jack_regime = compute_jack_regime(
+    market_regime = None
+    raw_regime = ms.get("market_regime")
+    if swing is not None:
+        market_regime = compute_market_regime(
             current_price=price,
-            jack=jack,
+            swing=swing,
             structure=structure,
             primary_series=series,
             daily_series=daily_series,
@@ -560,17 +560,17 @@ def recompute_market_extras_from_db(s: Session, latency_ms: int | None = None) -
             high_24h=ms.get("high_24h"),
             low_24h=ms.get("low_24h"),
         )
-        base["jack_regime"] = jack_regime.to_dict()
+        base["market_regime"] = market_regime.to_dict()
     elif isinstance(raw_regime, dict) and raw_regime.get("regime"):
         try:
-            jack_regime = JackRegime(
-                **{k: raw_regime[k] for k in JackRegime.__dataclass_fields__ if k in raw_regime}
+            market_regime = MarketRegime(
+                **{k: raw_regime[k] for k in MarketRegime.__dataclass_fields__ if k in raw_regime}
             )
         except TypeError:
-            jack_regime = None
+            market_regime = None
 
     baseline = generate_baseline_plan(
-        price, fib, structure, jack=jack, jack_regime=jack_regime
+        price, fib, structure, swing=swing, market_regime=market_regime
     )
     base["structure"] = {
         "trend": structure.trend,

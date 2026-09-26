@@ -53,7 +53,7 @@ from analyst.compute.level_context import (
     tf_priority,
 )
 from analyst.monitor.serialize import candle_to_dict
-from analyst.monitor.jack_live import compute_monitor_jack
+from analyst.monitor.regime_live import compute_monitor_regime
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -198,14 +198,14 @@ class MonitorHub:
         self._level_snapshots: dict[str, LevelSnapshot] = {}
         self._level_tf_rank: dict[str, int] = {}
         self._level_last_broadcast: dict[str, float] = {}
-        # Jack 三盘：按品种缓存，避免 5m/15m/1h/4h 各算一遍、各报一次
-        self._jack_live: dict[str, dict[str, Any]] = {}
-        self._jack_pair: dict[str, tuple[Any, Any]] = {}
-        self._jack_alert_state: dict[str, dict[str, Any]] = {}
-        self._jack_pair_at: dict[str, float] = {}
+        # 三盘：按品种缓存，避免 5m/15m/1h/4h 各算一遍、各报一次
+        self._regime_live: dict[str, dict[str, Any]] = {}
+        self._regime_pair: dict[str, tuple[Any, Any]] = {}
+        self._regime_alert_state: dict[str, dict[str, Any]] = {}
+        self._regime_pair_at: dict[str, float] = {}
         # Eric 周线超卖波段计划：按品种持久化状态（跨重启保留持仓阶段）
         self._eric_swing_state: dict[str, dict[str, Any]] | None = None
-        # 纸面交易引擎（Jack 强势盘低多计划）
+        # 纸面交易引擎（强势盘低多计划）
         self._paper: Any = None
         self._price_alerts: PriceAlertBook | None = None
         self._price_alert_tasks: dict[str, asyncio.Task] = {}
@@ -320,14 +320,14 @@ class MonitorHub:
             return None
         ctx = compute_level_context(float(px), snap)
         ctx["symbol"] = sym
-        live = self._jack_live.get(sym)
+        live = self._regime_live.get(sym)
         jr: dict[str, Any] = {}
         if live:
-            if live.get("jack_regime"):
-                jr = live["jack_regime"]
-                ctx["jack_regime"] = jr
-            if live.get("jack_levels"):
-                ctx["jack_levels"] = live["jack_levels"]
+            if live.get("market_regime"):
+                jr = live["market_regime"]
+                ctx["market_regime"] = jr
+            if live.get("swing_levels"):
+                ctx["swing_levels"] = live["swing_levels"]
         ctx["resistances"] = supplement_resistances(
             float(px),
             ctx.get("resistances") or [],
@@ -665,10 +665,10 @@ class MonitorHub:
                     "message": f"已订阅 {symbol} {timeframe} ({market})",
                 }
             )
-            if get_settings().monitor_rule_jack and symbol not in self._jack_live:
+            if get_settings().monitor_rule_market_regime and symbol not in self._regime_live:
                 asyncio.create_task(
-                    self._warm_jack(worker),
-                    name=f"jack-warm-{symbol}",
+                    self._warm_regime(worker),
+                    name=f"swing-warm-{symbol}",
                 )
 
             watch_syms = [
@@ -1113,7 +1113,7 @@ class MonitorHub:
             enable_baseline=s.monitor_rule_baseline,
             enable_funding=s.monitor_rule_funding,
             enable_premium=s.monitor_rule_premium,
-            enable_jack=s.monitor_rule_jack,
+            enable_market_regime=s.monitor_rule_market_regime,
             enable_eric=s.monitor_rule_eric,
             eric_rsi_oversold=float(s.monitor_eric_rsi_oversold or 30),
             eric_rsi_overbought=float(s.monitor_eric_rsi_overbought or 70),
@@ -1172,7 +1172,7 @@ class MonitorHub:
                 fetch_candles, symbol, timeframe, fetch_limit, True, market
             )
         except Exception:
-            logger.warning("jack HTF fetch failed %s %s", symbol, timeframe)
+            logger.warning("swing HTF fetch failed %s %s", symbol, timeframe)
             return None
         if not series or not series.candles:
             return None
@@ -1318,17 +1318,17 @@ class MonitorHub:
                     plan=sq_plan,
                 )
 
-    # ── 纸面交易（Jack 强势盘低多） ──
+    # ── 纸面交易（强势盘低多） ──
     def _paper_broker(self):
         if self._paper is not None:
             return self._paper
         s = get_settings()
         if not getattr(s, "paper_enabled", False):
             return None
-        from analyst.compute.strategies.jack_pullback import JackPullbackConfig
+        from analyst.compute.strategies.pullback_long import PullbackLongConfig
         from analyst.exec.paper import PaperBroker
 
-        cfg = JackPullbackConfig(
+        cfg = PullbackLongConfig(
             risk_pct=float(s.paper_risk_pct),
             max_leverage=float(s.paper_max_leverage),
             exit_rule=str(s.paper_exit_rule),
@@ -1370,20 +1370,20 @@ class MonitorHub:
             )
             await self._emit_rule_alert(worker, alert)
 
-    async def _evaluate_paper(self, worker: StreamWorker, jack: Any, regime: Any) -> None:
+    async def _evaluate_paper(self, worker: StreamWorker, swing: Any, regime: Any) -> None:
         """4h 收盘：先管理持仓（余仓离场/超时），再用当前点位出新计划。"""
         broker = self._paper_broker()
         if broker is None or worker.key.timeframe.lower() != "4h":
             return
         sym = worker.key.symbol
-        if _norm_symbol(sym) not in self._paper_symbols() or regime is None or jack is None:
+        if _norm_symbol(sym) not in self._paper_symbols() or regime is None or swing is None:
             return
-        from analyst.compute.strategies.jack_pullback import build_plan
+        from analyst.compute.strategies.pullback_long import build_plan
 
         price = float(worker.series.candles[-1].close)
         now = datetime.now(timezone.utc)
         events = broker.on_bar_close(sym, price, regime, now)
-        plan = build_plan(sym, price, jack, regime, now, broker.cfg)
+        plan = build_plan(sym, price, swing, regime, now, broker.cfg)
         if plan is not None:
             ev = broker.submit(plan, now)
             if ev:
@@ -1446,7 +1446,7 @@ class MonitorHub:
                 bf_value=None, marker_time=ev.marker_time, reasons=list(ev.reasons), plan=sq_plan,
             )
 
-    async def _maybe_square_move_post(self, worker: StreamWorker, jack: Any, regime: Any) -> None:
+    async def _maybe_square_move_post(self, worker: StreamWorker, swing: Any, regime: Any) -> None:
         """4h 收盘：单根涨跌幅/放量达阈值 → 加速行情广场帖（含完整指标分析）。"""
         s = get_settings()
         if not getattr(s, "square_post_enabled", False) or not getattr(s, "square_post_move_enabled", True):
@@ -1484,7 +1484,7 @@ class MonitorHub:
             out = await asyncio.to_thread(
                 maybe_post_market_move,
                 symbol=sym, timeframe=worker.key.timeframe, price=float(bar.close), change_pct=chg,
-                vol_ratio=vol_ratio, jack=jack, regime=regime, eric_readings=readings,
+                vol_ratio=vol_ratio, swing=swing, regime=regime, eric_readings=readings,
             )
         except Exception:
             logger.exception("square move post failed %s", sym)
@@ -1606,7 +1606,7 @@ class MonitorHub:
             cfg = RuleConfig(
                 enable_macd=False, enable_ema_stack=False, enable_boll=False, enable_volume=False,
                 enable_structure_touch=False, enable_structure_flip=False, enable_fib_zone=False,
-                enable_baseline=False, enable_cvd=False, enable_jack=False, enable_eric=True,
+                enable_baseline=False, enable_cvd=False, enable_market_regime=False, enable_eric=True,
                 eric_rsi_oversold=float(s.monitor_eric_rsi_oversold or 30),
                 eric_rsi_overbought=float(s.monitor_eric_rsi_overbought or 70),
                 eric_cooldown_bars=int(s.monitor_eric_cooldown_bars or 8),
@@ -1633,16 +1633,16 @@ class MonitorHub:
                         reasons=list(ev.reasons),
                     )
 
-    async def _refresh_jack_live(
+    async def _refresh_regime_live(
         self, worker: StreamWorker, *, ttl: float = 20.0
     ) -> tuple[Any, Any]:
         """按品种缓存锁点/三盘，供规则引擎与关键位面板共用。"""
-        if not get_settings().monitor_rule_jack or not worker.series.candles:
+        if not get_settings().monitor_rule_market_regime or not worker.series.candles:
             return None, None
         sym = worker.key.symbol
         now = time.monotonic()
-        last = self._jack_pair_at.get(sym, 0.0)
-        cached = self._jack_pair.get(sym)
+        last = self._regime_pair_at.get(sym, 0.0)
+        cached = self._regime_pair.get(sym)
         if ttl > 0 and cached and now - last < ttl:
             return cached
         market = worker.key.market
@@ -1662,7 +1662,7 @@ class MonitorHub:
             )
 
         def _run():
-            return compute_monitor_jack(
+            return compute_monitor_regime(
                 symbol=sym,
                 current_price=price,
                 worker_series=worker.series,
@@ -1675,18 +1675,18 @@ class MonitorHub:
                 low_24h=prem.get("low_24h"),
             )
 
-        jack, regime = await asyncio.to_thread(_run)
-        self._jack_pair[sym] = (jack, regime)
-        self._jack_pair_at[sym] = now
-        self._jack_live[sym] = {
-            "jack_levels": jack.to_dict(),
-            "jack_regime": regime.to_dict(),
+        swing, regime = await asyncio.to_thread(_run)
+        self._regime_pair[sym] = (swing, regime)
+        self._regime_pair_at[sym] = now
+        self._regime_live[sym] = {
+            "swing_levels": swing.to_dict(),
+            "market_regime": regime.to_dict(),
         }
-        return jack, regime
+        return swing, regime
 
-    async def _warm_jack(self, worker: StreamWorker) -> None:
+    async def _warm_regime(self, worker: StreamWorker) -> None:
         try:
-            await self._refresh_jack_live(worker, ttl=0)
+            await self._refresh_regime_live(worker, ttl=0)
             if worker.series.candles:
                 await self._push_level_context(
                     worker.key.symbol,
@@ -1694,7 +1694,7 @@ class MonitorHub:
                     force=True,
                 )
         except Exception:
-            logger.exception("jack warm failed %s", worker.key)
+            logger.exception("swing warm failed %s", worker.key)
 
     async def _btc_candles_for_regime(self, timeframe: str) -> list[Candle]:
         """构建牛熊判定用的 BTC K 线（优先复用已有 worker）。"""
@@ -2496,8 +2496,8 @@ class MonitorHub:
         worker: StreamWorker,
         events: list[Any],
         *,
-        jack: Any,
-        jack_regime: Any,
+        swing: Any,
+        market_regime: Any,
     ) -> None:
         hits = [e for e in events if getattr(e, "rule", None) == "structure_touch"]
         if not hits:
@@ -2522,61 +2522,61 @@ class MonitorHub:
                 price=price,
                 level=float(lvl),
                 kind=kind,
-                jack=jack,
-                regime=jack_regime,
+                swing=swing,
+                regime=market_regime,
             )
             if out:
                 await self._notify_square_post(
                     worker, out, title="币安广场已发关键位帖", kind="structure_touch", price=price
                 )
 
-    async def _maybe_square_jack_posts(
+    async def _maybe_square_regime_posts(
         self,
         worker: StreamWorker,
         events: list[Any],
         *,
-        jack: Any,
-        jack_regime: Any,
+        swing: Any,
+        market_regime: Any,
     ) -> None:
-        """jack_regime / jack_setup → 币安广场短评。"""
-        if jack_regime is None:
+        """market_regime / playbook_setup → 币安广场短评。"""
+        if market_regime is None:
             return
         if not getattr(get_settings(), "square_post_enabled", False):
             return
         price = float(worker.series.candles[-1].close) if worker.series.candles else 0.0
-        from analyst.monitor.square_posts import maybe_post_jack_regime, maybe_post_jack_setup
+        from analyst.monitor.square_posts import maybe_post_market_regime, maybe_post_playbook_setup
 
-        regime_hits = [e for e in events if getattr(e, "rule", None) == "jack_regime"]
+        regime_hits = [e for e in events if getattr(e, "rule", None) == "market_regime"]
         if regime_hits and regime_hits[0].price:
             price = float(regime_hits[0].price)
         if regime_hits:
             out = await asyncio.to_thread(
-                maybe_post_jack_regime,
+                maybe_post_market_regime,
                 symbol=worker.key.symbol,
                 timeframe=worker.key.timeframe,
                 price=price,
-                jack=jack,
-                regime=jack_regime,
+                swing=swing,
+                regime=market_regime,
             )
             if out:
                 await self._notify_square_post(
-                    worker, out, title="币安广场已发帖", kind="jack_regime", price=price
+                    worker, out, title="币安广场已发帖", kind="market_regime", price=price
                 )
-        setup_hits = [e for e in events if getattr(e, "rule", None) == "jack_setup"]
+        setup_hits = [e for e in events if getattr(e, "rule", None) == "playbook_setup"]
         if setup_hits:
             ev = setup_hits[0]
             out = await asyncio.to_thread(
-                maybe_post_jack_setup,
+                maybe_post_playbook_setup,
                 symbol=worker.key.symbol,
                 timeframe=worker.key.timeframe,
                 price=price,
-                jack=jack,
-                regime=jack_regime,
+                swing=swing,
+                regime=market_regime,
                 flag_labels=list(ev.reasons or []),
             )
             if out:
                 await self._notify_square_post(
-                    worker, out, title="币安广场已发打法帖", kind="jack_setup", price=price
+                    worker, out, title="币安广场已发打法帖", kind="playbook_setup", price=price
                 )
 
     async def _evaluate_and_alert(self, worker: StreamWorker) -> None:
@@ -2595,34 +2595,34 @@ class MonitorHub:
             worker.closed_bars,
         )
 
-        jack = jack_regime = None
-        if get_settings().monitor_rule_jack:
+        swing = market_regime = None
+        if get_settings().monitor_rule_market_regime:
             try:
-                jack, jack_regime = await self._refresh_jack_live(worker)
+                swing, market_regime = await self._refresh_regime_live(worker)
             except Exception:
-                logger.exception("jack live failed %s", worker.key)
+                logger.exception("swing live failed %s", worker.key)
 
         # 规则批次（页面全量；TG 受白名单限制，默认不含噪音规则）
         if settings.monitor_rules_enabled:
             try:
                 merged = dict(worker.rule_state)
-                hub_jack = self._jack_alert_state.get(worker.key.symbol) or {}
-                for k in ("jack_regime", "jack_side", "jack_flags"):
-                    if k in hub_jack:
-                        merged[k] = hub_jack[k]
+                hub_swing = self._regime_alert_state.get(worker.key.symbol) or {}
+                for k in ("market_regime", "regime_side", "regime_flags"):
+                    if k in hub_swing:
+                        merged[k] = hub_swing[k]
                 events, new_state = evaluate_closed_bar_rules(
                     worker.series,
                     merged,
                     self._rule_config(self._htf_bias_for(worker)),
-                    jack=jack,
-                    jack_regime=jack_regime,
+                    swing=swing,
+                    market_regime=market_regime,
                     htf_series=self._htf_series_for(worker),
                 )
                 worker.rule_state = new_state
-                self._jack_alert_state[worker.key.symbol] = {
-                    "jack_regime": new_state.get("jack_regime"),
-                    "jack_side": new_state.get("jack_side"),
-                    "jack_flags": new_state.get("jack_flags"),
+                self._regime_alert_state[worker.key.symbol] = {
+                    "market_regime": new_state.get("market_regime"),
+                    "regime_side": new_state.get("regime_side"),
+                    "regime_flags": new_state.get("regime_flags"),
                 }
                 if events:
                     for e in events:
@@ -2651,16 +2651,16 @@ class MonitorHub:
                             marker_time=ev.marker_time,
                             reasons=list(ev.reasons),
                         )
-                # Jack 三盘变化 → 币安广场短评（仅 jack_regime，白名单品种/周期）
+                # 三盘变化 → 币安广场短评（仅 market_regime，白名单品种/周期）
                 try:
-                    await self._maybe_square_jack_posts(
-                        worker, events, jack=jack, jack_regime=jack_regime
+                    await self._maybe_square_regime_posts(
+                        worker, events, swing=swing, market_regime=market_regime
                     )
                 except Exception:
-                    logger.exception("square jack post failed %s", worker.key)
+                    logger.exception("square swing post failed %s", worker.key)
                 try:
                     await self._maybe_square_touch_posts(
-                        worker, events, jack=jack, jack_regime=jack_regime
+                        worker, events, swing=swing, market_regime=market_regime
                     )
                 except Exception:
                     logger.exception("square touch post failed %s", worker.key)
@@ -2710,12 +2710,12 @@ class MonitorHub:
             logger.exception("eric swing evaluate failed %s", worker.key)
 
         try:
-            await self._evaluate_paper(worker, jack, jack_regime)
+            await self._evaluate_paper(worker, swing, market_regime)
         except Exception:
             logger.exception("paper evaluate failed %s", worker.key)
 
         try:
-            await self._maybe_square_move_post(worker, jack, jack_regime)
+            await self._maybe_square_move_post(worker, swing, market_regime)
         except Exception:
             logger.exception("square move post failed %s", worker.key)
 

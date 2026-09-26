@@ -1,14 +1,14 @@
-"""Jack（零下二度）「强势盘低多」打法的可执行规则 + 事件式回测。
+"""「强势盘低多」打法的可执行规则 + 事件式回测。
 
-把点位引擎（jack_levels / jack_regime）的候选位变成一张**可下单的计划**（OrderPlan），
+把点位引擎（swing_levels / market_regime）的候选位变成一张**可下单的计划**（OrderPlan），
 回测与纸面/实盘共用同一个 `build_plan()`，保证回测的就是将来跑的。
 
 规则 v1（只做多；空单镜像另测）：
 - 触发：4h 收盘时 regime == strong_trend 且 trade_side == long（日线/周线定调多 + 小时走强），防守位未破。
-- 挂单：限价多 = 回踩 0.618（Jack「回测 96–94 再进」）；没有则用近支撑。要求在现价下方 0.4%–4%。
+- 挂单：限价多 = 回踩 0.618；没有则用近支撑。要求在现价下方 0.4%–4%。
 - 止损：min(近枢轴低, 4h BOLL 下轨) 再下 0.3%；距离限定 0.8%–4%（太窄扫针，太宽盈亏比差）。
-- 第一止盈（一半）：近阻力；若盈亏比 < 1.2 用本波 1.5 延伸；成交后止损上移到成本（Jack「保本损」）。
-- 余仓：4h 收盘跌破 4h BOLL 中轨离场（Jack「跌破中轨不拿」），或持有满 MAX_HOLD 根。
+- 第一止盈（一半）：近阻力；若盈亏比 < 1.2 用本波 1.5 延伸；成交后止损上移到成本（保本损）。
+- 余仓：4h 收盘跌破 4h BOLL 中轨离场，或持有满 MAX_HOLD 根。
 - 挂单有效期 6 根 4h（24h）；同一品种同时只持一仓。
 - 仓位：每笔风险 = 权益 × risk_pct；名义 ≤ 权益 × max_leverage。
 
@@ -21,8 +21,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from analyst.compute.jack_levels import JackLevels
-from analyst.compute.jack_regime import JackRegime
+from analyst.compute.swing_levels import SwingLevels
+from analyst.compute.market_regime import MarketRegime
 from analyst.data.fetcher import Candle, CandleSeries
 
 MAKER_FEE = 0.0002
@@ -31,7 +31,7 @@ SLIPPAGE = 0.0002
 
 
 @dataclass
-class JackPullbackConfig:
+class PullbackLongConfig:
     risk_pct: float = 1.0          # 每笔风险占权益 %
     max_leverage: float = 3.0      # 名义敞口上限（倍权益）
     entry_min_below: float = 0.004  # 挂单至少低于现价 0.4%
@@ -80,15 +80,15 @@ class OrderPlan:
 def build_plan(
     symbol: str,
     price: float,
-    jack: JackLevels,
-    reg: JackRegime,
+    swing: SwingLevels,
+    reg: MarketRegime,
     now: datetime,
-    cfg: JackPullbackConfig | None = None,
+    cfg: PullbackLongConfig | None = None,
     *,
     bar_seconds: int = 4 * 3600,
 ) -> OrderPlan | None:
     """从当前点位/盘面生成一张计划；不满足条件返回 None。回测与实盘共用。"""
-    cfg = cfg or JackPullbackConfig()
+    cfg = cfg or PullbackLongConfig()
     if reg.regime != "strong_trend" or reg.trade_side != "long" or reg.defense_broken:
         return None
     # 入场位：按 entry_pref 排优先级（默认回踩 0.618 → 近支撑）
@@ -106,7 +106,7 @@ def build_plan(
             break
     if entry is None:
         return None
-    # 止损：近枢轴低 / 4h BOLL 下轨中较高者（离入场更近的那个更贴 Jack「防守在下方强支撑」），再下 pad
+    # 止损：近枢轴低 / 4h BOLL 下轨中较高者（离入场更近，贴在下方强支撑），再下 pad
     stop_cands = [x for x in (list(reg.pivot_supports)[:2] + [reg.boll_4h_lower]) if x and x < entry]
     stop = (max(stop_cands) if stop_cands else entry * (1 - cfg.max_stop_pct)) * (1 - cfg.stop_pad)
     dist = 1 - stop / entry
@@ -141,7 +141,7 @@ def build_plan(
     )
 
 
-def position_size(equity: float, plan: OrderPlan, cfg: JackPullbackConfig) -> float:
+def position_size(equity: float, plan: OrderPlan, cfg: PullbackLongConfig) -> float:
     """按风险定仓位（基础货币数量），并受名义杠杆上限约束。"""
     risk_usd = equity * cfg.risk_pct / 100.0
     per_unit = abs(plan.entry - plan.stop)
@@ -189,15 +189,15 @@ def run_backtest(
     h4: CandleSeries,
     daily: CandleSeries,
     *,
-    cfg: JackPullbackConfig | None = None,
+    cfg: PullbackLongConfig | None = None,
     equity0: float = 10_000.0,
     start: datetime | None = None,
     funding: list[tuple[int, float]] | None = None,
 ) -> dict[str, Any]:
     """事件式回测：4h 收盘出计划 → 1h 撮合限价/止损/止盈 → 4h 收盘管理余仓。"""
-    from analyst.monitor.jack_live import compute_monitor_jack
+    from analyst.monitor.regime_live import compute_monitor_regime
 
-    cfg = cfg or JackPullbackConfig()
+    cfg = cfg or PullbackLongConfig()
     equity = equity0
     peak = equity
     max_dd = 0.0
@@ -263,7 +263,7 @@ def run_backtest(
             curve.append((t_close, equity))
             continue
         price = bar.close
-        jack, reg = compute_monitor_jack(
+        swing, reg = compute_monitor_regime(
             symbol=symbol, current_price=price, worker_series=w, daily_series=d, hourly_series=hh, h4_series=w,
             m5_series=None, btc_series=None,
             high_24h=max(x.high for x in hh.candles[-24:]), low_24h=min(x.low for x in hh.candles[-24:]),
@@ -287,7 +287,7 @@ def run_backtest(
                 trades.append(tr)
                 open_trade = None
         if open_trade is None and pending is None:
-            pending = build_plan(symbol, price, jack, reg, t_close, cfg)
+            pending = build_plan(symbol, price, swing, reg, t_close, cfg)
         curve.append((t_close, equity))
         peak = max(peak, equity)
         max_dd = min(max_dd, equity / peak - 1)

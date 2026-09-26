@@ -1,4 +1,4 @@
-"""零下二度风格「波段锁点」预计算。
+"""「波段锁点」预计算。
 
 把可复现的点位公式放在代码里，再以短字段注入 LLM user 模板，
 避免把整套方法论 thrash 进 system prompt。
@@ -14,7 +14,7 @@ from analyst.data.fetcher import CandleSeries
 
 
 @dataclass
-class JackLevels:
+class SwingLevels:
     """预计算锁点（供基线计划 / AI 模板 / Web 展示）。"""
 
     swing_high: float
@@ -190,7 +190,7 @@ def _rs_note(
     return f"与BTC同步（近窗 {a_ret:+.1f}% vs {b_ret:+.1f}%）"
 
 
-def compute_jack_levels(
+def compute_swing_levels(
     *,
     current_price: float,
     structure: Structure,
@@ -200,7 +200,7 @@ def compute_jack_levels(
     btc_series: CandleSeries | None = None,
     symbol: str = "",
     confluence_pct: float = 0.012,
-) -> JackLevels:
+) -> SwingLevels:
     """从结构/斐波/日线指标计算锁点。"""
     fib = fib or compute_fib(structure.recent_high, structure.recent_low)
     boll_mid = None
@@ -251,7 +251,7 @@ def compute_jack_levels(
     if touch_count >= 2:
         summary += f"；关键位 {_fmt(touch_level)} 已第 {touch_count} 次触及"
 
-    return JackLevels(
+    return SwingLevels(
         swing_high=fib.high,
         swing_low=fib.low,
         rebound_382=fib.rebound_382,

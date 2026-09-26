@@ -1,14 +1,14 @@
-"""盯盘收盘规则接入 Jack 三盘。"""
+"""盯盘收盘规则接入三盘。"""
 
 from dataclasses import replace
 from datetime import datetime, timedelta
 
 from analyst.compute.fibonacci import compute_fib
-from analyst.compute.jack_levels import compute_jack_levels
-from analyst.compute.jack_regime import compute_jack_regime
+from analyst.compute.swing_levels import compute_swing_levels
+from analyst.compute.market_regime import compute_market_regime
 from analyst.compute.structure import Structure
 from analyst.data.fetcher import Candle, CandleSeries
-from analyst.monitor.jack_live import compute_monitor_jack
+from analyst.monitor.regime_live import compute_monitor_regime
 from analyst.monitor.rules import RuleConfig, evaluate_closed_bar_rules, is_ai_candidate
 
 
@@ -46,11 +46,11 @@ def _quiet_cfg() -> RuleConfig:
         enable_baseline=False,
         enable_cvd=False,
         enable_eric=False,
-        enable_jack=True,
+        enable_market_regime=True,
     )
 
 
-def _sample_jack_regime():
+def _sample_market_regime():
     st = Structure(
         trend="up",
         supports=[62000.0],
@@ -60,7 +60,7 @@ def _sample_jack_regime():
         recent_low=57758.0,
     )
     fib = compute_fib(st.recent_high, st.recent_low)
-    jack = compute_jack_levels(
+    swing = compute_swing_levels(
         current_price=72000.0,
         structure=st,
         fib=fib,
@@ -70,92 +70,92 @@ def _sample_jack_regime():
         },
         symbol="BTC/USDT",
     )
-    reg = compute_jack_regime(current_price=72000.0, jack=jack, structure=st)
-    return jack, reg
+    reg = compute_market_regime(current_price=72000.0, swing=swing, structure=st)
+    return swing, reg
 
 
-def test_jack_regime_first_bar_silent_then_change_fires():
+def test_market_regime_first_bar_silent_then_change_fires():
     series = _series(_flat(60))
     cfg = _quiet_cfg()
-    jack, reg = _sample_jack_regime()
+    swing, reg = _sample_market_regime()
     range_reg = replace(reg, regime="range", regime_zh="震荡盘", trade_side="wait")
 
     events, state = evaluate_closed_bar_rules(
-        series, {}, cfg, jack=jack, jack_regime=range_reg
+        series, {}, cfg, swing=swing, market_regime=range_reg
     )
-    assert not [e for e in events if e.rule.startswith("jack_")]
-    assert state.get("jack_regime") == "range"
+    assert not [e for e in events if e.rule in ("market_regime", "playbook_setup")]
+    assert state.get("market_regime") == "range"
 
     strong = replace(reg, regime="strong_trend", regime_zh="强势盘", trade_side="long")
     events2, state2 = evaluate_closed_bar_rules(
-        series, state, cfg, jack=jack, jack_regime=strong
+        series, state, cfg, swing=swing, market_regime=strong
     )
-    hits = [e for e in events2 if e.rule == "jack_regime"]
+    hits = [e for e in events2 if e.rule == "market_regime"]
     assert hits, "三盘切换应告警"
     assert "强势盘" in hits[0].title
     assert hits[0].direction == "long"
 
     events3, _ = evaluate_closed_bar_rules(
-        series, state2, cfg, jack=jack, jack_regime=strong
+        series, state2, cfg, swing=swing, market_regime=strong
     )
-    assert not [e for e in events3 if e.rule == "jack_regime"]
+    assert not [e for e in events3 if e.rule == "market_regime"]
 
 
-def test_jack_setup_fires_on_new_flag():
+def test_playbook_setup_fires_on_new_flag():
     series = _series(_flat(60))
     cfg = _quiet_cfg()
-    jack, reg = _sample_jack_regime()
+    swing, reg = _sample_market_regime()
     seeded = {
-        "jack_regime": reg.regime,
-        "jack_side": reg.trade_side,
-        "jack_flags": [],
+        "market_regime": reg.regime,
+        "regime_side": reg.trade_side,
+        "regime_flags": [],
     }
     flagged = replace(reg, below_waist=True)
     events, state = evaluate_closed_bar_rules(
-        series, seeded, cfg, jack=jack, jack_regime=flagged
+        series, seeded, cfg, swing=swing, market_regime=flagged
     )
-    setups = [e for e in events if e.rule == "jack_setup"]
+    setups = [e for e in events if e.rule == "playbook_setup"]
     assert setups
     assert "腰斩" in "".join(setups[0].reasons)
-    assert "below_waist" in (state.get("jack_flags") or [])
+    assert "below_waist" in (state.get("regime_flags") or [])
 
 
-def test_jack_disabled_skips_events():
+def test_swing_disabled_skips_events():
     series = _series(_flat(60))
     cfg = _quiet_cfg()
-    cfg.enable_jack = False
-    jack, reg = _sample_jack_regime()
-    state = {"jack_regime": "range", "jack_side": "wait", "jack_flags": []}
+    cfg.enable_market_regime = False
+    swing, reg = _sample_market_regime()
+    state = {"market_regime": "range", "regime_side": "wait", "regime_flags": []}
     events, _ = evaluate_closed_bar_rules(
-        series, state, cfg, jack=jack, jack_regime=reg
+        series, state, cfg, swing=swing, market_regime=reg
     )
-    assert not [e for e in events if e.rule.startswith("jack_")]
+    assert not [e for e in events if e.rule in ("market_regime", "playbook_setup")]
 
 
-def test_jack_regime_is_ai_quality_rule():
-    assert is_ai_candidate(["jack_regime"])
-    assert is_ai_candidate(["jack_setup"])
+def test_market_regime_is_ai_quality_rule():
+    assert is_ai_candidate(["market_regime"])
+    assert is_ai_candidate(["playbook_setup"])
 
 
-def test_compute_monitor_jack_returns_regime():
+def test_compute_monitor_regime_returns_regime():
     candles = _flat(80, base=64000.0)
     series = CandleSeries(symbol="BTC/USDT", timeframe="15m", candles=candles)
-    jack, reg = compute_monitor_jack(
+    swing, reg = compute_monitor_regime(
         symbol="BTC/USDT",
         current_price=64000.0,
         worker_series=series,
     )
-    assert jack.swing_high > 0
+    assert swing.swing_high > 0
     assert reg.regime_zh
     assert reg.playbook_line
 
 
-def test_jack_waist_uses_cycle_high_and_hist_decel():
+def test_swing_waist_uses_cycle_high_and_hist_decel():
     """腰斩线 = 周期最高点×0.5（非最近波段高点）；MACD 归零减速 = 柱缩短。"""
     from datetime import datetime, timedelta
 
-    from analyst.compute.jack_regime import _macd_decel_to_zero, compute_jack_regime
-    from analyst.compute.jack_levels import compute_jack_levels
+    from analyst.compute.market_regime import _macd_decel_to_zero, compute_market_regime
+    from analyst.compute.swing_levels import compute_swing_levels
     from analyst.compute.structure import detect_structure
     from analyst.data.fetcher import Candle, CandleSeries
 
@@ -170,8 +170,8 @@ def test_jack_waist_uses_cycle_high_and_hist_decel():
     daily = CandleSeries("BTC/USDT", "1d", [c(i, x) for i, x in enumerate(closes)])
     h4 = CandleSeries("BTC/USDT", "4h", [c(i, 63000 + (i % 5) * 100, 4) for i in range(200)])
     structure = detect_structure(h4)
-    jack = compute_jack_levels(current_price=63030.0, structure=structure, primary_series=h4, symbol="BTC/USDT")
-    reg = compute_jack_regime(current_price=63030.0, jack=jack, structure=structure, primary_series=h4, daily_series=daily, h4_series=h4)
+    swing = compute_swing_levels(current_price=63030.0, structure=structure, primary_series=h4, symbol="BTC/USDT")
+    reg = compute_market_regime(current_price=63030.0, swing=swing, structure=structure, primary_series=h4, daily_series=daily, h4_series=h4)
     assert reg.waist_line is not None and abs(reg.waist_line - 126000 * 1.01 / 2) < 1
     assert reg.below_waist
 
@@ -186,11 +186,11 @@ def test_jack_waist_uses_cycle_high_and_hist_decel():
     assert not _macd_decel_to_zero(still)
 
 
-def test_jack_level_formulas_from_tweets():
+def test_swing_level_formulas_from_tweets():
     """2026-08 推文里可复现的公式：日内回踩位（振幅修正）、自然月 BOLL、周期斐波梯子、整数关口屏障。"""
     from datetime import datetime, timedelta
 
-    from analyst.compute.jack_regime import (
+    from analyst.compute.market_regime import (
         _cycle_fib,
         _pullback_levels,
         _resample_calendar_month,
@@ -209,7 +209,7 @@ def test_jack_level_formulas_from_tweets():
     bars = [c(i, lo, hi) for i, (lo, hi) in enumerate(zip(lows, highs))]
     pb50, pb618, used, note = _pullback_levels(CandleSeries("BTC/USDT", "1h", bars))
     assert used == 74214 and "改用日内回踩低" in note
-    assert abs(pb618 - (79556 - (79556 - 74214) * 0.618)) < 1e-6  # ≈76255，Jack 76267，实际低 76237
+    assert abs(pb618 - (79556 - (79556 - 74214) * 0.618)) < 1e-6  # ≈76255，对照标注 76267，实际低 76237
     # 振幅小（<6%）时用 24h 低点本身
     calm = [c(i, 2306 + i * 2, 2306 + i * 2 + 60) for i in range(24)]
     calm[8] = c(8, 2370, 2449)
@@ -234,14 +234,14 @@ def test_jack_level_formulas_from_tweets():
     lvl, below, above = _round_barriers(97.0)
     assert lvl == 100 and abs(below[0] - 96) < 1e-9 and abs(above[1] - 106) < 1e-9
     assert _round_barriers(78746.0)[0] == 80000  # 半量级网格：8w 关口
-    assert _round_barriers(2420.0)[0] == 2500  # Jack「站稳 2500」
+    assert _round_barriers(2420.0)[0] == 2500  # 站稳整数关口 2500
     assert _round_barriers(63088.0)[0] == 65000
 
 
-def test_jack_4h_boll_pivots_extension():
+def test_swing_4h_boll_pivots_extension():
     from datetime import datetime, timedelta
 
-    from analyst.compute.jack_regime import _boll_4h, _extension_targets, _pivot_levels
+    from analyst.compute.market_regime import _boll_4h, _extension_targets, _pivot_levels
     from analyst.data.fetcher import Candle, CandleSeries
 
     def c(i, lo, hi, hours=4):

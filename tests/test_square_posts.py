@@ -1,12 +1,12 @@
 """币安广场短评：文案与冷却。"""
 
-from analyst.compute.jack_levels import JackLevels
-from analyst.compute.jack_regime import JackRegime
-from analyst.monitor.square_posts import compose_jack_square_post, square_symbols_set
+from analyst.compute.swing_levels import SwingLevels
+from analyst.compute.market_regime import MarketRegime
+from analyst.monitor.square_posts import compose_regime_square_post, square_symbols_set
 
 
 def _sample():
-    jack = JackLevels(
+    swing = SwingLevels(
         swing_high=70000,
         swing_low=60000,
         rebound_382=63820,
@@ -26,7 +26,7 @@ def _sample():
         rs_note="—",
         summary_line="测",
     )
-    reg = JackRegime(
+    reg = MarketRegime(
         regime="strong_trend",
         regime_zh="强势盘",
         trade_side="long",
@@ -48,16 +48,16 @@ def _sample():
         playbook_line="市价小头仓 + 突破加仓",
         summary_line="测",
     )
-    return jack, reg
+    return swing, reg
 
 
-def test_compose_jack_square_post_has_direction_and_levels():
-    jack, reg = _sample()
-    text = compose_jack_square_post(
+def test_compose_regime_square_post_has_direction_and_levels():
+    swing, reg = _sample()
+    text = compose_regime_square_post(
         symbol="BTC/USDT",
         timeframe="4h",
         price=65000.0,
-        jack=jack,
+        swing=swing,
         regime=reg,
         compact=False,
     )
@@ -74,15 +74,15 @@ def test_compose_jack_square_post_has_direction_and_levels():
 
 
 def test_compose_short_prediction_and_tags():
-    jack, reg = _sample()
+    swing, reg = _sample()
     reg.trade_side = "short"
     reg.regime = "weak_trend"
     reg.regime_zh = "弱势盘"
-    text = compose_jack_square_post(
+    text = compose_regime_square_post(
         symbol="ETH/USDT",
         timeframe="1h",
         price=2400.0,
-        jack=jack,
+        swing=swing,
         regime=reg,
         compact=False,
     )
@@ -147,9 +147,9 @@ def test_post_levels_filtered_by_price_side():
     from types import SimpleNamespace
     from analyst.monitor.square_posts import _clip_sentence, _numbers, _post_levels
 
-    jack = SimpleNamespace(defense_level=77704.0, rebound_382=69660.0, rebound_618=74094.0, touch_level=None)
+    swing = SimpleNamespace(defense_level=77704.0, rebound_382=69660.0, rebound_618=74094.0, touch_level=None)
     reg = SimpleNamespace(trade_side="long", nearest_support=77704.0, nearest_resistance=80499.9, ext_150=81949.85, ext_1618=82292.0)
-    defense, near, target = _post_levels(reg, jack, 79054.0)
+    defense, near, target = _post_levels(reg, swing, 79054.0)
     assert defense == 77704.0 and near == 80499.9 and target == 81949.85  # 锁点反弹位在现价下方，不能当近压/目标
     reg_s = SimpleNamespace(trade_side="short", nearest_support=2431.0, nearest_resistance=2566.0, ext_150=None, ext_1618=None)
     d, n, t = _post_levels(reg_s, SimpleNamespace(defense_level=2566.0, rebound_382=2400.0, rebound_618=2350.0, touch_level=None), 2505.0)
@@ -202,12 +202,12 @@ def test_touch_resistance_long_regime_uses_long_cta():
         nearest_support=693.23, nearest_resistance=719.14,
         ext_150=727.11, ext_1618=730.0,
     )
-    jack = SimpleNamespace(
+    swing = SimpleNamespace(
         defense_level=693.23, rebound_382=680.0, rebound_618=700.0, touch_level=707.77,
     )
     text = compose_level_touch_post(
         symbol="BNB/USDT", timeframe="4h", price=705.93, level=707.77,
-        kind="resistance", jack=jack, regime=reg,
+        kind="resistance", swing=swing, regime=reg,
     )
     assert "偏多" in text
     assert "可空" not in text
@@ -269,7 +269,7 @@ def test_btc_touch_resistance_long_regime_cta():
         ext_150=82818.0,
         ext_1618=85000.0,
     )
-    jack = SimpleNamespace(
+    swing = SimpleNamespace(
         defense_level=77704.05,
         rebound_382=76000.0,
         rebound_618=78500.0,
@@ -281,7 +281,7 @@ def test_btc_touch_resistance_long_regime_cta():
         price=79480.20,
         level=79555.50,
         kind="resistance",
-        jack=jack,
+        swing=swing,
         regime=reg,
     )
     assert "偏多" in template
@@ -333,12 +333,12 @@ def test_enforce_square_anchors_restores_cashtag_and_cta():
 def test_polish_enforces_anchors_when_llm_drops_dollar(monkeypatch):
     import analyst.llm.chat as chat
     import analyst.monitor.square_posts as sp
-    from analyst.monitor.square_posts import compose_jack_square_post, polish_square_text
+    from analyst.monitor.square_posts import compose_regime_square_post, polish_square_text
     from tests.test_square_posts import _sample
 
-    jack, reg = _sample()
-    raw = compose_jack_square_post(
-        symbol="BTC/USDT", timeframe="4h", price=65000.0, jack=jack, regime=reg, compact=True
+    swing, reg = _sample()
+    raw = compose_regime_square_post(
+        symbol="BTC/USDT", timeframe="4h", price=65000.0, swing=swing, regime=reg, compact=True
     )
 
     class _Msg:
@@ -391,13 +391,13 @@ def test_polish_enforces_anchors_when_llm_drops_dollar(monkeypatch):
     assert "点 $BTC" in out
 
 
-def test_compose_jack_compact_has_cta():
-    jack, reg = _sample()
-    text = compose_jack_square_post(
+def test_compose_regime_compact_has_cta():
+    swing, reg = _sample()
+    text = compose_regime_square_post(
         symbol="BTC/USDT",
         timeframe="4h",
         price=65000.0,
-        jack=jack,
+        swing=swing,
         regime=reg,
         compact=True,
     )
@@ -408,15 +408,15 @@ def test_compose_jack_compact_has_cta():
     assert "指标怎么看" not in text
 
 
-def test_compose_jack_setup_post():
-    from analyst.monitor.square_posts import compose_jack_setup_post
+def test_compose_playbook_setup_post():
+    from analyst.monitor.square_posts import compose_playbook_setup_post
 
-    jack, reg = _sample()
-    text = compose_jack_setup_post(
+    swing, reg = _sample()
+    text = compose_playbook_setup_post(
         symbol="SOL/USDT",
         timeframe="4h",
         price=101.0,
-        jack=jack,
+        swing=swing,
         regime=reg,
         flag_labels=["3日金叉", "大小周期共振，可市价冲"],
     )
@@ -428,14 +428,14 @@ def test_compose_jack_setup_post():
 def test_compose_level_touch_post():
     from analyst.monitor.square_posts import compose_level_touch_post
 
-    jack, reg = _sample()
+    swing, reg = _sample()
     text = compose_level_touch_post(
         symbol="ETH/USDT",
         timeframe="4h",
         price=2410.0,
         level=2400.0,
         kind="support",
-        jack=jack,
+        swing=swing,
         regime=reg,
     )
     assert "$ETH" in text
@@ -509,7 +509,7 @@ def _touch_regime(*, side: str, support: float, resistance: float, ext150: float
     )
 
 
-def _touch_jack(*, defense: float, touch: float):
+def _touch_swing(*, defense: float, touch: float):
     from types import SimpleNamespace
 
     return SimpleNamespace(
@@ -524,14 +524,14 @@ def test_touch_resistance_short_regime_uses_short_cta():
     from analyst.monitor.square_posts import compose_level_touch_post
 
     reg = _touch_regime(side="short", support=680.0, resistance=707.77, ext150=650.0)
-    jack = _touch_jack(defense=707.77, touch=707.77)
+    swing = _touch_swing(defense=707.77, touch=707.77)
     text = compose_level_touch_post(
         symbol="BNB/USDT",
         timeframe="4h",
         price=705.93,
         level=707.77,
         kind="resistance",
-        jack=jack,
+        swing=swing,
         regime=reg,
     )
     assert "偏空" in text
@@ -544,14 +544,14 @@ def test_touch_support_long_regime_uses_long_cta():
     from analyst.monitor.square_posts import compose_level_touch_post
 
     reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
-    jack = _touch_jack(defense=77704.05, touch=77704.05)
+    swing = _touch_swing(defense=77704.05, touch=77704.05)
     text = compose_level_touch_post(
         symbol="BTC/USDT",
         timeframe="4h",
         price=79480.20,
         level=77704.05,
         kind="support",
-        jack=jack,
+        swing=swing,
         regime=reg,
     )
     assert "守住" in text
@@ -597,14 +597,14 @@ def test_polish_enforce_fixes_inverted_cta_from_llm(monkeypatch):
     from analyst.monitor.square_posts import compose_level_touch_post, polish_square_text
 
     reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
-    jack = _touch_jack(defense=77704.05, touch=79555.50)
+    swing = _touch_swing(defense=77704.05, touch=79555.50)
     template = compose_level_touch_post(
         symbol="BTC/USDT",
         timeframe="4h",
         price=79480.20,
         level=79555.50,
         kind="resistance",
-        jack=jack,
+        swing=swing,
         regime=reg,
     )
     bad = (
@@ -632,14 +632,14 @@ def test_direction_consistent_rejects_inverted_before_enforce():
     from analyst.monitor.square_posts import _direction_consistent, compose_level_touch_post
 
     reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
-    jack = _touch_jack(defense=77704.05, touch=79555.50)
+    swing = _touch_swing(defense=77704.05, touch=79555.50)
     template = compose_level_touch_post(
         symbol="BTC/USDT",
         timeframe="4h",
         price=79480.20,
         level=79555.50,
         kind="resistance",
-        jack=jack,
+        swing=swing,
         regime=reg,
     )
     bad = (
@@ -654,14 +654,14 @@ def test_polish_accepts_valid_long_rewrite_llm(monkeypatch):
     from analyst.monitor.square_posts import compose_level_touch_post, polish_square_text
 
     reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
-    jack = _touch_jack(defense=77704.05, touch=79555.50)
+    swing = _touch_swing(defense=77704.05, touch=79555.50)
     template = compose_level_touch_post(
         symbol="BTC/USDT",
         timeframe="4h",
         price=79480.20,
         level=79555.50,
         kind="resistance",
-        jack=jack,
+        swing=swing,
         regime=reg,
     )
     good = (
@@ -692,14 +692,14 @@ def test_publish_square_post_enforces_long_cta_after_bad_polish(monkeypatch, tmp
     from analyst.monitor.square_posts import compose_level_touch_post, _publish_square_post
 
     reg = _touch_regime(side="long", support=77704.05, resistance=81270.0, ext150=82818.0)
-    jack = _touch_jack(defense=77704.05, touch=79555.50)
+    swing = _touch_swing(defense=77704.05, touch=79555.50)
     template = compose_level_touch_post(
         symbol="BTC/USDT",
         timeframe="4h",
         price=79480.20,
         level=79555.50,
         kind="resistance",
-        jack=jack,
+        swing=swing,
         regime=reg,
     )
     bad = (
@@ -748,10 +748,10 @@ def test_publish_square_post_enforces_long_cta_after_bad_polish(monkeypatch, tmp
 
 
 def test_move_post_up_long_uses_breakout_cta():
-    from analyst.compute.jack_regime import JackRegime
+    from analyst.compute.market_regime import MarketRegime
     from analyst.monitor.square_posts import compose_move_square_post
 
-    reg = JackRegime(
+    reg = MarketRegime(
         regime="strong_trend",
         regime_zh="强势盘",
         trade_side="long",
@@ -781,7 +781,7 @@ def test_move_post_up_long_uses_breakout_cta():
         price=101.06,
         change_pct=5.5,
         vol_ratio=1.5,
-        jack=None,
+        swing=None,
         regime=reg,
         compact=True,
     )

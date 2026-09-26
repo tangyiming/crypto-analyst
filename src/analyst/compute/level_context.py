@@ -53,7 +53,7 @@ def supplement_resistances(
     """现价上方的阻力：结构位 + 近阻力 + 枢轴阻力，近到远至多 limit 档。
 
     结构识别只留高于快照收盘的枢轴高点。价格创出窗口新高时该列表为空，
-    但 jack_regime 仍可能有近阻力 / 4h·日线枢轴。只收录已有价位，不外推。
+    但 market_regime 仍可能有近阻力 / 4h·日线枢轴。只收录已有价位，不外推。
     """
     prices: list[float] = []
     for row in resistances or []:

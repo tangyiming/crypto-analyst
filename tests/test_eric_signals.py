@@ -72,7 +72,7 @@ def _eric_only_cfg(**kwargs) -> RuleConfig:
         enable_fib_zone=False,
         enable_baseline=False,
         enable_cvd=False,
-        enable_jack=False,
+        enable_market_regime=False,
         enable_eric=True,
         **kwargs,
     )

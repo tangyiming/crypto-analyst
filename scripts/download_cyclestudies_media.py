@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""下载 @CycleStudies 推文配图到 .cache/cyclestudies_tweets/media/（不碰 jack）。"""
+"""下载 @CycleStudies 推文配图到 .cache/cyclestudies_tweets/media/（不碰参考推文缓存）。"""
 
 from __future__ import annotations
 

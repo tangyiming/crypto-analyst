@@ -33,7 +33,7 @@ API：`GET /api/schedule?tz=Asia/Dubai` · 开关见 `MONITOR_SCHEDULE_*`。
 |---|---|---|---|
 | **做什么** | 多周期 K 线 + 规则告警（`cycle_switch` / `xs_momentum` / `funding_carry`）；候选可再调 AI 确认后推 TG | 多周期数据 + **波段锁点预计算** → LLM 出观点与计划 → 到期验证 | Wolfy 四年周期 + `cycle_switch`；经典策略长周期回测 |
 | **入口** | 打开 Web；开常驻后关页面也推 TG | 右侧侧栏另一页「AI行情分析」，或 `analyst practice` | 顶栏「周期」；`analyst cycle-outlook` / `backtest-classic` |
-| **数据** | 观察列表 + 告警；K 线本身不长期落库 | 会话写入 `analyst.db`（含 `jack_levels`） | BTC 日线定日历相位；组合回测分页拉 2–5 年历史 |
+| **数据** | 观察列表 + 告警；K 线本身不长期落库 | 会话写入 `analyst.db`（含 `swing_levels`） | BTC 日线定日历相位；组合回测分页拉 2–5 年历史 |
 
 ```
 K 线盯盘（Web / TG）  ←→  选币做 AI 点评（锁点注入）落库  →  到期验证  →  历史复盘
@@ -79,26 +79,26 @@ K 线盯盘（Web / TG）  ←→  选币做 AI 点评（锁点注入）落库  
 
 参考公开交易笔记中的可复现部分：**公式在代码里算，提示词只加短纪律**，避免撑爆 Groq / LLM 上下文。
 
-#### 三盘分类（`jack_regime`）
+#### 三盘分类（`market_regime`）
 
-创建分析会话、盯盘 K 线收盘时都会预计算，注入 `{jack_regime_block}`。盯盘右侧「关键位」显示头仓、止损、止盈、支撑、阻力，打法在支撑阻力下方，并带当前盘面。
+创建分析会话、盯盘 K 线收盘时都会预计算，注入 `{market_regime_block}`。盯盘右侧「关键位」显示头仓、止损、止盈、支撑、阻力，打法在支撑阻力下方，并带当前盘面。
 
-规则引擎把三盘变化写成 `jack_regime` / `jack_setup` 告警（默认只上页面；单独命中即可作为 AI 候选）。规则基线 `generate_baseline_plan` 在收盘评估时也会带上锁点与三盘（腰斩不追空、震荡用日内 0.50–0.618 止盈）。
+规则引擎把三盘变化写成 `market_regime` / `playbook_setup` 告警（默认只上页面；单独命中即可作为 AI 候选）。规则基线 `generate_baseline_plan` 在收盘评估时也会带上锁点与三盘（腰斩不追空、震荡用日内 0.50–0.618 止盈）。
 
-关闭：`MONITOR_RULE_JACK=false`。
+关闭：`MONITOR_RULE_MARKET_REGIME=false`。
 
 **币安广场（内容挖矿）**：`SQUARE_POST_ENABLED=true` 且配置 `BINANCE_SQUARE_OPENAPI_KEY` 后自动发帖，默认 **短讯 + AI 润色**（交易员口吻；数字 / `$BTC` 标签 / 末行 CTA 强制保留，失败回退模板）。触发源：
 
 | 触发 | 说明 | 默认冷却 |
 |------|------|----------|
-| `jack_regime` | 三盘/方向切换 | 同币同周期 2h |
-| `jack_setup` | 金叉/加速/扎针等打法提示 | 6h |
+| `market_regime` | 三盘/方向切换 | 同币同周期 2h |
+| `playbook_setup` | 金叉/加速/扎针等打法提示 | 6h |
 | `structure_touch` | 支撑/阻力触碰守住 | 同位 4h |
 | 加速行情 | 4h 单根涨跌 ≥2%/3% 或放量 | 同品种 4h |
 | Eric 超卖 | BTC/ETH 日/周线信号 | 20h |
 | 每日复盘 | UTC 与日报同刻 | 1 次/天 |
 
-默认品种含 BTC/ETH/BNB/SOL/AAVE/DOGE/LINK/AVAX；周期 `4h,1d,1w`（需 `MONITOR_DAEMON_TIMEFRAMES` 含对应级别）。**配图**（Jack/触碰/加速/Eric）：Playwright 离页渲染 `chart_capture.html`，截 K 线 + Jack 点位线后走广场 `imageList` API；未装 Playwright 时自动降级纯文字。安装：`uv sync --extra square && playwright install chromium`。预览：`analyst square-post`；试发：`analyst square-post --publish --text '...'`。
+默认品种含 BTC/ETH/BNB/SOL/AAVE/DOGE/LINK/AVAX；周期 `4h,1d,1w`（需 `MONITOR_DAEMON_TIMEFRAMES` 含对应级别）。**配图**（锁点/触碰/加速/Eric）：Playwright 离页渲染 `chart_capture.html`，截 K 线 + 锁点线后走广场 `imageList` API；未装 Playwright 时自动降级纯文字。安装：`uv sync --extra square && playwright install chromium`。预览：`analyst square-post`；试发：`analyst square-post --publish --text '...'`。
 
 | 盘面 | 打法 |
 |------|------|
@@ -108,9 +108,9 @@ K 线盯盘（Web / TG）  ←→  选币做 AI 点评（锁点注入）落库  
 
 另含：防守位是否已破、12h EMA6（扎针参考）、前一日高/低、日内 TP 位；腰斩线（H×0.5）以下不追空、周线 BOLL 中轨作回调极限、4h 以下诱空、支撑虚破仍可头仓、突破加仓后「基本止盈防守」；3日/5日金叉与空心阳加速、大小周期共振市价冲、3/5日 BOLL 中轨减仓防守。头仓+补仓默认≤25%（随杠杆下调）。
 
-#### 波段锁点（`jack_levels`）
+#### 波段锁点（`swing_levels`）
 
-创建分析会话时预计算并写入 `market_snapshot.jack_levels`，再注入 user 模板 `{jack_block}`：
+创建分析会话时预计算并写入 `market_snapshot.swing_levels`，再注入 user 模板 `{swing_block}`：
 
 | 字段 | 含义 |
 |------|------|
@@ -352,11 +352,11 @@ crypto-analyst/
 │   ├── backtest/classic.py           # 组合策略回测
 │   ├── compute/cycle_theory.py       # Wolfy 刻舟求剑日历
 │   ├── compute/market_schedule.py    # 时段 / 时钟 / FF 宏观日历
-│   ├── compute/jack_levels.py        # 波段锁点预计算
-│   ├── compute/jack_regime.py        # 三盘分类 + playbook
+│   ├── compute/swing_levels.py        # 波段锁点预计算
+│   ├── compute/market_regime.py        # 三盘分类 + playbook
 │   ├── integrations/binance_square.py # 币安广场 OpenAPI 发帖
-│   ├── monitor/square_posts.py       # Jack → 广场短评
-│   ├── monitor/jack_live.py          # 盯盘收盘预计算三盘
+│   ├── monitor/square_posts.py       # 三盘变化 → 广场短评
+│   ├── monitor/regime_live.py          # 盯盘收盘预计算三盘
 │   ├── monitor/schedule_reminders.py # 日程 TG 提前提醒轮询
 │   ├── web/schedule_routes.py        # GET /api/schedule
 │   └── compute/strategies/           # cycle_switch / xs_momentum / registry

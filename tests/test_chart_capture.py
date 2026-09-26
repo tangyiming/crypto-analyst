@@ -35,13 +35,13 @@ def test_chart_levels_resistance_must_be_above_price():
         ext_150=82000.0,
         ext_1618=83500.0,
     )
-    jack = SimpleNamespace(
+    swing = SimpleNamespace(
         defense_level=77000.0,
         rebound_382=70000.0,
         rebound_618=75000.0,
         touch_level=80500.0,
     )
-    levels = _chart_levels(regime, jack, 79000.0)
+    levels = _chart_levels(regime, swing, 79000.0)
     labels = {lv["label"] for lv in levels}
     prices = {round(lv["price"]) for lv in levels}
     assert 67000 not in prices
@@ -82,7 +82,7 @@ def test_build_chart_payload_levels():
         ext_150=108.0,
         ext_1618=110.0,
     )
-    jack = SimpleNamespace(
+    swing = SimpleNamespace(
         defense_level=95.0,
         rebound_382=98.0,
         rebound_618=102.0,
@@ -93,7 +93,7 @@ def test_build_chart_payload_levels():
         timeframe="4h",
         price=100.0,
         regime=regime,
-        jack=jack,
+        swing=swing,
     )
     with patch("analyst.data.fetcher.fetch_candles", return_value=_fake_candles()):
         payload = build_chart_payload(req)

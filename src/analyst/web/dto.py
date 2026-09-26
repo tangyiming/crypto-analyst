@@ -55,11 +55,11 @@ def session_to_dto(s: Session, market_extras: dict[str, Any] | None = None) -> d
         "captured_at": market.get("captured_at"),
         "structure": (market_extras or {}).get("structure"),
         "fib": (market_extras or {}).get("fib"),
-        "jack_levels": (market_extras or {}).get(
-            "jack_levels", market.get("jack_levels")
+        "swing_levels": (market_extras or {}).get(
+            "swing_levels", market.get("swing_levels")
         ),
-        "jack_regime": (market_extras or {}).get(
-            "jack_regime", market.get("jack_regime")
+        "market_regime": (market_extras or {}).get(
+            "market_regime", market.get("market_regime")
         ),
         "indicators": (market_extras or {}).get("indicators"),
         "baseline_plan": (market_extras or {}).get("baseline_plan"),

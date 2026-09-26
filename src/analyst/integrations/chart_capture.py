@@ -73,14 +73,14 @@ def _dup_level(levels: list[dict[str, Any]], price: float, ref: float) -> bool:
     return any(abs(float(x["price"]) - float(price)) < max(abs(ref) * 1e-5, 1e-6) for x in levels)
 
 
-def _chart_levels(regime: Any | None, jack: Any | None, price: float) -> list[dict[str, Any]]:
+def _chart_levels(regime: Any | None, swing: Any | None, price: float) -> list[dict[str, Any]]:
     from analyst.monitor.square_posts import _post_levels
 
     if regime is None:
         return []
     p = float(price)
     side = getattr(regime, "trade_side", None)
-    defense, near, target = _post_levels(regime, jack, p)
+    defense, near, target = _post_levels(regime, swing, p)
     out: list[dict[str, Any]] = []
     if defense is not None and _below(p, defense):
         out.append(_level(defense, label="防守", color=_LEVEL_DEFENSE))
@@ -111,7 +111,7 @@ class SquareChartRequest:
     timeframe: str
     price: float
     regime: Any | None = None
-    jack: Any | None = None
+    swing: Any | None = None
     title: str | None = None
     subtitle: str | None = None
     extra_levels: list[dict[str, Any]] | None = None
@@ -239,7 +239,7 @@ def build_chart_payload(req: SquareChartRequest) -> dict[str, Any]:
     side_zh = {"long": "偏多", "short": "偏空"}.get(str(side or ""), "观望")
     title = req.title or f"{tag} {tf.upper()} · {regime_zh or '—'}"
     subtitle = req.subtitle or f"现价 {_fmt_chart_price(chart_price)} · {side_zh}"
-    levels = _chart_levels(req.regime, req.jack, chart_price)
+    levels = _chart_levels(req.regime, req.swing, chart_price)
     if req.extra_levels:
         for lv in req.extra_levels:
             levels.append(_normalize_extra_level(lv))

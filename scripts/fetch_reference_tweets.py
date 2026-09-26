@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""从 X/Twitter 官方 API 拉取 @jackli727 近期推文，落到本地缓存。
+"""从 X/Twitter 官方 API 拉取参考账号近期推文，落到本地缓存。
 
-网页 https://x.com/jackli727 会 403 拦爬虫，不能当数据源。
+网页时间线会 403 拦爬虫，不能当数据源。
 需要的是 **X Developer Bearer Token**（不是 LLM key）。
 
 申请：https://developer.x.com/en/portal/dashboard
@@ -10,10 +10,10 @@
   3. 写入项目根 .env：X_BEARER_TOKEN=AAAA...
 
 用法（项目根目录）：
-  .venv/bin/python scripts/fetch_jack_tweets.py              # 默认读本地，不扣费
-  .venv/bin/python scripts/fetch_jack_tweets.py --usage
-  .venv/bin/python scripts/fetch_jack_tweets.py --refresh --max 150
-  .venv/bin/python scripts/fetch_jack_tweets.py --include-replies
+  .venv/bin/python scripts/fetch_reference_tweets.py              # 默认读本地，不扣费
+  .venv/bin/python scripts/fetch_reference_tweets.py --usage
+  .venv/bin/python scripts/fetch_reference_tweets.py --refresh --max 150
+  .venv/bin/python scripts/fetch_reference_tweets.py --include-replies
 
 官方 API 有两层额度（不是「每天 N 条」）：
   1) Developer Console 预付 credits（没钱会 402 credits depleted）
@@ -22,13 +22,13 @@
 Nitter RSS 没有官方日限额，但通常一页只有十几条近期帖。
 
 产物（已 gitignore，只在本机 `.cache/`，不进 git）：
-  .cache/jack_tweets/tweets.json   # 全文 + 配图 URL
-  .cache/jack_tweets/tweets.md
-  .cache/jack_tweets/media/        # K 线截图
+  .cache/reference_tweets/tweets.json   # 全文 + 配图 URL
+  .cache/reference_tweets/tweets.md
+  .cache/reference_tweets/media/        # K 线截图
 
 默认读本地缓存，不打官方接口。要更新或往前多拉才加 --refresh（按条计费）：
-  .venv/bin/python scripts/fetch_jack_tweets.py
-  .venv/bin/python scripts/fetch_jack_tweets.py --refresh --max 150
+  .venv/bin/python scripts/fetch_reference_tweets.py
+  .venv/bin/python scripts/fetch_reference_tweets.py --refresh --max 150
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ import httpx
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / ".cache" / "jack_tweets"  # 运行时可由 --out-dir / username 覆盖
+OUT_DIR = ROOT / ".cache" / "reference_tweets"  # 运行时可由 --out-dir / username 覆盖
 API_BASE = "https://api.x.com/2"
 NITTER_RSS = [
     "https://nitter.net/{username}/rss",
@@ -127,7 +127,7 @@ def fetch_via_nitter(username: str, *, max_tweets: int) -> tuple[dict, list[dict
 def _headers(token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
-        "User-Agent": "crypto-analyst-jack-tweets/1.0",
+        "User-Agent": "crypto-analyst-reference-tweets/1.0",
     }
 
 
@@ -210,7 +210,7 @@ def _orig_media_url(url: str) -> str:
 
 
 def download_media(tweets: list[dict]) -> int:
-    """把配图下到 .cache/jack_tweets/media，路径写回 tweet.media[].local_path。"""
+    """把配图下到 .cache/reference_tweets/media，路径写回 tweet.media[].local_path。"""
     media_dir = OUT_DIR / "media"
     media_dir.mkdir(parents=True, exist_ok=True)
     saved = 0
@@ -358,7 +358,7 @@ def load_cache() -> tuple[dict, list[dict]] | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="拉取 jackli727 近期推文")
+    parser = argparse.ArgumentParser(description="拉取参考账号近期推文")
     parser.add_argument("--username", default="jackli727")
     parser.add_argument("--max", type=int, default=40, help="最多条数（默认 40）")
     parser.add_argument("--include-replies", action="store_true")
@@ -392,7 +392,7 @@ def main() -> None:
             "未请求官方 API（不扣 credits）。"
         )
         print(
-            "要更新或往前多拉：.venv/bin/python scripts/fetch_jack_tweets.py "
+            "要更新或往前多拉：.venv/bin/python scripts/fetch_reference_tweets.py "
             f"--refresh --max {max(args.max, len(tweets) + 50)}"
         )
         n_media = sum(len(t.get("media") or []) for t in tweets)
@@ -443,7 +443,7 @@ def main() -> None:
     write_outputs(user, tweets)
     print(
         f"已拉取 {len(tweets)} 条，配图 {n_media} 张。"
-        " 文字+K线截图都在 .cache/jack_tweets/"
+        " 文字+K线截图都在 .cache/reference_tweets/"
     )
 
 

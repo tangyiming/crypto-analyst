@@ -1,11 +1,11 @@
-"""零下二度「三盘分类」与执行 playbook（可代码化部分）。
+"""「三盘分类」与执行 playbook（可代码化部分）。
 
 参考公开推文中可复现的执行框架：
 - 强势盘：市价小头仓 + 突破近阻力加仓，新高/前高止盈
 - 震荡盘：扎针损头仓后转低多；回踩支撑不破补仓；当日振幅 0.50–0.618 止盈
 - 弱势盘：日线转空，反弹近阻力头仓空 + 跌破支撑加仓
 
-与 jack_levels（锁点）互补：锁点给价位，本模块给「当前该用哪套打法」。
+与 swing_levels（锁点）互补：锁点给价位，本模块给「当前该用哪套打法」。
 """
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from analyst.compute.indicators import compute_boll, compute_macd, ema
-from analyst.compute.jack_levels import JackLevels
+from analyst.compute.swing_levels import SwingLevels
 from analyst.compute.structure import Structure
 from analyst.data.fetcher import Candle, CandleSeries
 
 
 @dataclass
-class JackRegime:
+class MarketRegime:
     """当前盘面分类 + 可执行 playbook 摘要。"""
 
     regime: str  # strong_trend | range | weak_trend
@@ -61,7 +61,7 @@ class JackRegime:
     ema5d_6: float | None = None
     second_break: bool = False
     weekly_macd_zero: bool = False
-    # ── 2026-08 对照 Jack 推文补的点位 ──
+    # ── 2026-08 对照公开标注补的点位 ──
     # 日内回踩做多位：24h高 − (24h高 − 低)×0.5/0.618；振幅 >6% 时「低」改用最后一波冲高的起点（日内回踩低）
     pullback_50: float | None = None
     pullback_618: float | None = None
@@ -81,11 +81,11 @@ class JackRegime:
     round_level: float | None = None
     barrier_below: tuple[float, float] | None = None
     barrier_above: tuple[float, float] | None = None
-    # 4h BOLL 三轨：Jack 的短线防守/低点/短阻常落在这里（SOL 8/26 防守 92=下轨，8/27 低点 97=中轨、短阻 102.75=上轨）
+    # 4h BOLL 三轨：短线防守/低点/短阻常落在这里（SOL 8/26 防守 92=下轨，8/27 低点 97=中轨、短阻 102.75=上轨）
     boll_4h_lower: float | None = None
     boll_4h_mid: float | None = None
     boll_4h_upper: float | None = None
-    # 币安 App 默认 BOLL(20,2)：他 15m/1h/4h/12h 都看。SOL 8/22「突破 97.56 可追」= 1h 上轨；BTC 8/15 支撑 62500 ≈ 12h 下轨 62698
+    # 币安 App 默认 BOLL(20,2)，15m/1h/4h/12h 共用。SOL 8/22 突破 97.56 可追 = 1h 上轨；BTC 8/15 支撑 62500 ≈ 12h 下轨 62698
     boll_1h_lower: float | None = None
     boll_1h_mid: float | None = None
     boll_1h_upper: float | None = None
@@ -339,7 +339,7 @@ def _weekly_boll_upper(daily: CandleSeries | None) -> float | None:
 
 
 def _resample_calendar_month(daily: CandleSeries | None) -> CandleSeries | None:
-    """自然月重采样（含当月未收盘 K）。Jack 的「月线 BOLL 中轨」按此算：ETH 2026-08-22 = 2646 精确复现。"""
+    """自然月重采样（含当月未收盘 K）。月线 BOLL 中轨按此算：ETH 2026-08-22 = 2646 精确复现。"""
     if not daily or len(daily.candles) < 60:
         return None
     groups: dict[tuple[int, int], list[Candle]] = {}
@@ -377,11 +377,11 @@ def _pullback_levels(
     bars: int = 24,
     wide_pct: float = 0.06,
 ) -> tuple[float | None, float | None, float | None, str]:
-    """Jack 日内回踩做多位：24h高 − (24h高 − 低)×0.5/0.618。
+    """日内回踩做多位：24h高 − (24h高 − 低)×0.5/0.618。
 
     24h 振幅 > 6% 且 24h 低点在高点之前（先跌后拉）时，「低」改用 24h 低→高之间最后一个局部低点
-    （最后一波冲高的起点）。BTC 2026-08-21：24h 79556/72280 → 75059（"通常回踩不到"）；
-    改用 74214 → 76255（Jack 76267，实际低 76237）。
+    （最后一波冲高的起点）。BTC 2026-08-21：24h 79556/72280 → 75059（通常回踩不到）；
+    改用 74214 → 76255（对照标注 76267，实际低 76237）。
     """
     if not hourly or len(hourly.candles) < bars:
         return None, None, None, ""
@@ -412,7 +412,7 @@ def _cycle_fib(
 ) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
     """周期高点（日线最高 high）→ 其后的最低 low；低 + (高−低)×0.382/0.5/0.618 = 反转确认梯子。
 
-    ETH 2026-08：4957.67/1503.6 → 2823/3231/3638（Jack 2822/3230/3637）。
+    ETH 2026-08：4957.67/1503.6 → 2823/3231/3638（对照标注 2822/3230/3637）。
     熊底参考：高 − (高 − 上一轮熊底)×0.618，上一轮熊底 = 周期高点之前的最低 low（需足够长历史）。
     """
     if not daily or len(daily.candles) < min_bars:
@@ -482,7 +482,7 @@ def _extension_targets(hourly: CandleSeries | None, used_low: float | None, *, b
 def _round_barriers(price: float) -> tuple[float | None, tuple[float, float] | None, tuple[float, float] | None]:
     """最近的整数关口（高于现价的第一个）及其屏障区：下方 2–4%，上方 4–6%。
 
-    网格 = 半个数量级：ETH 2420 → 2500（Jack「站稳 2500」），BTC 78k → 80000（8w），SOL 97 → 100。
+    网格 = 半个数量级：ETH 2420 → 2500（站稳 2500），BTC 78k → 80000（8w），SOL 97 → 100。
     """
     if price <= 0:
         return None, None, None
@@ -644,8 +644,8 @@ def _daily_momentum_fade(daily: CandleSeries | None) -> bool:
 def _macd_decel_to_zero(series: CandleSeries | None) -> bool:
     """「MACD 归零、下跌减速」= MACD 柱在零下开始缩短（向零轴收敛）。
 
-    Jack 看的是柱线而不是 DIF 拐头：2026-08 BTC 对照，柱缩短法在 8h(8/13)、12h(8/15)、
-    日线(8/17) 与他推文时间一一吻合；DIF 抬升法要晚 1–2 天。
+    看柱线而不是 DIF 拐头：2026-08 BTC 对照，柱缩短法在 8h(8/13)、12h(8/15)、
+    日线(8/17) 与公开标注时间吻合；DIF 抬升法要晚 1–2 天。
     """
     if not series or len(series.candles) < 35:
         return False
@@ -663,10 +663,10 @@ def _nd_ema6(daily: CandleSeries | None, n: int) -> float | None:
     return ema(series.closes, 6)[-1]
 
 
-def compute_jack_regime(
+def compute_market_regime(
     *,
     current_price: float,
-    jack: JackLevels,
+    swing: SwingLevels,
     structure: Structure,
     primary_series: CandleSeries | None = None,
     daily_series: CandleSeries | None = None,
@@ -675,11 +675,11 @@ def compute_jack_regime(
     m5_series: CandleSeries | None = None,
     high_24h: float | None = None,
     low_24h: float | None = None,
-) -> JackRegime:
+) -> MarketRegime:
     """根据锁点 + 结构 + 近端 K 线，输出三盘分类与 playbook。"""
-    nearest_support = structure.supports[0] if structure.supports else jack.retr_618
+    nearest_support = structure.supports[0] if structure.supports else swing.retr_618
     nearest_resistance = (
-        structure.resistances[0] if structure.resistances else jack.rebound_382
+        structure.resistances[0] if structure.resistances else swing.rebound_382
     )
     prev_high, prev_low = _prev_day_hl(daily_series)
     intra_high, intra_low = _intraday_range(
@@ -692,14 +692,14 @@ def compute_jack_regime(
         tp618 = intra_low + rng * 0.618
 
     ema12 = _ema12h_6(hourly_series)
-    # 腰斩线 = 周期最高点 × 0.5（Jack：「63000 是 btc 腰斩的位置，这之下不追空只低吸」，126k/2）。
+    # 腰斩线 = 周期最高点 × 0.5（63000 是 BTC 腰斩位，这之下不追空只低吸，126k/2）。
     # 用手头日线里的最高 high（需 ≥200 根，hub 拉 400 根）；不够长才退回最近波段高点。
     cycle_high = (
         max(c.high for c in daily_series.candles)
         if daily_series and len(daily_series.candles) >= 200
         else None
     )
-    waist_src = cycle_high if cycle_high else (jack.swing_high if jack.swing_high > 0 else None)
+    waist_src = cycle_high if cycle_high else (swing.swing_high if swing.swing_high > 0 else None)
     waist = waist_src * 0.5 if waist_src else None
     below_waist = bool(waist and current_price <= waist * 1.02)
     weekly_mid = _weekly_boll_mid(daily_series)
@@ -715,8 +715,8 @@ def compute_jack_regime(
     daily_fade = _daily_momentum_fade(daily_series)
     htf_div = _top_div(hourly_series) or _top_div(h4_series)
     wick = _wick_hold(primary_series or hourly_series, nearest_support)
-    near_618 = current_price >= jack.rebound_618 * 0.992 if jack.rebound_618 > 0 else False
-    resonance = jack.daily_bias == "up" and (hourly_ok or ltf_zero)
+    near_618 = current_price >= swing.rebound_618 * 0.992 if swing.rebound_618 > 0 else False
+    resonance = swing.daily_bias == "up" and (hourly_ok or ltf_zero)
     h8 = _resample_every_n(h4_series, 2, "8h") if h4_series else None
     h12 = _resample_every_n(h4_series, 3, "12h") if h4_series else None
     dec8 = _macd_decel_to_zero(h8)
@@ -731,7 +731,7 @@ def compute_jack_regime(
     b1_lo, b1_mid, b1_up = _boll_4h(hourly_series)
     b12_lo, b12_mid, b12_up = _boll_4h(h12)
     piv_sup, piv_res = _pivot_levels(h4_series or primary_series, current_price)
-    # 多月级结构位（Jack：BTC 5 月高 82800、7 月初低 60455/60666、SOL 87）：日线枢轴 250 天，与 4h 枢轴合并
+    # 多月级结构位（BTC 5 月高 82800、7 月初低 60455/60666、SOL 87）：日线枢轴 250 天，与 4h 枢轴合并
     d_sup, d_res = _pivot_levels(daily_series, current_price, k=3, lookback=250, n=4)
     piv_sup = tuple(sorted(set(piv_sup) | set(d_sup), reverse=True)[:5])
     piv_res = tuple(sorted(set(piv_res) | set(d_res))[:5])
@@ -747,7 +747,7 @@ def compute_jack_regime(
         return (min(valid) if below else max(valid)) if valid else None
 
     hi24 = max(x.high for x in hourly_series.candles[-24:]) if hourly_series and len(hourly_series.candles) >= 24 else None
-    # 支撑优先级：回踩 0.618（Jack「回测 96–94」）→ 4h 枢轴低 → 结构支撑 → 4h BOLL 中/下
+    # 支撑优先级：回踩 0.618（如 96–94）→ 4h 枢轴低 → 结构支撑 → 4h BOLL 中/下
     sup_cands = [pb618, piv_sup[0] if piv_sup else None, nearest_support, b4_mid, b12_lo, b4_lo]
     # 阻力优先级：4h 枢轴高 → 24h 高 → 结构阻力 → 1h/4h BOLL 上 → 12h/周 BOLL 上 → 整数关口首压 → 本波 1.5 延伸
     res_cands = [piv_res[0] if piv_res else None, hi24, nearest_resistance, b1_up, b4_up, b12_up, weekly_upper,
@@ -758,9 +758,9 @@ def compute_jack_regime(
     if pb618 is not None and pb618 >= current_price:
         pb50 = pb618 = None
         pb_note = (pb_note + "；" if pb_note else "") + "现价已低于回踩位"
-    second_break = jack.touch_count >= 2 and jack.daily_bias == "up"
+    second_break = swing.touch_count >= 2 and swing.daily_bias == "up"
     weekly_zero = _macd_decel_to_zero(_resample_weekly(daily_series))
-    bias = jack.daily_bias
+    bias = swing.daily_bias
     ladder = (
         "每突破一个近阻力可加仓一点（略高于阻力更稳），新均价附近设「基本止盈防守」，"
         "加仓那部分先止盈；二次突破已破阻力比回踩补更稳。开仓后先设止损再抓止盈。"
@@ -778,10 +778,10 @@ def compute_jack_regime(
     if bias == "down":
         side = "short"
         defense_broken = _defense_broken(
-            current_price, jack.defense_level, primary_series, side="short"
+            current_price, swing.defense_level, primary_series, side="short"
         )
         spike = _spike_stop_recent(
-            primary_series, jack.defense_level, side="short"
+            primary_series, swing.defense_level, side="short"
         )
         regime = "weak_trend"
         regime_zh = "弱势盘"
@@ -820,28 +820,28 @@ def compute_jack_regime(
                 playbook += "8h/12h MACD 归零下跌减速，最多轻仓高空，优先等支撑低吸。"
             if defense_broken:
                 summary = (
-                    f"弱势延续，现价 {_fmt(current_price)} 已压过防守 {_fmt(jack.defense_level)}；"
+                    f"弱势延续，现价 {_fmt(current_price)} 已压过防守 {_fmt(swing.defense_level)}；"
                     f"反弹 {_fmt(nearest_resistance)} 附近仍偏空。"
                 )
             else:
                 summary = (
-                    f"弱势但尚未有效突破防守 {_fmt(jack.defense_level)}；"
+                    f"弱势但尚未有效突破防守 {_fmt(swing.defense_level)}；"
                     f"等反弹 {_fmt(nearest_resistance)} 附近再试空。"
                 )
     elif bias == "up":
         side = "long"
         defense_broken = _defense_broken(
-            current_price, jack.defense_level, primary_series, side="long"
+            current_price, swing.defense_level, primary_series, side="long"
         )
         spike = _spike_stop_recent(
-            primary_series, jack.defense_level, side="long"
+            primary_series, swing.defense_level, side="long"
         )
         continuation = not defense_broken
         fake_short = continuation and not htf_div
-        above_mid = current_price >= (jack.swing_high + jack.swing_low) / 2
+        above_mid = current_price >= (swing.swing_high + swing.swing_low) / 2
         strong = (
             continuation
-            and (jack.htf_ready or resonance)
+            and (swing.htf_ready or resonance)
             and above_mid
             and not spike
         )
@@ -866,7 +866,7 @@ def compute_jack_regime(
                 + ("已近反弹 0.618，鱼尾不加仓、不追多。" if near_618 else "")
             )
             bits = [
-                f"延续完好，防守 {_fmt(jack.defense_level)} 未破",
+                f"延续完好，防守 {_fmt(swing.defense_level)} 未破",
                 f"突破 {_fmt(nearest_resistance)} 或昨高 {_fmt(prev_high)} 可加仓"
                 if not near_618
                 else "鱼尾区不加仓",
@@ -906,8 +906,8 @@ def compute_jack_regime(
             parts = []
             if defense_broken:
                 parts.append(
-                    f"跌破防守 {_fmt(jack.defense_level)}，延续上涨中断；"
-                    f"强压参考 {_fmt(jack.rebound_618)}"
+                    f"跌破防守 {_fmt(swing.defense_level)}，延续上涨中断；"
+                    f"强压参考 {_fmt(swing.rebound_618)}"
                 )
             if spike:
                 parts.append("近根出现扎针止损，宜等支撑站稳再进")
@@ -938,7 +938,7 @@ def compute_jack_regime(
             f"边界外再动手。"
         )
 
-    return JackRegime(
+    return MarketRegime(
         regime=regime,
         regime_zh=regime_zh,
         trade_side=side,

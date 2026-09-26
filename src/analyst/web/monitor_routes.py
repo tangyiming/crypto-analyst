@@ -248,8 +248,8 @@ def monitor_chat(req: MonitorChatRequest):
                 "current_price",
                 "structure",
                 "fib",
-                "jack_levels",
-                "jack_regime",
+                "swing_levels",
+                "market_regime",
                 "indicators",
                 "baseline_plan",
                 "ai_plan",
@@ -436,7 +436,7 @@ def seed_position_api(
     max_total_pct: float = Query(0.18, gt=0, le=0.5),
     add_mode: str = Query("pullback", description="pullback|breakout|none"),
 ):
-    """头仓/补仓仓位建议（零下二度风格分层）。"""
+    """头仓/补仓仓位建议（分层仓位）。"""
     from analyst.compute.position_sizing import plan_seed_position
 
     try:
@@ -690,7 +690,7 @@ def paper_summary(journal: int = Query(default=100, ge=1, le=500), closed: int =
         "symbols": symbols,
         "marks": {k: v for k, v in marks.items() if k in symbols or k in broker.state["positions"] or k in broker.state["pending"]},
         "state_path": str(broker.path),
-        "strategy": "jack_pullback（强势盘回踩 0.618 低多）",
+        "strategy": "强势盘回踩 0.618 低多",
         "report": rep,
     }
 

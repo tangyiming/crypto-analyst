@@ -21,11 +21,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from analyst.compute.strategies.jack_pullback import (
+from analyst.compute.strategies.pullback_long import (
     MAKER_FEE,
     SLIPPAGE,
     TAKER_FEE,
-    JackPullbackConfig,
+    PullbackLongConfig,
     OrderPlan,
     position_size,
 )
@@ -58,12 +58,12 @@ class PaperBroker:
         state_path: Path,
         *,
         equity0: float = 10_000.0,
-        cfg: JackPullbackConfig | None = None,
+        cfg: PullbackLongConfig | None = None,
         daily_fuse_pct: float = 3.0,
         max_positions: int = 2,
     ) -> None:
         self.path = Path(state_path)
-        self.cfg = cfg or JackPullbackConfig()
+        self.cfg = cfg or PullbackLongConfig()
         self.daily_fuse_pct = daily_fuse_pct
         self.max_positions = max_positions
         self.state: dict[str, Any] = {
