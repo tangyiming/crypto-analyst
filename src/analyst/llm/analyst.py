@@ -113,6 +113,7 @@ PRICING: dict[str, dict[str, float]] = {
     "llama-3.3-70b": {"input": 0.0, "output": 0.0},
     "gpt-oss-120b": {"input": 0.0, "output": 0.0},
     "openai/gpt-oss-120b": {"input": 0.0, "output": 0.0},
+    "nvidia/nemotron-3-super-120b-a12b": {"input": 0.0, "output": 0.0},
     "gemma-4-31b": {"input": 0.0, "output": 0.0},
     "zai-glm-4.7": {"input": 0.0, "output": 0.0},
     "llama-3.1-8b-instant": {"input": 0.0, "output": 0.0},
@@ -211,7 +212,7 @@ _FREE_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "model_attr": "nvidia_model",
         "base_attr": "nvidia_base_url",
         "default_base": "https://integrate.api.nvidia.com/v1",
-        "default_model": "openai/gpt-oss-120b",
+        "default_model": "nvidia/nemotron-3-super-120b-a12b",
     },
 }
 
